@@ -62,6 +62,7 @@ docs/
 | 文件 | 内容 |
 |---|---|
 | `需求文档.md` | 产品需求（PRD），含需求变更记录与已收敛的结论 |
+| `推理服务契约.md` | **Python sidecar ↔ Tauri 宿主的进程边界**：入参 JSON、NDJSON 事件流、错误码、退出码、断点续跑 |
 | `系统设计.md` | 架构设计、文件清单、时序图、任务分解、共享约定 |
 | `可行性分析.md` | 技术可行性论证 |
 | `架构方案.html` | 架构方案的可视化说明（面向初次了解项目的人） |
@@ -101,5 +102,7 @@ docs/
 | 位置 | 内容 |
 |---|---|
 | `../scripts/` | 算法与环境配置脚本（`detect.py` / `grid_prior.py` / `process_image.py` / `visualize_full.py`） |
+| `../scripts/sidecar.py` | **推理服务入口**（JSON 进，NDJSON 事件出），契约见 `01-需求与架构/推理服务契约.md` |
+| `../scripts/test_sidecar_contract.py` | sidecar 契约测试（合成影像，不依赖真实大图，约 1 分钟跑完） |
 | `../output/` | 检测输出（GeoJSON）与中间态 |
 | `../.workbuddy-ai/memory/` | 项目工作记忆（每日日志 + 长期约定） |
