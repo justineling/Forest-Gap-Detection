@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小白版 ②：电脑是怎么"看出"空地的？</title>
+<style>
+:root{
+  --bg:#0a0f1c;--panel:#121b2f;--panel2:#16203a;--border:#22304d;--border2:#2d3f63;
+  --text:#e8eefb;--text2:#c2cee4;--muted:#8496b4;
+  --cyan:#38bdf8;--violet:#a78bfa;--green:#34d399;--amber:#fbbf24;--red:#f87171;--pink:#f472b6;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-size:17px;line-height:1.9;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(900px 500px at 10% -5%,rgba(56,189,248,.10),transparent 60%),
+             radial-gradient(800px 500px at 90% 0%,rgba(244,114,182,.09),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:960px;margin:0 auto;padding:0 26px 90px}
+.hero{padding:60px 0 36px;border-bottom:1px solid var(--border)}
+.eyebrow{display:inline-flex;gap:8px;font-size:14px;color:var(--cyan);background:rgba(56,189,248,.09);
+  border:1px solid rgba(56,189,248,.28);border-radius:999px;padding:6px 15px;margin-bottom:20px}
+.hero h1{font-size:clamp(27px,4vw,42px);line-height:1.25;font-weight:800;letter-spacing:-.02em}
+.hero h1 span{background:linear-gradient(100deg,var(--cyan),var(--violet) 65%,var(--pink));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{margin-top:16px;color:var(--text2);font-size:17.5px;max-width:820px}
+nav.toc{position:sticky;top:0;z-index:50;margin:0 -26px;padding:12px 26px;
+  background:rgba(10,15,28,.9);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);
+  display:flex;gap:6px;overflow-x:auto}
+nav.toc a{color:var(--muted);text-decoration:none;font-size:13.5px;white-space:nowrap;
+  padding:6px 12px;border-radius:8px;border:1px solid transparent}
+nav.toc a:hover{color:var(--text);background:var(--panel);border-color:var(--border)}
+section{padding:54px 0 6px;scroll-margin-top:64px}
+h2{font-size:26px;font-weight:750;display:flex;align-items:center;gap:13px;margin-bottom:10px}
+h2 .num{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--cyan);
+  background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.28);border-radius:8px;padding:3px 11px;flex:none}
+h2+.lede{color:var(--muted);font-size:15.5px;margin-bottom:26px;max-width:860px}
+h3{font-size:19px;font-weight:700;margin:34px 0 12px}
+p{color:var(--text2);margin-bottom:14px}
+p strong,li strong{color:var(--text);font-weight:650}
+ul,ol{margin:0 0 16px 24px;color:var(--text2)}li{margin-bottom:9px}
+code{font-family:var(--mono);font-size:14px;background:var(--panel2);border:1px solid var(--border);
+  border-radius:5px;padding:2px 7px;color:var(--cyan)}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 22px}
+.card h4{margin:0 0 8px;font-size:16.5px;color:var(--text)}
+.card p:last-child{margin-bottom:0}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;margin:16px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:15.5px;min-width:480px}
+th{background:var(--panel2);color:var(--text);font-weight:700;text-align:left;padding:12px 15px;
+  border-bottom:1px solid var(--border2);white-space:nowrap}
+td{padding:11px 15px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.note{border-radius:12px;padding:17px 21px;margin:18px 0;border:1px solid;display:flex;gap:15px;align-items:flex-start}
+.note .ic{font-size:21px;flex:none;line-height:1.6}
+.note p:last-child{margin-bottom:0}
+.note.info{background:rgba(56,189,248,.07);border-color:rgba(56,189,248,.28)}
+.note.good{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.28)}
+.note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.3)}
+figure{margin:22px 0;background:#0e1526;border:1px solid var(--border);border-radius:14px;padding:18px}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:12px;font-size:14.5px;color:var(--muted);text-align:center}
+.analogy{background:linear-gradient(135deg,rgba(167,139,250,.10),rgba(56,189,248,.06));
+  border:1px solid rgba(167,139,250,.28);border-radius:14px;padding:20px 24px;margin:20px 0}
+.analogy .lbl{font-size:13.5px;color:var(--violet);font-weight:700;letter-spacing:.06em;margin-bottom:8px}
+.analogy p:last-child{margin-bottom:0}
+footer{margin-top:64px;padding-top:26px;border-top:1px solid var(--border);color:var(--muted);
+  font-size:14px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}
+@media(max-width:680px){.wrap{padding:0 16px 70px}nav.toc{margin:0 -16px;padding:10px 16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">零基础版 · 不需要任何计算机知识</div>
+  <h1>电脑是怎么"看出"<br><span>空地的？</span></h1>
+  <p class="sub">上一篇讲了"输入是什么"。这一篇讲最核心的问题：一堆颜色数字，怎么变成"这里有一块空地，多大面积"。全程不需要公式。</p>
+</header>
+
+<nav class="toc">
+  <a href="#noc">电脑其实不"看"图</a>
+  <a href="#color">颜色就是三个数字</a>
+  <a href="#green">"够不够绿"可以算</a>
+  <a href="#line">画一条线分开</a>
+  <a href="#net">意外：空地连成一张网</a>
+  <a href="#cut">怎么把网剪开</a>
+  <a href="#grid">怎么知道缺了几株</a>
+  <a href="#summary">一页总结</a>
+</nav>
+
+<!-- ============ 1 ============ -->
+<section id="noc">
+  <h2><span class="num">01</span>先破除一个误解：电脑其实不"看"图</h2>
+  <p class="lede">它不做"这是树、那是土"的判断。它只做算术。</p>
+
+  <p>人看图是一眼就懂：绿的、有羽状叶子的是油棕；红褐色的、光秃秃的是土。这是<strong>视觉理解</strong>。</p>
+
+  <p>电脑没有这个能力。它眼里没有"树"这个概念，只有上一篇说的那张<strong>21 亿格的方格表</strong>，每个格子里是几个数字。</p>
+
+  <p>所以整个"认出空地"的过程，本质上是：<strong>挨个检查每个格子的数字，用一套规则判断它算不算"树"</strong>。检查完之后，剩下没被算作树的，就是空地。</p>
+
+  <div class="note info">
+    <span class="ic">💡</span>
+    <div>
+      <p><strong>这就是本项目的全部思路</strong></p>
+      <p>我们<strong>不训练电脑"认识空地"</strong>，只让它"认出树"。认完树之后，把树挖掉，剩下的就是空地。</p>
+      <p>用一句话说：<strong>空地 = 不是树的地方。</strong></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="color">
+  <h2><span class="num">02</span>颜色，就是三个数字</h2>
+  <p class="lede">电脑用红、绿、蓝三个数值来描述任何一种颜色。</p>
+
+  <p>你手机屏幕上的所有颜色，都是红、绿、蓝三种光按不同比例混合出来的。电脑也是这样记录颜色的——每个像素存三个数字，分别表示红、绿、蓝有多强，范围是 0 到 255。</p>
+
+  <div class="grid g3" style="margin:20px 0">
+    <div class="card" style="text-align:center;border-left:4px solid var(--green)">
+      <div style="font-family:var(--mono);font-size:19px;color:var(--text)">(60, 160, 70)</div>
+      <div style="color:var(--muted);font-size:14px;margin-top:6px">绿色多、红蓝少<br><strong>→ 树叶</strong></div>
+    </div>
+    <div class="card" style="text-align:center;border-left:4px solid var(--amber)">
+      <div style="font-family:var(--mono);font-size:19px;color:var(--text)">(180, 120, 90)</div>
+      <div style="color:var(--muted);font-size:14px;margin-top:6px">红多、绿少<br><strong>→ 红褐色泥土</strong></div>
+    </div>
+    <div class="card" style="text-align:center;border-left:4px solid var(--muted)">
+      <div style="font-family:var(--mono);font-size:19px;color:var(--text)">(40, 40, 45)</div>
+      <div style="color:var(--muted);font-size:14px;margin-top:6px">三个都很低<br><strong>→ 阴影</strong></div>
+    </div>
+  </div>
+
+  <p>看到规律了吗？<strong>树叶是"绿特别多、红蓝少"；泥土是"红多、绿少"。</strong></p>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="green">
+  <h2><span class="num">03</span>所以"够不够绿"是可以算出来的</h2>
+  <p class="lede">把"绿"减掉"红"和"蓝"，就得到一个"绿度分数"。</p>
+
+  <p>既然绿色是判断依据，那就干脆做一个简单的减法：</p>
+
+  <div class="card" style="margin:18px 0;background:var(--panel2)">
+    <p style="font-family:var(--mono);font-size:16px;color:var(--cyan);text-align:center;margin:0;line-height:2">
+      绿度分数 = 绿色 × 2 − 红色 − 蓝色
+    </p>
+  </div>
+
+  <p>为什么绿色要乘 2？因为想让它<strong>更占分量</strong>——毕竟我们找的是绿色植物。</p>
+
+  <p>来算一下刚才那三个例子：</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>格子的颜色</th><th>绿度分数</th><th>是什么</th></tr></thead>
+      <tbody>
+        <tr>
+          <td style="font-family:var(--mono)">(60, 160, 70)</td>
+          <td><strong style="color:var(--green);font-size:17px">+190</strong></td>
+          <td>树叶 —— 分数<strong>很高</strong></td>
+        </tr>
+        <tr>
+          <td style="font-family:var(--mono)">(180, 120, 90)</td>
+          <td><strong style="color:var(--amber);font-size:17px">−30</strong></td>
+          <td>泥土地 —— 分数<strong>是负的</strong></td>
+        </tr>
+        <tr>
+          <td style="font-family:var(--mono)">(40, 40, 45)</td>
+          <td><strong style="color:var(--red);font-size:17px">−5</strong></td>
+          <td>阴影 —— 分数<strong>接近零</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note good">
+    <span class="ic">🎯</span>
+    <div>
+      <p><strong>这就是整件事的核心</strong></p>
+      <p>把 21 亿个格子全算一遍这个分数，就得到了一张"绿度地图"：<strong>分数高的地方是树，分数低的地方是土。</strong></p>
+      <p>这个分数有个正式名字叫 <strong>ExG（超绿指数）</strong>，但你现在可以就叫它"绿度分数"。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="line">
+  <h2><span class="num">04</span>画一条线：多少分以上算树？</h2>
+  <p class="lede">这一条线画在哪，是整个项目最关键、也最纠结的决定。</p>
+
+  <p>有了绿度分数，还需要一个<strong>分界线</strong>：分数在这条线以上算树，以下算空地。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 230" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="绿度分数分布与分界线">
+      <text x="20" y="22" fill="#c2cee4" font-size="14" font-weight="700">把所有格子的绿度分数排成一条数轴</text>
+
+      <!-- 数轴 -->
+      <path d="M40 150 H640" stroke="#2d3f63" stroke-width="2"/>
+      <text x="40" y="176" fill="#8496b4" font-size="12.5">负分（很可能是土）</text>
+      <text x="560" y="176" fill="#8496b4" font-size="12.5" text-anchor="end">高分（很可能是树）</text>
+
+      <!-- 分布柱 -->
+      <g fill="#38bdf8" fill-opacity=".55">
+        <rect x="70" y="140" width="26" height="10" rx="2"/>
+        <rect x="104" y="128" width="26" height="22" rx="2"/>
+        <rect x="138" y="112" width="26" height="38" rx="2"/>
+        <rect x="172" y="96" width="26" height="54" rx="2"/>
+      </g>
+      <g fill="#34d399" fill-opacity=".6">
+        <rect x="206" y="86" width="26" height="64" rx="2"/>
+        <rect x="240" y="78" width="26" height="72" rx="2"/>
+        <rect x="274" y="76" width="26" height="74" rx="2"/>
+        <rect x="308" y="84" width="26" height="66" rx="2"/>
+        <rect x="342" y="98" width="26" height="52" rx="2"/>
+        <rect x="376" y="112" width="26" height="38" rx="2"/>
+        <rect x="410" y="126" width="26" height="24" rx="2"/>
+      </g>
+
+      <!-- 分界线 -->
+      <path d="M206 46 V200" stroke="#f472b6" stroke-width="2.5" stroke-dasharray="7 5"/>
+      <text x="212" y="40" fill="#f472b6" font-size="13" font-weight="700">分界线</text>
+      <text x="140" y="212" fill="#8496b4" font-size="12.5" text-anchor="middle">← 判为「空地」</text>
+      <text x="330" y="212" fill="#34d399" font-size="12.5" text-anchor="middle">判为「树冠」 →</text>
+    </svg>
+    <figcaption>分界线左边算空地，右边算树冠。线画在哪，直接决定结果。</figcaption>
+  </figure>
+
+  <h3>这条线为什么难画？</h3>
+
+  <div class="grid g2">
+    <div class="card" style="border-left:4px solid var(--red)">
+      <h4>画得太靠左（太严）</h4>
+      <p>会把"看起来不太绿的树"也算成树。结果：<strong>真的空地反而漏掉了。</strong></p>
+      <p style="color:var(--muted);font-size:14.5px">→ 漏报</p>
+    </div>
+    <div class="card" style="border-left:4px solid var(--amber)">
+      <h4>画得太靠右（太松）</h4>
+      <p>会把"林下的杂草"也当成空地。结果：<strong>明明长着草的地方被报成空地。</strong></p>
+      <p style="color:var(--muted);font-size:14.5px">→ 误报</p>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <span class="ic">⚠️</span>
+    <div>
+      <p><strong>这是本项目踩过的最大一个坑</strong></p>
+      <p>我们一开始用的方法，会在<strong>长得密的树林里</strong>把树下的草和灌木误报成空地——因为草比油棕叶子暗一点，"绿度分数"就低一点，被误判了。</p>
+      <p>而且不同航拍趟次的照片<strong>明暗差很多</strong>（有的亮有的暗，绿度分数整体能差 3 倍），一条固定的线根本不管用。</p>
+      <p>最后我们改成了一条"会自己调整的线"，并且加了一条辅助规则：<strong>如果某块地颜色很鲜艳（说明是活的植物），即使绿度分数偏低也算作树。</strong>这才把误报压下去。</p>
+      <p style="color:var(--muted);font-size:14.5px">（这条线的详细调法，见《分割判据说明》那份文档。）</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="net">
+  <h2><span class="num">05</span>意外：空地不是"一块块"，而是"一张网"</h2>
+  <p class="lede">这是做的时候完全没想到的问题。</p>
+
+  <p>按理说，把树挖掉，剩下的应该是"一块块独立的空地"。但实际情况是——</p>
+
+  <p>油棕是成排种的，树和树之间本来就有窄缝。这些窄缝<strong>互相连通</strong>，所以"不是树的地方"其实是一张<strong>连成一片的网</strong>，而不是一个个孤立的洞。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="空地是连通的网络而不是独立的小块">
+      <text x="20" y="22" fill="#c2cee4" font-size="14" font-weight="700">① 树冠掩膜（绿色=树）</text>
+      <text x="380" y="22" fill="#c2cee4" font-size="14" font-weight="700">② 取反 → 空地（粉色）</text>
+
+      <!-- 左：树 -->
+      <g>
+        <rect x="24" y="38" width="280" height="180" rx="8" fill="#121b2f" stroke="#22304d"/>
+        <g fill="#34d399" fill-opacity=".72">
+          <!-- 三行树，之间有缝 -->
+          <circle cx="62" cy="76" r="24"/><circle cx="118" cy="76" r="24"/>
+          <circle cx="174" cy="76" r="24"/><circle cx="230" cy="76" r="24"/><circle cx="278" cy="76" r="22"/>
+          <circle cx="62" cy="132" r="24"/><circle cx="118" cy="132" r="24"/>
+          <circle cx="174" cy="132" r="24"/><circle cx="230" cy="132" r="24"/><circle cx="278" cy="132" r="22"/>
+          <circle cx="62" cy="188" r="24"/><circle cx="118" cy="188" r="24"/>
+          <circle cx="174" cy="188" r="24"/><circle cx="230" cy="188" r="24"/><circle cx="278" cy="188" r="22"/>
+        </g>
+      </g>
+
+      <path d="M316 128 h44" stroke="#f472b6" stroke-width="3" stroke-linecap="round"/>
+      <path d="M352 120 l12 8 -12 8" fill="none" stroke="#f472b6" stroke-width="3"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="338" y="108" fill="#f472b6" font-size="12" text-anchor="middle" font-weight="700">取反</text>
+
+      <!-- 右：网 -->
+      <g>
+        <rect x="380" y="38" width="280" height="180" rx="8" fill="#f472b6" fill-opacity=".30"
+              stroke="#f472b6" stroke-opacity=".5"/>
+        <g fill="#34d399" fill-opacity=".72">
+          <circle cx="418" cy="76" r="24"/><circle cx="474" cy="76" r="24"/>
+          <circle cx="530" cy="76" r="24"/><circle cx="586" cy="76" r="24"/><circle cx="634" cy="76" r="22"/>
+          <circle cx="418" cy="132" r="24"/><circle cx="474" cy="132" r="24"/>
+          <circle cx="530" cy="132" r="24"/><circle cx="586" cy="132" r="24"/><circle cx="634" cy="132" r="22"/>
+          <circle cx="418" cy="188" r="24"/><circle cx="474" cy="188" r="24"/>
+          <circle cx="530" cy="188" r="24"/><circle cx="586" cy="188" r="24"/><circle cx="634" cy="188" r="22"/>
+        </g>
+        <text x="520" y="240" fill="#f472b6" font-size="13" text-anchor="middle" font-weight="700">
+          粉色区域全部连在一起 = 一整片</text>
+      </g>
+    </svg>
+    <figcaption>树之间的窄缝彼此连通，取反之后得到的是一整张网，不是一个个小洞。</figcaption>
+  </figure>
+
+  <p>这带来一个实际问题：程序输出的是"一整块 5000 平方米的空地"，但实际业务上想要的是"这里有 3 处缺株、那里有 1 片撂荒"。<strong>必须把这张网剪开。</strong></p>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="cut">
+  <h2><span class="num">06</span>怎么把这张网剪开？</h2>
+  <p class="lede">一个很巧妙的办法：先让所有东西"瘦一圈"，再"胖回来"。</p>
+
+  <div class="analogy">
+    <div class="lbl">打个比方</div>
+    <p>想象你在一张纸上画满了粗细不一的线条。现在你想<strong>只留下粗线条，去掉细线条</strong>。</p>
+    <p>做法：拿一块橡皮，把所有线条<strong>从边缘往里擦掉 2 毫米</strong>。这时细线条（本来就只有 3 毫米宽）会被擦光，而粗线条（比如 20 毫米宽）还剩下 16 毫米。</p>
+    <p>然后<strong>再把所有剩下的线条往外加粗 2 毫米</strong>——粗线条恢复成 20 毫米，但细线条<strong>再也回不来了</strong>，因为它已经被擦没了。</p>
+    <p style="color:var(--text)"><strong>结果：细线条消失了，粗线条完好无损。</strong></p>
+  </div>
+
+  <p>这就是我们要的效果。油棕树之间的窄缝就是"细线条"，需要补种的真空地就是"粗线条"。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 220" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="先瘦一圈再胖回来，细缝消失粗块保留">
+      <text x="20" y="20" fill="#c2cee4" font-size="13.5" font-weight="700">① 原始：粗细混杂</text>
+      <text x="250" y="20" fill="#c2cee4" font-size="13.5" font-weight="700">② 瘦一圈（擦掉 2mm）</text>
+      <text x="466" y="20" fill="#c2cee4" font-size="13.5" font-weight="700">③ 胖回来（加回 2mm）</text>
+
+      <!-- ① -->
+      <g>
+        <rect x="24" y="36" width="186" height="160" rx="8" fill="#121b2f" stroke="#22304d"/>
+        <rect x="46" y="70" width="130" height="8" rx="4" fill="#f472b6" fill-opacity=".85"/>
+        <rect x="46" y="94" width="130" height="8" rx="4" fill="#f472b6" fill-opacity=".85"/>
+        <rect x="46" y="132" width="72" height="46" rx="8" fill="#f472b6" fill-opacity=".85"/>
+        <rect x="128" y="132" width="48" height="46" rx="8" fill="#f472b6" fill-opacity=".85"/>
+      </g>
+      <!-- ② -->
+      <g>
+        <rect x="250" y="36" width="186" height="160" rx="8" fill="#121b2f" stroke="#22304d"/>
+        <rect x="46" y="70" width="0" height="0" fill="none"/>
+        <rect x="262" y="132" width="56" height="30" rx="7" fill="#f472b6" fill-opacity=".85"/>
+        <rect x="328" y="132" width="32" height="30" rx="7" fill="#f472b6" fill-opacity=".85"/>
+        <text x="343" y="110" fill="#8496b4" font-size="12.5" text-anchor="middle">细缝已被擦光</text>
+      </g>
+      <!-- ③ -->
+      <g>
+        <rect x="466" y="36" width="186" height="160" rx="8" fill="#121b2f" stroke="#22304d"/>
+        <rect x="484" y="132" width="64" height="46" rx="8" fill="#34d399" fill-opacity=".85"/>
+        <rect x="556" y="132" width="56" height="46" rx="8" fill="#34d399" fill-opacity=".85"/>
+        <text x="559" y="110" fill="#8496b4" font-size="12.5" text-anchor="middle">粗块恢复原样</text>
+        <text x="559" y="212" fill="#34d399" font-size="12.5" text-anchor="middle" font-weight="700">
+          保留下来的才是真空地</text>
+      </g>
+    </svg>
+    <figcaption>"擦掉再补回来"：细缝一去不返，粗块完好无损。</figcaption>
+  </figure>
+
+  <p>"擦掉多少"这个数字很关键，它决定多细的缝算"正常缝隙"。我们实测发现，健康油棕树之间的缝隙大约 <strong>1.4 米</strong>，所以把界线定在 <strong>1.6 米</strong>——比正常缝隙稍宽一点，这样正常缝隙会被抹掉，而真正的缺株（通常露出 4 米以上）会保留下来。</p>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="grid">
+  <h2><span class="num">07</span>怎么知道"缺了几株"？</h2>
+  <p class="lede">因为油棕是"按格子种的"——我们可以反推出那个格子。</p>
+
+  <p>人工种植园有个天然优势：<strong>树是整齐排列的</strong>。我们实测出这个园子的规律是：</p>
+
+  <div class="grid g3" style="margin:20px 0">
+    <div class="card" style="text-align:center">
+      <div style="font-size:26px;font-weight:800;color:var(--cyan)">8.45 m</div>
+      <div style="color:var(--muted);font-size:14px">株距（同一行相邻两棵）</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:26px;font-weight:800;color:var(--cyan)">60°</div>
+      <div style="color:var(--muted);font-size:14px">错行角度（下一行错开半格）</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:26px;font-weight:800;color:var(--pink)">140 株</div>
+      <div style="color:var(--muted);font-size:14px">每公顷的棵数</div>
+    </div>
+  </div>
+
+  <p>知道了这个规律，就可以<strong>在电脑里画出一张"理想种植网格"</strong>——就像铺地砖前先画好辅助线。</p>
+
+  <p>然后拿每块空地跟这张网格比一比：</p>
+
+  <figure>
+    <svg viewBox="0 0 680 240" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="用种植网格判断缺株还是连片空地">
+      <text x="20" y="20" fill="#c2cee4" font-size="13.5" font-weight="700">理想种植网格（浅色小点 = 本该有树的位置）</text>
+
+      <rect x="24" y="34" width="632" height="188" rx="8" fill="#121b2f" stroke="#22304d"/>
+
+      <!-- 网格点 -->
+      <g fill="#8496b4" fill-opacity=".55">
+        <!-- 生成 8 列 x 5 行 -->
+        <g id="pts">
+          <circle cx="70" cy="70" r="4"/><circle cx="146" cy="70" r="4"/><circle cx="222" cy="70" r="4"/>
+          <circle cx="298" cy="70" r="4"/><circle cx="374" cy="70" r="4"/><circle cx="450" cy="70" r="4"/>
+          <circle cx="526" cy="70" r="4"/><circle cx="602" cy="70" r="4"/>
+          <circle cx="108" cy="104" r="4"/><circle cx="184" cy="104" r="4"/><circle cx="260" cy="104" r="4"/>
+          <circle cx="336" cy="104" r="4"/><circle cx="412" cy="104" r="4"/><circle cx="488" cy="104" r="4"/>
+          <circle cx="564" cy="104" r="4"/><circle cx="640" cy="104" r="4"/>
+          <circle cx="70" cy="138" r="4"/><circle cx="146" cy="138" r="4"/><circle cx="222" cy="138" r="4"/>
+          <circle cx="298" cy="138" r="4"/><circle cx="374" cy="138" r="4"/><circle cx="450" cy="138" r="4"/>
+          <circle cx="526" cy="138" r="4"/><circle cx="602" cy="138" r="4"/>
+          <circle cx="108" cy="172" r="4"/><circle cx="184" cy="172" r="4"/><circle cx="260" cy="172" r="4"/>
+          <circle cx="336" cy="172" r="4"/><circle cx="412" cy="172" r="4"/><circle cx="488" cy="172" r="4"/>
+          <circle cx="564" cy="172" r="4"/><circle cx="640" cy="172" r="4"/>
+          <circle cx="70" cy="204" r="4"/><circle cx="146" cy="204" r="4"/><circle cx="222" cy="204" r="4"/>
+          <circle cx="298" cy="204" r="4"/><circle cx="374" cy="204" r="4"/><circle cx="450" cy="204" r="4"/>
+          <circle cx="526" cy="204" r="4"/><circle cx="602" cy="204" r="4"/>
+        </g>
+      </g>
+
+      <!-- 单株缺株：只覆盖一个点 -->
+      <circle cx="222" cy="70" r="17" fill="#fbbf24" fill-opacity=".85"/>
+      <text x="222" y="42" fill="#fbbf24" font-size="12.5" text-anchor="middle" font-weight="700">株位空缺</text>
+      <text x="222" y="76" fill="#0a0f1c" font-size="12" text-anchor="middle" font-weight="800">1 株</text>
+
+      <!-- 连片空地：覆盖多个点 -->
+      <rect x="386" y="156" width="118" height="52" rx="10" fill="#f87171" fill-opacity=".8"/>
+      <text x="445" y="146" fill="#f87171" font-size="12.5" text-anchor="middle" font-weight="700">连片空地</text>
+      <text x="445" y="188" fill="#0a0f1c" font-size="12.5" text-anchor="middle" font-weight="800">
+        跨 4 个位置 → 补 4 株</text>
+
+      <!-- 林间空隙 -->
+      <ellipse cx="520" cy="120" rx="16" ry="9" fill="#34d399" fill-opacity=".8"/>
+      <text x="520" y="98" fill="#34d399" font-size="12.5" text-anchor="middle" font-weight="700">林间空隙</text>
+      <text x="520" y="124" fill="#0a0f1c" font-size="11" text-anchor="middle" font-weight="800">不用补</text>
+    </svg>
+    <figcaption>把空地跟"理想网格"对照，就能判断它是缺一株、还是整片没种、还是正常缝隙。</figcaption>
+  </figure>
+
+  <div class="note good">
+    <span class="ic">🎁</span>
+    <div>
+      <p><strong>这一步让结果"能直接用"</strong></p>
+      <p>只告诉种植队"这里有一块 300 平方米的空地"，他们还得自己琢磨要种几棵。而用网格一比，程序可以直接告诉他们：<strong>"这里应该补 4 株。"</strong></p>
+      <p>这就把"技术输出"变成了"可执行的补种清单"。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="summary">
+  <h2><span class="num">08</span>一页总结</h2>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>步骤</th><th>电脑在做什么</th><th>用大白话</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1</strong></td><td>读每个格子的红绿蓝数字</td><td>看图上的颜色</td></tr>
+        <tr><td><strong>2</strong></td><td>算"绿度分数"</td><td>算这块地方有多绿</td></tr>
+        <tr><td><strong>3</strong></td><td>跟分界线比较</td><td>判断这里算树还是算空地</td></tr>
+        <tr><td><strong>4</strong></td><td>把树挖掉，剩下的就是空地</td><td>空地 = 不是树的地方</td></tr>
+        <tr><td><strong>5</strong></td><td>先瘦一圈再胖回来</td><td>剪断连成一片的缝隙网</td></tr>
+        <tr><td><strong>6</strong></td><td>跟理想种植网格对照</td><td>判断缺几株、要不要补</td></tr>
+        <tr><td><strong>7</strong></td><td>换算成平方米和经纬度</td><td>输出补种队能用的清单</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note info">
+    <span class="ic">📌</span>
+    <div>
+      <p><strong>一句话记住整件事</strong></p>
+      <p>这套系统<strong>不训练电脑认识空地</strong>，只让它<strong>算出每个格子有多绿</strong>；不绿的地方就是空地；再把连成一片的缝剪开，最后拿种植网格量一量该补几株。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Forest Gap Detection · 零基础版文档 ②</span>
+  <span>上一篇：《这张照片到底是什么？》</span>
+</footer>
+
+</div>
+</body>
+</html>

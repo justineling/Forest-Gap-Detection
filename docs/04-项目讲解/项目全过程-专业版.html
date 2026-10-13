@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>项目全过程（专业版）· 油棕园空地智能检测系统</title>
+<style>
+:root{
+  --bg:#0a0f1c;--panel:#121b2f;--panel2:#16203a;--border:#22304d;--border2:#2d3f63;
+  --text:#e8eefb;--text2:#b7c4dc;--muted:#8496b4;
+  --cyan:#38bdf8;--violet:#a78bfa;--green:#34d399;--amber:#fbbf24;--red:#f87171;--pink:#f472b6;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-size:15.5px;line-height:1.85;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(900px 500px at 8% -5%,rgba(167,139,250,.10),transparent 60%),
+             radial-gradient(800px 500px at 92% 0%,rgba(56,189,248,.09),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:0 26px 90px}
+.hero{padding:56px 0 34px;border-bottom:1px solid var(--border)}
+.eyebrow{display:inline-flex;gap:8px;font-size:13px;color:var(--violet);background:rgba(167,139,250,.09);
+  border:1px solid rgba(167,139,250,.28);border-radius:999px;padding:5px 14px;margin-bottom:20px}
+.hero h1{font-size:clamp(26px,3.8vw,40px);line-height:1.25;font-weight:800;letter-spacing:-.02em}
+.hero h1 span{background:linear-gradient(100deg,var(--violet),var(--cyan) 60%,var(--green));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{margin-top:14px;color:var(--text2);font-size:16.5px;max-width:860px}
+nav.toc{position:sticky;top:0;z-index:50;margin:0 -26px;padding:12px 26px;
+  background:rgba(10,15,28,.9);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);
+  display:flex;gap:6px;overflow-x:auto}
+nav.toc a{color:var(--muted);text-decoration:none;font-size:13px;white-space:nowrap;
+  padding:6px 12px;border-radius:8px;border:1px solid transparent}
+nav.toc a:hover{color:var(--text);background:var(--panel);border-color:var(--border)}
+section{padding:50px 0 6px;scroll-margin-top:64px}
+h2{font-size:24px;font-weight:750;display:flex;align-items:center;gap:13px;margin-bottom:8px}
+h2 .num{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--violet);
+  background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.28);border-radius:8px;padding:3px 10px;flex:none}
+h2+.lede{color:var(--muted);font-size:14.5px;margin-bottom:24px;max-width:900px}
+h3{font-size:17.5px;font-weight:700;margin:32px 0 12px}
+h4{font-size:15.5px;font-weight:700;margin:18px 0 8px;color:var(--text2)}
+p{color:var(--text2);margin-bottom:12px}
+p strong,li strong{color:var(--text);font-weight:650}
+ul,ol{margin:0 0 14px 22px;color:var(--text2)}li{margin-bottom:7px}
+code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);border:1px solid var(--border);
+  border-radius:5px;padding:2px 6px;color:var(--cyan)}
+a{color:var(--cyan)}
+.grid{display:grid;gap:15px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(310px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(165px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:19px 21px}
+.card h4{margin-top:0}.card p:last-child{margin-bottom:0}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;margin:15px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:560px}
+th{background:var(--panel2);color:var(--text);font-weight:700;text-align:left;padding:11px 14px;
+  border-bottom:1px solid var(--border2);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:rgba(167,139,250,.035)}
+td.ok{color:var(--green)}td.no{color:var(--red)}td.mid{color:var(--amber)}
+td strong{color:var(--text)}
+.note{border-radius:12px;padding:16px 20px;margin:15px 0;border:1px solid;display:flex;gap:14px;align-items:flex-start}
+.note .ic{font-size:19px;flex:none;line-height:1.6}
+.note p:last-child{margin-bottom:0}
+.note.info{background:rgba(56,189,248,.07);border-color:rgba(56,189,248,.28)}
+.note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.3)}
+.note.crit{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.32)}
+.note.good{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.28)}
+figure{margin:20px 0;background:#0e1526;border:1px solid var(--border);border-radius:14px;padding:16px}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:11px;font-size:13.5px;color:var(--muted);text-align:center}
+pre{background:#0e1526;border:1px solid var(--border);border-radius:12px;padding:16px 18px;overflow-x:auto;margin:13px 0}
+pre code{background:none;border:none;padding:0;color:var(--text2);font-size:12.5px;line-height:1.8}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:13px;margin:20px 0}
+.kpi div{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
+.kpi b{display:block;font-size:24px;letter-spacing:-.5px;margin-bottom:4px;font-family:var(--mono)}
+.kpi span{font-size:12.5px;color:var(--muted)}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
+.t-p0{background:rgba(248,113,113,.16);color:var(--red)}
+.t-p1{background:rgba(251,191,36,.16);color:var(--amber)}
+.t-p2{background:rgba(132,150,180,.16);color:var(--muted)}
+.t-ok{background:rgba(52,211,153,.16);color:var(--green)}
+.t-todo{background:rgba(132,150,180,.16);color:var(--muted)}
+footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--border);color:var(--muted);
+  font-size:13px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}
+@media(max-width:680px){.wrap{padding:0 16px 70px}nav.toc{margin:0 -16px;padding:10px 16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">项目全过程 · 专业版 · 面向技术同事</div>
+  <h1>油棕园空地智能检测系统<br><span>从需求到当前实现</span></h1>
+  <p class="sub">本文档给出项目的完整技术图景：定位、输入输出契约、架构选型、处理链路、关键工程决策、算法方案与能力边界。适合需要接手开发或评审方案的技术同事阅读。</p>
+</header>
+
+<nav class="toc">
+  <a href="#pos">项目定位</a>
+  <a href="#io">输入输出契约</a>
+  <a href="#arch">架构选型</a>
+  <a href="#pipe">处理链路</a>
+  <a href="#eng">关键工程决策</a>
+  <a href="#algo">算法方案</a>
+  <a href="#limit">能力边界</a>
+  <a href="#state">当前状态</a>
+</nav>
+
+<!-- ============ 1 ============ -->
+<section id="pos">
+  <h2><span class="num">01</span>项目定位</h2>
+  <p class="lede">一个桌面应用：输入无人机正射影像，输出可执行的补种坐标清单。</p>
+
+  <div class="grid g3">
+    <div class="card">
+      <h4>做什么</h4>
+      <p>从航拍正射影像中自动识别<strong>没有油棕树冠覆盖的地面</strong>，矢量化为多边形，输出 GeoJSON。</p>
+    </div>
+    <div class="card">
+      <h4>给谁用</h4>
+      <p>种植园管理者 / 补种作业队。他们要的是一张"哪里缺树、缺几株"的作业图。</p>
+    </div>
+    <div class="card">
+      <h4>为什么做</h4>
+      <p>人工巡园靠走，229 公顷要走很久且容易漏。航拍 + 自动识别能<strong>把巡园变成一次性批处理</strong>。</p>
+    </div>
+  </div>
+
+  <div class="note info">
+    <span class="ic">📌</span>
+    <div>
+      <p><strong>需求收敛的关键一步</strong></p>
+      <p>原始需求提到要区分「长期闲置 / 枯死缺株 / 光照林间空地」三类。经澄清后确认：<strong>业务只关心单一类别「空地」</strong>——哪些土地还空着。不区分是否枯死，不涉及时间维度。</p>
+      <p>这个收敛极大简化了方案：从"多类分类问题"变成<strong>二值判定问题</strong>（树冠区域 vs 非树冠区域）。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="io">
+  <h2><span class="num">02</span>输入输出契约</h2>
+  <p class="lede">先把边界定死，后面的所有设计都围绕它展开。</p>
+
+  <h3>输入</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>项</th><th>要求</th><th>实测值（WGR17.tif）</th></tr></thead>
+      <tbody>
+        <tr><td>影像格式</td><td>GeoTIFF / BigTIFF，含地理坐标</td><td class="ok">BigTIFF，4 波段 8 位</td></tr>
+        <tr><td>坐标系</td><td>任意，需可转换</td><td class="mid">EPSG:4326（经纬度）</td></tr>
+        <tr><td>尺寸</td><td>数 GB 级</td><td class="mid">47,130 × 44,686 = 21.06 亿像素 / 3.5 GiB</td></tr>
+        <tr><td>地面分辨率</td><td>优于 10 cm/px</td><td class="ok">3.30 cm/px</td></tr>
+        <tr><td>波段</td><td>RGB 可接受</td><td class="mid">RGB + Alpha（无近红外）</td></tr>
+        <tr><td>KML 范围</td><td>可选（P1）</td><td class="ok">本次未提供 → 整幅视为单 block</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note warn">
+    <span class="ic">⚠️</span>
+    <div>
+      <p><strong>坐标系是必须处理的第一道坎</strong></p>
+      <p>影像的 CRS 是 <code>EPSG:4326</code>，单位是<strong>"度"</strong>。在这种坐标系下算出来的"面积"没有物理意义。</p>
+      <p>因此所有面积、质心、距离计算<strong>一律先重投影到 <code>EPSG:32649</code>（UTM 49N，单位米）</strong>。这是硬约束，写在工程约定里。</p>
+    </div>
+  </div>
+
+  <h3>输出</h3>
+  <p>GeoJSON（<code>schema_version = "0.3"</code>），嵌套结构 <code>blocks[] → gaps[]</code>，字段 <code>snake_case</code>。</p>
+
+<pre><code>{
+  "type": "FeatureCollection",
+  "schema_version": "0.3",
+  "crs": "EPSG:4326",            // 几何坐标的 CRS
+  "area_crs": "EPSG:32649",      // 面积是在这个 CRS 下算的
+  "processing": { "mode": "tiled_resumable", "tile_size_px": 2048, ... },
+  "planting_grid": {             // 反推出的种植网格（全局）
+    "plant_pitch_m": 8.35, "row_pitch_m": 7.23,
+    "skew_angle_deg": 60.0, "quality": 0.734
+  },
+  "blocks": [{
+    "block_id": "FULL-0001",
+    "gaps": [{
+      "type": "Feature",
+      "properties": {
+        "gap_id": "r000000_c024576-G0001",
+        "class": "vacant_slot",          // 4 类之一
+        "class_confidence": 0.51,
+        "class_method": "planting_grid_prior",
+        "class_reason": "质心距最近格点 1.63 m（容差 2.84 m）...",
+        "area_sqm": 59.1,
+        "centroid_utm": [522530.4, 131297.2],
+        "grid_cell": [12, 7],
+        "coverage_ratio": 0.93,          // 占单位格的比例
+        "elongation": 1.31,
+        "slot_score": 0.62, "patch_score": 0.0, "alley_score": 0.0
+      },
+      "geometry": { "type": "Polygon", "coordinates": [[...]] }
+    }]
+  }],
+  "summary": {
+    "total_gap_count": 1048,
+    "total_area_sqm": 285424.2,
+    "by_class": { "vacant_slot": 180, "alley_gap": 170,
+                  "open_patch": 380, "uncertain": 318 }
+  }
+}</code></pre>
+
+  <div class="note good">
+    <span class="ic">✅</span>
+    <div>
+      <p><strong>分类字段是刻意保留的</strong></p>
+      <p><code>class</code> / <code>class_confidence</code> / <code>class_method</code> 三件套即使在 v1（单类）也保留，为 v2 预留。<code>class_method</code> 记录判定来源（<code>binary_threshold</code> / <code>planting_grid_prior</code>），便于回溯"这个结论是怎么来的"。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="arch">
+  <h2><span class="num">03</span>架构选型</h2>
+  <p class="lede">桌面优先、Windows 优先，但架构预留跨平台。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="系统架构分层图">
+      <defs>
+        <linearGradient id="lg1" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#a78bfa" stop-opacity=".22"/>
+          <stop offset="1" stop-color="#38bdf8" stop-opacity=".16"/>
+        </linearGradient>
+      </defs>
+
+      <!-- 前端层 -->
+      <rect x="24" y="30" width="632" height="60" rx="10" fill="url(#lg1)" stroke="#a78bfa" stroke-opacity=".45"/>
+      <text x="42" y="55" fill="#e8eefb" font-size="14" font-weight="700">前端（WebView）</text>
+      <text x="42" y="77" fill="#b7c4dc" font-size="12.5">
+        React 18 + TypeScript + Vite　·　MUI + Tailwind　·　MapLibre GL（WebGL 影像渲染）
+      </text>
+
+      <path d="M340 90 v22" stroke="#2d3f63" stroke-width="2"/>
+      <text x="352" y="107" fill="#8496b4" font-size="12">Tauri IPC（命令 + 事件）</text>
+
+      <!-- Rust 后端 -->
+      <rect x="24" y="112" width="632" height="80" rx="10" fill="url(#lg1)" stroke="#38bdf8" stroke-opacity=".45"/>
+      <text x="42" y="137" fill="#e8eefb" font-size="14" font-weight="700">Rust 后端（Tauri v2）</text>
+      <text x="42" y="159" fill="#b7c4dc" font-size="12.5">
+        地理内核：gdal / proj / geo / geojson　·　COG + 窗口化读取 + 金字塔
+      </text>
+      <text x="42" y="180" fill="#b7c4dc" font-size="12.5">
+        任务编排 / 断点续跑 / 瓦片服务（仅监听 127.0.0.1）/ 导出
+      </text>
+
+      <path d="M340 192 v22" stroke="#2d3f63" stroke-width="2"/>
+      <text x="352" y="209" fill="#8496b4" font-size="12">本地进程调用</text>
+
+      <!-- Python sidecar -->
+      <rect x="24" y="214" width="632" height="66" rx="10" fill="url(#lg1)" stroke="#34d399" stroke-opacity=".45"/>
+      <text x="42" y="239" fill="#e8eefb" font-size="14" font-weight="700">Python Sidecar（推理层）</text>
+      <text x="42" y="261" fill="#b7c4dc" font-size="12.5">
+        ONNX Runtime 为主　·　<code style="background:none;border:none;color:#38bdf8">InferenceEngine</code>
+         trait 解耦（可换 Rust <code style="background:none;border:none;color:#38bdf8">ort</code>）
+      </text>
+    </svg>
+    <figcaption>三层架构：前端负责交互与渲染，Rust 负责地理处理与编排，Python 负责推理。</figcaption>
+  </figure>
+
+  <h3>三组关键取舍</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>决策点</th><th>选择</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>桌面框架</td>
+          <td class="ok">Tauri v2</td>
+          <td>相比 Electron，安装包小一个数量级；Rust 侧可直接调 GDAL/PROJ，省掉跨进程地理计算</td>
+        </tr>
+        <tr>
+          <td>推理落地方式</td>
+          <td class="ok">Python sidecar（ONNX Runtime）</td>
+          <td>Python 生态的模型工具链最全；ONNX 分发避免把 PyTorch 打进安装包（体积风险）</td>
+        </tr>
+        <tr>
+          <td>大影像处理</td>
+          <td class="ok">COG + 窗口化 + 金字塔</td>
+          <td>3.5 GiB 影像不可能整幅读入内存，必须按需读窗口</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note info">
+    <span class="ic">💡</span>
+    <div>
+      <p><strong>为什么 Python 用 sidecar 而不是嵌入</strong></p>
+      <p>模型迭代频繁（换权重、调后处理），放在独立进程里可以<strong>单独升级而不重编 Rust</strong>。同时推理崩溃不会带崩主界面。代价是多一层进程间通信与打包复杂度。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="pipe">
+  <h2><span class="num">04</span>处理链路</h2>
+  <p class="lede">从 3.5 GiB 影像到一个 GeoJSON，中间发生了什么。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 420" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="完整处理链路">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+          <path d="M0 0 L9 4.5 L0 9 z" fill="#2d3f63"/>
+        </marker>
+      </defs>
+
+      <!-- 阶段 1 -->
+      <rect x="24" y="20" width="300" height="70" rx="10" fill="#16203a" stroke="#38bdf8" stroke-opacity=".4"/>
+      <text x="40" y="43" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">STEP 1</text>
+      <text x="40" y="63" fill="#e8eefb" font-size="13.5" font-weight="700">影像侦察与瓦片规划</text>
+      <text x="40" y="82" fill="#8496b4" font-size="11.5">读元数据 → 算分辨率/面积 → 用金字塔排除 NoData 瓦片</text>
+
+      <rect x="356" y="20" width="300" height="70" rx="10" fill="#16203a" stroke="#38bdf8" stroke-opacity=".4"/>
+      <text x="372" y="43" fill="#38bdf8" font-size="12" font-weight="700" font-family="monospace">STEP 2</text>
+      <text x="372" y="63" fill="#e8eefb" font-size="13.5" font-weight="700">全局种植网格勘察</text>
+      <text x="372" y="82" fill="#8496b4" font-size="11.5">采样 N 块 → 估株行距/方位 → 取中位数定全局格点</text>
+
+      <path d="M330 55 h20" stroke="#2d3f63" stroke-width="2" marker-end="url(#ar)"/>
+
+      <!-- 阶段 3 -->
+      <rect x="24" y="112" width="632" height="96" rx="10" fill="#16203a" stroke="#34d399" stroke-opacity=".4"/>
+      <text x="40" y="135" fill="#34d399" font-size="12" font-weight="700" font-family="monospace">STEP 3 · 逐瓦片处理（可断点续跑）</text>
+      <text x="40" y="157" fill="#e8eefb" font-size="13" font-weight="700">读窗口（含 128px 外扩）→ 树冠分割 → 取补集 → 空地分离</text>
+      <text x="40" y="177" fill="#b7c4dc" font-size="11.5">
+        树冠分割：ExG → 高斯平滑 → 混合阈值（分位 + 上下限夹逼 + 饱和度辅助）→ 形态学 → 填洞 → 去碎块
+      </text>
+      <text x="40" y="196" fill="#b7c4dc" font-size="11.5">
+        空地分离：距离变换实现圆盘开运算，半径 = min_gap_width/2 = 24px（抹掉 &lt;1.6m 的株间窄缝）
+      </text>
+
+      <path d="M340 208 v20" stroke="#2d3f63" stroke-width="2" marker-end="url(#ar)"/>
+
+      <!-- 阶段 4 -->
+      <rect x="24" y="236" width="300" height="88" rx="10" fill="#16203a" stroke="#a78bfa" stroke-opacity=".4"/>
+      <text x="40" y="259" fill="#a78bfa" font-size="12" font-weight="700" font-family="monospace">STEP 4</text>
+      <text x="40" y="279" fill="#e8eefb" font-size="13.5" font-weight="700">矢量化 + 归属判定</text>
+      <text x="40" y="298" fill="#8496b4" font-size="11.5">栅格→多边形（投影系下算面积、Douglas-Peucker 简化）</text>
+      <text x="40" y="315" fill="#fbbf24" font-size="11.5">质心落在本瓦片 core 区才输出 → 跨边界不重不漏</text>
+
+      <rect x="356" y="236" width="300" height="88" rx="10" fill="#16203a" stroke="#a78bfa" stroke-opacity=".4"/>
+      <text x="372" y="259" fill="#a78bfa" font-size="12" font-weight="700" font-family="monospace">STEP 5</text>
+      <text x="372" y="279" fill="#e8eefb" font-size="13.5" font-weight="700">株行距网格分类</text>
+      <text x="372" y="298" fill="#8496b4" font-size="11.5">证据打分：株位空缺 / 林间空隙 / 连片空地 / 不确定</text>
+      <text x="372" y="315" fill="#8496b4" font-size="11.5">输出网格坐标、到格点距离、占格比例、长宽比</text>
+
+      <path d="M330 280 h20" stroke="#2d3f63" stroke-width="2" marker-end="url(#ar)"/>
+
+      <path d="M340 324 v20" stroke="#2d3f63" stroke-width="2" marker-end="url(#ar)"/>
+
+      <!-- 阶段 6 -->
+      <rect x="24" y="348" width="632" height="58" rx="10" fill="#16203a" stroke="#f472b6" stroke-opacity=".4"/>
+      <text x="40" y="371" fill="#f472b6" font-size="12" font-weight="700" font-family="monospace">STEP 6</text>
+      <text x="40" y="391" fill="#e8eefb" font-size="13.5" font-weight="700">合并导出整幅 GeoJSON</text>
+      <text x="200" y="391" fill="#8496b4" font-size="11.5">（原子写盘 · 参数指纹失效 · 汇总统计）</text>
+    </svg>
+    <figcaption>六步链路。STEP 3 是唯一的重活，也是唯一需要断点续跑保护的地方。</figcaption>
+  </figure>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="eng">
+  <h2><span class="num">05</span>关键工程决策</h2>
+  <p class="lede">这些决策不是"最佳实践"，而是被实测问题逼出来的。</p>
+
+  <h3>① 瓦片重叠 + 质心归属</h3>
+  <div class="grid g2">
+    <div class="card" style="border-left:3px solid var(--red)">
+      <h4>不这么做会怎样</h4>
+      <p>恰好跨越瓦片边界的空地会被切成两块，各自面积都不到阈值，<strong>两边都丢掉</strong>——最终结果里凭空少一块空地。</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--green)">
+      <h4>做法</h4>
+      <p>每块向外多读 <code>overlap=128px</code>（≈4.2 m，大于半株距）；输出时只保留<strong>质心落在本瓦片核心区</strong>的多边形。跨边界的空地只会被"它质心所在的那块"输出一次。</p>
+    </div>
+  </div>
+
+  <h3>② 全局网格而非逐块网格</h3>
+  <p>株行距网格的<strong>相位必须全局一致</strong>。如果每块各自估计、各自定原点，相邻瓦片的格点会错开半格，同一块空地在两块里会被判成不同类别。</p>
+  <p>做法：先跑一遍网格勘察，在若干采样瓦片上估计后取中位数，得到全局网格；之后所有瓦片共用这一个网格。</p>
+
+  <h3>③ 断点续跑 + 参数指纹</h3>
+  <p>整幅 229 公顷、528 个瓦片，跑一遍约 20 分钟。中途断电不该从头再来。</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>机制</th><th>实现</th><th>防的是什么</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>原子写盘</td>
+          <td>先写 <code>.tmp</code> 再 <code>os.replace()</code></td>
+          <td>中途断电留下半个损坏的 JSON，下次读进来直接崩</td>
+        </tr>
+        <tr>
+          <td>参数指纹</td>
+          <td>影像（路径+size+mtime）+ 全部参数 → SHA256 前 16 位</td>
+          <td><strong>改了参数却拿到旧结果</strong>——这是最坑的情况</td>
+        </tr>
+        <tr>
+          <td>有效性排序</td>
+          <td><code>order_tiles_by_validity()</code> 用金字塔概览排序</td>
+          <td>园区只占外接矩形 57%，行优先遍历开头全撞 NoData</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note good">
+    <span class="ic">🧪</span>
+    <div>
+      <p><strong>实测验证</strong></p>
+      <p>同命令重跑 → 显示「命中缓存 5，新处理 0」，结果完全一致。<br>
+      改一个参数（<code>--min-area 30 → 60</code>）→ 指纹从 <code>67d1c4a2</code> 变为 <code>333d2152</code>，缓存全部失效重算。</p>
+    </div>
+  </div>
+
+  <h3>④ 用距离变换替代形态学暴力卷积</h3>
+  <p>空地分离原本用 <code>scipy.binary_opening(mask, disk(r=24))</code>。圆盘结构元是 <strong>O(r²) 的暴力卷积</strong>——2304² 上每像素要算约 1800 次比较，<strong>单块 11.7 秒，占整条流水线 85% 的时间</strong>。</p>
+  <p>改用距离变换实现等价的圆盘开运算（O(n)）：<strong>1.95 秒，快 6 倍</strong>。实测差异像素仅 0.04%，且 99.4% 落在数组边界 40px 内——而边界本来就会被 overlap 机制丢弃。</p>
+
+  <div class="note crit">
+    <span class="ic">🚫</span>
+    <div>
+      <p><strong>一个不能走的捷径</strong></p>
+      <p>不能用 <code>binary_opening(mask, np.ones((3,3)), iterations=r)</code> 代替——那构造出来的是<strong>菱形</strong>而不是圆盘，实测差异 46,092 个像素，会改变结果形状。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="algo">
+  <h2><span class="num">06</span>算法方案</h2>
+  <p class="lede">核心思路一句话：只训练"认树"，空地 = 树冠掩膜的补集。</p>
+
+  <h3>为什么不用深度学习模型</h3>
+  <p>项目初期下载了 DeepForest 预训练权重（MIT 许可）准备做树冠检测。实测结论：<strong>不可用</strong>。</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>指标</th><th>DeepForest 预训练</th><th>期望值</th><th>结论</th></tr></thead>
+      <tbody>
+        <tr><td>检测置信度（中位）</td><td class="no">0.40</td><td>0.7 ~ 0.95</td><td class="no">模型对每个判断都没把握</td></tr>
+        <tr><td>冠层覆盖率</td><td class="no">39.0%</td><td>60 ~ 80%</td><td class="no">漏检约一半树冠</td></tr>
+        <tr><td>框宽中位</td><td class="mid">5.73 m</td><td>7 ~ 9 m</td><td class="mid">尺寸偏小且不稳定</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>根因是<strong>域偏移（domain shift）</strong>：训练数据是北美 NEON 温带森林，与油棕园在树冠形状、种植规律性、背景色、分辨率上全都不同。</p>
+
+  <h3>采用的方案：冠层结构法</h3>
+<pre><code>ExG = 2·G − R − B                          # 超绿指数
+sm  = 高斯平滑(ExG, sigma=5)                # 把同一株的羽叶连成一片
+thr = clip(percentile(sm, 40), 40, 80)      # 混合阈值
+canopy = (sm > thr) | (饱和度 > 0.45)        # 高饱和度兜底判为植被
+canopy = 闭运算×3 → 开运算×2 → 填洞 → 去 &lt;2000px 碎块
+gap    = ~canopy & valid                    # 补集
+gap    = 圆盘开运算(gap, r=24px)             # 分离连通缝隙网络
+gap    = 去 &lt;200px 碎块</code></pre>
+
+  <h3>阈值判据的演进（三次迭代）</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>版本</th><th>判据</th><th>实测问题</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>v1</td>
+          <td>纯分位 40%</td>
+          <td class="no">相对判据，把健康林下植被整片误判成空地（全园 18% 被标空地）</td>
+        </tr>
+        <tr>
+          <td>v2</td>
+          <td>纯绝对 ExG &gt; 60</td>
+          <td class="no">对曝光过敏。跨航带 ExG 中位差 3 倍，暗航带冠层只剩 31%</td>
+        </tr>
+        <tr>
+          <td><strong>v3</strong></td>
+          <td><strong>混合 clip(分位40%, 40, 80) + 饱和度辅助</strong></td>
+          <td class="ok">跨曝光稳定：密植区 88% / 中南 79% / 中央 67%，落在合理区间</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note warn">
+    <span class="ic">⚠️</span>
+    <div>
+      <p><strong>评估时的隐藏陷阱</strong></p>
+      <p>算"冠层覆盖率"时必须<strong>先掩掉 NoData</strong>。影像外接矩形里有大片空白区（园区只占 57%），不掩的话会把 NoData 算进分母。实测某瓦片全图冠层 31%、仅有效区 71%——差一倍多，足以得出完全相反的结论。</p>
+    </div>
+  </div>
+
+  <h3>空地分类（4 类）</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>类别</th><th>含义</th><th>判定依据</th><th>实测中位面积</th></tr></thead>
+      <tbody>
+        <tr><td><code>vacant_slot</code> 株位空缺</td><td>单个株位缺一株</td><td>质心贴近格点 + 形状不细长 + 面积约一格</td><td class="ok">59 m²</td></tr>
+        <tr><td><code>alley_gap</code> 林间空隙</td><td>树冠间正常缝隙</td><td>细长 / 面积远小于一格 / 明显夹在两行之间</td><td class="ok">52 m²</td></tr>
+        <tr><td><code>open_patch</code> 连片空地</td><td>跨多格成片空缺</td><td>面积 ≥ 2 个单位格且形状证据不足</td><td class="ok">321 m²</td></tr>
+        <tr><td><code>uncertain</code> 不确定</td><td>证据不足，人工复核</td><td>各项证据均不充分</td><td class="mid">93 m²</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>分类用<strong>证据打分</strong>而非硬 if-else 链，避免在容差边界上抖动（同一块空地在不同瓦片里因相位误差被判成不同类）。</p>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="limit">
+  <h2><span class="num">07</span>能力边界</h2>
+  <p class="lede">必须如实区分：什么能承诺，什么不能。</p>
+
+  <div class="grid g3">
+    <div class="card" style="border-top:3px solid var(--green)">
+      <h4 style="color:var(--green)">高可信 · 可承诺</h4>
+      <p><strong>「有没有树冠覆盖」</strong></p>
+      <p>几何判定，跨曝光稳定。这是产品的核心承诺。</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--amber)">
+      <h4 style="color:var(--amber)">中等可信</h4>
+      <p><strong>「株位空缺 vs 林间空隙」</strong></p>
+      <p>靠株行距网格先验。失效条件：种植不规则 / 缺株率 &gt; 30~40% / 行随地形弯曲 / 树冠严重粘连。</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--red)">
+      <h4 style="color:var(--red)">不可辨识 · 不可承诺</h4>
+      <p><strong>「是否枯死」</strong></p>
+      <p>单张影像不含"这棵树曾经活着"的历史信息——这是<strong>物理观测的极限</strong>，不是算法不够好。</p>
+    </div>
+  </div>
+
+  <div class="note crit">
+    <span class="ic">❗</span>
+    <div>
+      <p><strong>产品定位必须与能力对齐</strong></p>
+      <p>UI 上应把分类结果标注为「<strong>候选类别，需人工确认</strong>」，而不是"系统判定结果"。若业务确实需要区分枯死，必须补充多期影像 / 多光谱 / DSM——这属于需求变更，不是调参能解决的。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="state">
+  <h2><span class="num">08</span>当前状态</h2>
+  <p class="lede">算法链路已端到端跑通并验证，桌面端应用尚未开始。</p>
+
+  <div class="kpi">
+    <div><b style="color:var(--green)">1048</b><span>检出空地（块）</span></div>
+    <div><b style="color:var(--cyan)">285,424</b><span>空地总面积（m²）</span></div>
+    <div><b style="color:var(--pink)">12.46%</b><span>占园区面积</span></div>
+    <div><b style="color:var(--amber)">1172</b><span>整幅耗时（秒）</span></div>
+  </div>
+
+  <h3>已完成</h3>
+  <ul>
+    <li><span class="tag t-ok">完成</span> 影像规格实测（尺寸/CRS/分辨率/NoData 分布）</li>
+    <li><span class="tag t-ok">完成</span> 冠层结构法分割链路 + 判据三次迭代收敛</li>
+    <li><span class="tag t-ok">完成</span> 空地分离（连通缝隙网络切分）</li>
+    <li><span class="tag t-ok">完成</span> 株行距网格先验 + 四类分类（含人造园自检 30/30）</li>
+    <li><span class="tag t-ok">完成</span> 整幅分块处理 + 断点续跑 + 参数指纹</li>
+    <li><span class="tag t-ok">完成</span> 结果可视化与人工核对（原生分辨率抽查真实空地）</li>
+  </ul>
+
+  <h3>未开始 / 待办</h3>
+  <ul>
+    <li><span class="tag t-todo">待办</span> Tauri 桌面端工程骨架（前端 + Rust 后端）</li>
+    <li><span class="tag t-todo">待办</span> Rust 地理内核（gdal/proj 绑定、COG 窗口化读取）</li>
+    <li><span class="tag t-todo">待办</span> 推理层封装为 sidecar + ONNX 分发</li>
+    <li><span class="tag t-todo">待办</span> 任务编排 / IPC / 瓦片服务 / 导出</li>
+    <li><span class="tag t-todo">待办</span> 前端 UI（MapLibre 影像渲染 + 空地编辑）</li>
+    <li><span class="tag t-todo">待办</span> KML 地块切分（P1，当前整幅视为单 block）</li>
+    <li><span class="tag t-p1">待定</span> 是否排除「道路/排水保留带」——属业务定义，需产品拍板</li>
+  </ul>
+
+  <div class="note info">
+    <span class="ic">🧭</span>
+    <div>
+      <p><strong>下一步的技术优先级建议</strong></p>
+      <ol style="margin:8px 0 0">
+        <li><strong>先定"道路保留带"的业务口径</strong>——它影响 380 块 / 23.6 万 m² 的输出，越早定越省返工</li>
+        <li>把现有 Python 链路封装成 sidecar 契约（输入输出 JSON 化）</li>
+        <li>搭 Tauri 骨架，先用固定结果打通 IPC 与渲染</li>
+        <li>最后接 Rust 地理内核替换掉 Python 侧的栅格 I/O</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Forest Gap Detection · 项目全过程（专业版）</span>
+  <span>配套阅读：小白版《这个项目在做什么》·《项目进展历程》</span>
+</footer>
+
+</div>
+</body>
+</html>

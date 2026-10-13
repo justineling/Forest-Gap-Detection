@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>项目进展历程 · 技术路线的七次转折</title>
+<style>
+:root{
+  --bg:#0a0f1c;--panel:#121b2f;--panel2:#16203a;--border:#22304d;--border2:#2d3f63;
+  --text:#e8eefb;--text2:#b7c4dc;--muted:#8496b4;
+  --cyan:#38bdf8;--violet:#a78bfa;--green:#34d399;--amber:#fbbf24;--red:#f87171;--pink:#f472b6;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-size:15.5px;line-height:1.85;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(900px 500px at 8% -5%,rgba(56,189,248,.10),transparent 60%),
+             radial-gradient(800px 500px at 92% 0%,rgba(244,114,182,.09),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:1060px;margin:0 auto;padding:0 26px 90px}
+.hero{padding:56px 0 34px;border-bottom:1px solid var(--border)}
+.eyebrow{display:inline-flex;gap:8px;font-size:13px;color:var(--cyan);background:rgba(56,189,248,.09);
+  border:1px solid rgba(56,189,248,.28);border-radius:999px;padding:5px 14px;margin-bottom:20px}
+.hero h1{font-size:clamp(26px,3.8vw,40px);line-height:1.25;font-weight:800;letter-spacing:-.02em}
+.hero h1 span{background:linear-gradient(100deg,var(--cyan),var(--violet) 55%,var(--pink));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{margin-top:14px;color:var(--text2);font-size:16.5px;max-width:860px}
+nav.toc{position:sticky;top:0;z-index:50;margin:0 -26px;padding:12px 26px;
+  background:rgba(10,15,28,.9);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);
+  display:flex;gap:6px;overflow-x:auto}
+nav.toc a{color:var(--muted);text-decoration:none;font-size:13px;white-space:nowrap;
+  padding:6px 12px;border-radius:8px;border:1px solid transparent}
+nav.toc a:hover{color:var(--text);background:var(--panel);border-color:var(--border)}
+section{padding:46px 0 6px;scroll-margin-top:64px}
+h2{font-size:23px;font-weight:750;display:flex;align-items:center;gap:12px;margin-bottom:8px}
+h2 .num{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--cyan);
+  background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.28);border-radius:8px;padding:3px 10px;flex:none}
+h2+.lede{color:var(--muted);font-size:14.5px;margin-bottom:22px;max-width:900px}
+h3{font-size:17px;font-weight:700;margin:28px 0 10px}
+h4{font-size:15px;font-weight:700;margin:16px 0 7px;color:var(--text2)}
+p{color:var(--text2);margin-bottom:12px}
+p strong,li strong{color:var(--text);font-weight:650}
+ul,ol{margin:0 0 14px 22px;color:var(--text2)}li{margin-bottom:7px}
+code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);border:1px solid var(--border);
+  border-radius:5px;padding:2px 6px;color:var(--cyan)}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:18px 20px}
+.card h4{margin-top:0}.card p:last-child{margin-bottom:0}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:13px;margin:14px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:540px}
+th{background:var(--panel2);color:var(--text);font-weight:700;text-align:left;padding:11px 14px;
+  border-bottom:1px solid var(--border2);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.ok{color:var(--green)}td.no{color:var(--red)}td.mid{color:var(--amber)}
+td strong{color:var(--text)}
+.note{border-radius:12px;padding:15px 19px;margin:14px 0;border:1px solid;display:flex;gap:13px;align-items:flex-start}
+.note .ic{font-size:18px;flex:none;line-height:1.6}
+.note p:last-child{margin-bottom:0}
+.note.info{background:rgba(56,189,248,.07);border-color:rgba(56,189,248,.28)}
+.note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.3)}
+.note.crit{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.32)}
+.note.good{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.28)}
+figure{margin:18px 0;background:#0e1526;border:1px solid var(--border);border-radius:13px;padding:16px}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:11px;font-size:13.5px;color:var(--muted);text-align:center}
+
+/* 时间轴 */
+.tl{position:relative;margin:34px 0 0;padding-left:52px}
+.tl::before{content:"";position:absolute;left:17px;top:8px;bottom:8px;width:2px;
+  background:linear-gradient(180deg,var(--red),var(--amber) 22%,var(--green) 42%,var(--cyan) 64%,var(--violet) 84%,var(--pink))}
+.tl-item{position:relative;margin-bottom:40px}
+.tl-item::before{content:"";position:absolute;left:-42px;top:5px;width:16px;height:16px;border-radius:50%;
+  background:var(--bg);border:3px solid var(--cyan);box-shadow:0 0 0 4px rgba(56,189,248,.10)}
+.tl-item.fail::before{border-color:var(--red);box-shadow:0 0 0 4px rgba(248,113,113,.10)}
+.tl-item.ok::before{border-color:var(--green);box-shadow:0 0 0 4px rgba(52,211,153,.10)}
+.tl-item.fix::before{border-color:var(--amber);box-shadow:0 0 0 4px rgba(251,191,36,.10)}
+.tl-item.final::before{border-color:var(--pink);box-shadow:0 0 0 4px rgba(244,114,182,.12)}
+.tl-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:11px;margin-bottom:9px}
+.tl-tag{font-family:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.06em;
+  padding:2px 9px;border-radius:6px;background:var(--panel2);border:1px solid var(--border2);color:var(--muted)}
+.tl-item.fail .tl-tag{color:var(--red);border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.08)}
+.tl-item.ok .tl-tag{color:var(--green);border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.08)}
+.tl-item.fix .tl-tag{color:var(--amber);border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08)}
+.tl-item.final .tl-tag{color:var(--pink);border-color:rgba(244,114,182,.35);background:rgba(244,114,182,.08)}
+.tl-title{font-size:19px;font-weight:750;color:var(--text);line-height:1.4}
+.tl-body{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:18px 20px}
+.verdict{margin-top:14px;padding-top:13px;border-top:1px dashed var(--border2);font-size:14px;color:var(--text2)}
+.verdict b{color:var(--text)}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:18px 0}
+.kpi div{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:15px}
+.kpi b{display:block;font-size:22px;letter-spacing:-.5px;margin-bottom:3px;font-family:var(--mono)}
+.kpi span{font-size:12px;color:var(--muted)}
+footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--border);color:var(--muted);
+  font-size:13px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}
+@media(max-width:680px){.wrap{padding:0 16px 70px}nav.toc{margin:0 -16px;padding:10px 16px}
+  .tl{padding-left:40px}.tl-item::before{left:-33px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">项目进展 · 技术路线的七次转折</div>
+  <h1>从 DeepForest 到混合判据<br><span>我们为什么一次次推翻自己</span></h1>
+  <p class="sub">这份文档按时间顺序记录技术路线的每一次转向。每一次转向都不是"想换个方法试试"，而是被实测数据逼出来的。每个阶段都附上"为什么推翻上一版"的证据。</p>
+</header>
+
+<nav class="toc">
+  <a href="#tl">时间轴总览</a>
+  <a href="#s1">① DeepForest 折戟</a>
+  <a href="#s2">② 转向结构法</a>
+  <a href="#s3">③ 空地是张网</a>
+  <a href="#s4">④ 网格先验</a>
+  <a href="#s5">⑤ 整幅工程化</a>
+  <a href="#s6">⑥ 判据纠错</a>
+  <a href="#s7">⑦ 分类补全</a>
+  <a href="#lesson">复盘：教训</a>
+</nav>
+
+<!-- ============ 总览 ============ -->
+<section id="tl">
+  <h2><span class="num">00</span>时间轴总览</h2>
+  <p class="lede">七次转折，三次是"发现走错了"，四次是"发现还不够"。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="技术路线转折总览">
+      <defs>
+        <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#f87171"/>
+          <stop offset=".2" stop-color="#fbbf24"/>
+          <stop offset=".42" stop-color="#34d399"/>
+          <stop offset=".64" stop-color="#38bdf8"/>
+          <stop offset=".84" stop-color="#a78bfa"/>
+          <stop offset="1" stop-color="#f472b6"/>
+        </linearGradient>
+      </defs>
+      <path d="M40 128 H640" stroke="url(#line)" stroke-width="3" stroke-linecap="round"/>
+
+      <!-- 节点 -->
+      <g font-size="11.5" font-weight="700" text-anchor="middle">
+        <circle cx="66" cy="128" r="10" fill="#0a0f1c" stroke="#f87171" stroke-width="3"/>
+        <text x="66" y="106" fill="#f87171">①</text>
+        <text x="66" y="160" fill="#b7c4dc">DeepForest</text>
+        <text x="66" y="176" fill="#8496b4" font-weight="400">失败</text>
+
+        <circle cx="168" cy="128" r="10" fill="#0a0f1c" stroke="#fbbf24" stroke-width="3"/>
+        <text x="168" y="106" fill="#fbbf24">②</text>
+        <text x="168" y="160" fill="#b7c4dc">结构法</text>
+        <text x="168" y="176" fill="#8496b4" font-weight="400">可用</text>
+
+        <circle cx="270" cy="128" r="10" fill="#0a0f1c" stroke="#34d399" stroke-width="3"/>
+        <text x="270" y="106" fill="#34d399">③</text>
+        <text x="270" y="160" fill="#b7c4dc">空地分离</text>
+        <text x="270" y="176" fill="#8496b4" font-weight="400">成块</text>
+
+        <circle cx="372" cy="128" r="10" fill="#0a0f1c" stroke="#38bdf8" stroke-width="3"/>
+        <text x="372" y="106" fill="#38bdf8">④</text>
+        <text x="372" y="160" fill="#b7c4dc">网格先验</text>
+        <text x="372" y="176" fill="#8496b4" font-weight="400">分类</text>
+
+        <circle cx="474" cy="128" r="10" fill="#0a0f1c" stroke="#a78bfa" stroke-width="3"/>
+        <text x="474" y="106" fill="#a78bfa">⑤</text>
+        <text x="474" y="160" fill="#b7c4dc">整幅分块</text>
+        <text x="474" y="176" fill="#8496b4" font-weight="400">工程化</text>
+
+        <circle cx="576" cy="128" r="10" fill="#0a0f1c" stroke="#f472b6" stroke-width="3"/>
+        <text x="576" y="106" fill="#f472b6">⑥⑦</text>
+        <text x="576" y="160" fill="#b7c4dc">判据纠错</text>
+        <text x="576" y="176" fill="#8496b4" font-weight="400">收敛</text>
+      </g>
+
+      <text x="40" y="222" fill="#8496b4" font-size="12">起点：想用现成 AI 模型开箱即用</text>
+      <text x="640" y="222" fill="#8496b4" font-size="12" text-anchor="end">终点：自建判据 + 结构先验，全程可验证</text>
+    </svg>
+    <figcaption>七次转折：两次"发现走错"（①⑥）、五次"发现还不够"（②③④⑤⑦）。</figcaption>
+  </figure>
+</section>
+
+<!-- ============ 1 ============ -->
+<div class="tl">
+
+<div class="tl-item fail">
+  <div class="tl-head">
+    <span class="tl-tag">转折 ①</span>
+    <span class="tl-title">打算用 DeepForest 开箱即用 —— 实测失败</span>
+  </div>
+  <div class="tl-body">
+    <h4>当时的想法</h4>
+    <p>DeepForest 是一个成熟的开源树冠检测模型，MIT 许可，直接可用。我们下载了权重（123 MB），准备"跑一下就完事"。</p>
+
+    <h4>实测结果</h4>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>指标</th><th>实测</th><th>应该是什么</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>检测置信度（中位）</td><td class="no">0.40</td><td>0.7 ~ 0.95</td><td class="no">模型对每个判断都没把握</td></tr>
+          <tr><td>冠层覆盖率</td><td class="no">39.0%</td><td>60 ~ 80%</td><td class="no">漏检约一半树冠</td></tr>
+          <tr><td>框宽中位</td><td class="mid">5.73 m</td><td>7 ~ 9 m</td><td class="mid">尺寸偏小且换窗口就变</td></tr>
+          <tr><td>处理耗时</td><td class="mid">约 37 秒</td><td>—</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>根因</h4>
+    <p><strong>域偏移（domain shift）</strong>。这个模型的训练数据是北美 NEON 温带森林，和油棕园在四个维度上全都不同：</p>
+    <ul>
+      <li><strong>树冠形状</strong>：温带林是不规则团块，油棕是放射状星形</li>
+      <li><strong>种植方式</strong>：自然分布 vs 规整株行距</li>
+      <li><strong>背景</strong>：林下植被 vs 红褐色裸土</li>
+      <li><strong>分辨率</strong>：3.3 cm/px 远高于训练数据</li>
+    </ul>
+
+    <div class="verdict">
+      <b>结论</b>：预训练权重不能迁移。要么用本地数据微调（但我们没有任何标注数据），要么换思路。
+    </div>
+  </div>
+</div>
+
+<!-- ============ 2 ============ -->
+<div class="tl-item ok">
+  <div class="tl-head">
+    <span class="tl-tag">转折 ②</span>
+    <span class="tl-title">转向冠层结构法 —— 不需要训练数据，效果反而更好</span>
+  </div>
+  <div class="tl-body">
+    <h4>思路的转变</h4>
+    <p>既然"认树"很难，那能不能<strong>不做"认树"这件事</strong>？</p>
+    <p>换个问法：油棕园里只有两种东西——绿色的树冠和红褐色的土。它们颜色差别极大。所以只要判断"这块地方够不够绿"就够了，<strong>不需要模型去理解"什么是油棕"</strong>。</p>
+
+    <h4>做法</h4>
+    <p>用超绿指数 ExG（<code>2×绿 − 红 − 蓝</code>）区分植被与裸土，配合高斯平滑、阈值分割、形态学处理。全链路不需要任何训练数据。</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>指标</th><th>DeepForest</th><th>结构法</th><th>提升</th></tr></thead>
+        <tbody>
+          <tr><td>冠层覆盖率</td><td class="no">39.0%</td><td class="ok">71.5%</td><td class="ok">落入成熟园 60~80% 合理区间</td></tr>
+          <tr><td>处理耗时</td><td class="no">37 秒</td><td class="ok">约 1 秒</td><td class="ok">快约 30 倍</td></tr>
+          <tr><td>训练数据需求</td><td class="no">需要微调</td><td class="ok">完全不需要</td><td class="ok">零标注冷启动</td></tr>
+          <tr><td>输出形式</td><td class="mid">矩形框（还要再分割）</td><td class="ok">像素级掩膜</td><td class="ok">链路更短</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="verdict">
+      <b>关键洞察</b>：人工种植园相比自然林有一个巨大优势 —— <strong>它的规律性可以被显式利用</strong>。颜色差异是规律、株行距是规律。这些规律比"让模型学会认树"可靠得多，也更可解释。
+    </div>
+  </div>
+</div>
+
+<!-- ============ 3 ============ -->
+<div class="tl-item ok">
+  <div class="tl-head">
+    <span class="tl-tag">转折 ③</span>
+    <span class="tl-title">发现空地不是"一块块"，而是"一张网"</span>
+  </div>
+  <div class="tl-body">
+    <h4>意外出现</h4>
+    <p>按理说，把树冠掩膜取反，应该得到一块块独立的空地。但实际输出是<strong>一个巨大的连通多边形</strong>。</p>
+    <p>原因：油棕成排种植，树与树之间本来就有窄缝，这些窄缝<strong>彼此连通</strong>，取反后得到的是整张"通道网络"，不是一个个孤立的洞。</p>
+
+    <h4>解法：形态学开运算</h4>
+    <p>半径 <code>r = min_gap_width_m / 2</code>。腐蚀时抹掉宽度不足 <code>min_gap_width_m</code> 的通道，膨胀时这些通道<strong>再也回不来</strong>，而大块空地恢复原样。</p>
+
+    <h4>1.6 米这个数字怎么来的</h4>
+    <p>实测健康油棕树冠之间的缝隙约 <strong>1.4 米</strong>。取 1.6 米——略高于正常缝隙，低于单株缺株的暴露尺寸（4 米以上）。这样正常缝隙被抹掉，真正的缺株保留。</p>
+
+    <h4>顺带解决：多边形简化</h4>
+    <p>栅格转矢量会得到逐像素的锯齿。实测一个 408 m² 的多边形有 <strong>4839 个顶点</strong>，导入 GIS 会卡死。</p>
+    <p>用 Douglas-Peucker 简化（容差 0.3 m，<strong>必须在投影系下做</strong>，否则"米"没有意义）：顶点 17856 → 544（压到 3%），面积仅变化 1.4%。</p>
+
+    <div class="verdict">
+      <b>结果</b>：分离前 1302 m² 连成一片 → 分离后 902 m² / 44 个候选单元 → 按 ≥30 m² 过滤得 4 块空地、合计 558 m²。
+    </div>
+  </div>
+</div>
+
+<!-- ============ 4 ============ -->
+<div class="tl-item ok">
+  <div class="tl-head">
+    <span class="tl-tag">转折 ④</span>
+    <span class="tl-title">接上株行距网格先验 —— 从"哪里有空地"到"缺了几株"</span>
+  </div>
+  <div class="tl-body">
+    <h4>为什么还需要这一步</h4>
+    <p>到 ③ 为止，输出是"这里有一块 300 平方米的空地"。但种植队真正想知道的是：<strong>这里要补几棵树？</strong></p>
+    <p>而且要区分：这块空地是<strong>单个位置缺了一棵</strong>，还是<strong>整片都没种</strong>，还是<strong>本来就该有的树间缝隙</strong>？</p>
+
+    <h4>做法：反推种植网格</h4>
+    <p>人工种植园是按网格种的。我们从影像里反推出这个网格：找到每棵树的位置（树心），测量它们之间的间距规律，重建出"理想种植网格"。然后拿每块空地跟网格对照。</p>
+
+    <h4>踩过的坑（这个阶段最曲折）</h4>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>尝试</th><th>结果</th><th>为什么失败</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>频域法（FFT / 2D 自相关）</td>
+            <td class="no">估出 13.5 m（应为 8.45 m）</td>
+            <td>冠层覆盖率高达 79%，树冠完全粘连成一片，频域被"连通体的整体形状"主导，看不到周期峰</td>
+          </tr>
+          <tr>
+            <td>1D 投影 FFT</td>
+            <td class="no">主峰漂移到 7~20 m</td>
+            <td>同上，弃用频域</td>
+          </tr>
+          <tr>
+            <td>空间域：树心点阵反推</td>
+            <td class="ok">成功</td>
+            <td>改用"找树心 → 测最近邻距 → 定基矢 → 相位对齐"</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>三个必须踩对的几何细节</h4>
+    <div class="grid g3">
+      <div class="card" style="border-left:3px solid var(--red)">
+        <h4>错行偏移公式</h4>
+        <p>一度写成 <code>row_pitch · tan(θ)</code>，正确应是 <code>plant_pitch / 2</code>。</p>
+        <p style="color:var(--muted);font-size:13.5px">正确系数 0.5774，tan60° 是 1.7321，<strong>差 3 倍</strong>。后果是行距被低估 40%，株位空缺被误判成林间空隙。</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--red)">
+        <h4>格点原点不能用点均值</h4>
+        <p>有限点集的均值<strong>不是格点</strong>。实测偏移恒为 (+0.333, +0.167) 个格，约 2.8 m / 1.2 m。</p>
+        <p style="color:var(--muted);font-size:13.5px">正确做法：求全体格坐标小数部分的<strong>圆均值</strong>。</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--red)">
+        <h4>方位角不能用圆均值</h4>
+        <p>等边三角形点阵的三个方向 {0°, 60°, 120°} 在 2θ 折叠后圆均值会得到 60°，恰好偏掉。</p>
+        <p style="color:var(--muted);font-size:13.5px">正确做法：列候选方位角，按拟合误差选最优。</p>
+      </div>
+    </div>
+
+    <h4>最终结论（实测）</h4>
+    <p>这个园区是<strong>等边三角形（错行）种植，错行角 60°</strong>。跨 5 个窗口独立估计，结果一致：</p>
+    <div class="kpi">
+      <div><b style="color:var(--cyan)">8.55 m</b><span>株距中位</span></div>
+      <div><b style="color:var(--green)">60°</b><span>错行角</span></div>
+      <div><b style="color:var(--violet)">158</b><span>株/公顷</span></div>
+      <div><b style="color:var(--amber)">30/30</b><span>人造园自检分类正确</span></div>
+    </div>
+
+    <div class="verdict">
+      <b>验证方式</b>：除了真实影像，还造了 3 个人造园做自检（三角形 8.45 m / 9.2 m、正方形 8.45 m）。间距估计误差 0.05~0.10 m，分类全部正确。树心检测在人造园 52/52 全检出，到真值格点中位误差仅 <strong>0.025 m</strong>。
+    </div>
+  </div>
+</div>
+
+<!-- ============ 5 ============ -->
+<div class="tl-item ok">
+  <div class="tl-head">
+    <span class="tl-tag">转折 ⑤</span>
+    <span class="tl-title">整幅工程化 —— 从单个窗口到 229 公顷</span>
+  </div>
+  <div class="tl-body">
+    <h4>问题</h4>
+    <p>前面所有验证都只在单个 2048×2048 窗口（67.6 m × 67.6 m）上做。但真实交付要处理<strong>整幅 21 亿像素</strong>。这中间隔着大量工程问题。</p>
+
+    <h4>三个必须处理好的细节</h4>
+    <div class="grid g3">
+      <div class="card">
+        <h4>瓦片重叠</h4>
+        <p>不重叠的话，恰好跨边界的空地会被切碎，两边都不够阈值 → <strong>凭空少一块空地</strong>。</p>
+        <p style="color:var(--muted);font-size:13.5px">做法：外扩 128px（≈4.2 m），按质心归属裁剪。</p>
+      </div>
+      <div class="card">
+        <h4>全局网格</h4>
+        <p>逐块估计网格会让相邻瓦片的格点<strong>错开半格</strong>，同一块空地被判成不同类别。</p>
+        <p style="color:var(--muted);font-size:13.5px">做法：先勘察采样定全局网格，所有瓦片共用。</p>
+      </div>
+      <div class="card">
+        <h4>断点续跑</h4>
+        <p>整幅要跑约 20 分钟，中途断电不该从头再来。</p>
+        <p style="color:var(--muted);font-size:13.5px">做法：原子写盘 + 参数指纹（改了参数旧结果自动失效）。</p>
+      </div>
+    </div>
+
+    <h4>顺带修的性能黑洞</h4>
+    <p>空地分离用的圆盘开运算是 <strong>O(r²) 暴力卷积</strong>，2304² 上要 <strong>11.7 秒</strong>，占整条流水线 <strong>85%</strong> 的时间。</p>
+    <p>改用距离变换实现等价运算（O(n)）：<strong>1.95 秒，快 6 倍</strong>。整瓦片耗时 10.4 s → 2.9 s。</p>
+    <div class="note crit">
+      <span class="ic">🚫</span>
+      <div>
+        <p><strong>一个不能走的捷径</strong></p>
+        <p>不能用 <code>np.ones((3,3))</code> 迭代 r 次代替——那是<strong>菱形</strong>不是圆盘，实测差 46,092 个像素。</p>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <b>首次整幅结果</b>：321 个有效瓦片 / 1172 秒 / 1048 块空地。然后……我们在核对时发现了大问题（见转折 ⑥）。
+    </div>
+  </div>
+</div>
+
+<!-- ============ 6 ============ -->
+<div class="tl-item fix">
+  <div class="tl-head">
+    <span class="tl-tag">转折 ⑥</span>
+    <span class="tl-title">判据纠错 —— 三次迭代，一次比一次接近真相</span>
+  </div>
+  <div class="tl-body">
+    <h4>怎么发现的</h4>
+    <p>整幅跑完后，我们把结果放大到<strong>原生分辨率</strong>核对——放大到能看清每一片叶子的程度。</p>
+    <p>结果发现：红色的"空地"多边形，盖在<strong>长满草和灌木的健康林地上</strong>。那些地方明明是绿的，却被判成了空地。</p>
+
+    <div class="note crit">
+      <span class="ic">❗</span>
+      <div>
+        <p><strong>这是一个必须修的正确性 bug</strong></p>
+        <p>当时的结果是：全园 <strong>18%</strong> 被标成空地。对成熟油棕园来说，这个数字明显偏高。</p>
+      </div>
+    </div>
+
+    <h4>三层根因，逐层揭开</h4>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>版本</th><th>判据</th><th>实测问题</th><th>根因</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>v1</td>
+            <td>纯分位 40%</td>
+            <td class="no">密植区 23m×23m 健康林地整片涂红</td>
+            <td>这是<strong>相对</strong>判据 —— 回答的是"这块地排第几"，不是"这块地有没有绿"。整体偏暗的区域会被迫把一半像素划成空地</td>
+          </tr>
+          <tr>
+            <td>v2</td>
+            <td>纯绝对 ExG &gt; 60</td>
+            <td class="no">跨航带曝光差 3 倍：亮航带判出 84% 冠层，暗航带只剩 31%</td>
+            <td>绝对阈值<strong>对曝光过敏</strong>。31% 冠层意味着"七成地面是空的"，与影像事实完全矛盾</td>
+          </tr>
+          <tr>
+            <td><strong>v3</strong></td>
+            <td><strong>混合 clip(分位40%, 40, 80)<br>+ 饱和度辅助</strong></td>
+            <td class="ok">密植区 88% / 中南 79% / 中央 67%</td>
+            <td class="ok">分位自适应曝光；[40,80] 夹逼防止走极端（正好覆盖 v1/v2 各自失效的情形）；高饱和度判为植被</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>为什么饱和度能帮忙</h4>
+    <p>真实裸土是<strong>红褐色、发灰</strong>的——饱和度低。而林下杂草虽然绿度分数偏低，<strong>饱和度却仍然很高</strong>（鲜绿）。</p>
+    <p>所以加一条规则："饱和度 &gt; 0.45 的像素，无论绿度分数多少都算植被"，就能精准打掉"把杂草当空地"这类误报。</p>
+
+    <h4>另一个隐藏陷阱：NoData 污染统计</h4>
+    <p>算"冠层覆盖率"时，如果没先掩掉影像外接矩形里的空白区（园区只占 57%），会把空白算进分母。实测某瓦片：全图冠层 31%、<strong>仅有效区 71%</strong>——差一倍多，足以得出完全相反的结论。</p>
+
+    <div class="verdict">
+      <b>修正后</b>：全园空地占比从 18% 降到 <strong>12.46%</strong>，且跨曝光稳定。放大到原生分辨率复核，最大的那块 5747 m² 确实是<strong>倒伏树干 + 裸露泥土</strong>的真实荒地。
+    </div>
+  </div>
+</div>
+
+<!-- ============ 7 ============ -->
+<div class="tl-item final">
+  <div class="tl-head">
+    <span class="tl-tag">转折 ⑦</span>
+    <span class="tl-title">分类补全 —— 从 3 类扩到 4 类</span>
+  </div>
+  <div class="tl-body">
+    <h4>发现的问题</h4>
+    <p>原先只有「株位空缺 / 林间空隙 / 不确定」三类。但实测发现，有一批空地<strong>跨了好几个株位格</strong>——它们既不细长（不像缝隙），也不贴合单个格点（不像缺一株）。</p>
+    <p>结果这类"大片空地"全部掉进了「不确定」，白白浪费了信息。</p>
+
+    <h4>解决：新增「连片空地」类</h4>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>类别</th><th>判定依据</th><th>业务含义</th><th>中位面积</th></tr></thead>
+        <tbody>
+          <tr><td><code>vacant_slot</code> 株位空缺</td><td>质心贴近格点 + 形状不细长 + 面积约一格</td><td>补 1 株</td><td class="ok">59 m²</td></tr>
+          <tr><td><code>alley_gap</code> 林间空隙</td><td>细长 / 面积远小于一格 / 夹在两行之间</td><td>不用补</td><td class="ok">52 m²</td></tr>
+          <tr><td><code>open_patch</code> 连片空地</td><td>面积跨多格</td><td>按格数整片补种</td><td class="ok">321 m²</td></tr>
+          <tr><td><code>uncertain</code> 不确定</td><td>证据均不充分</td><td>人工复核</td><td class="mid">93 m²</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>顺带修掉的两个逻辑错误</h4>
+    <div class="grid g2">
+      <div class="card" style="border-left:3px solid var(--amber)">
+        <h4>"距离格点远"是弱证据</h4>
+        <p>原本它单独就能触发"林间空隙"判定。结果一块 <strong>470 m² 的连片空地</strong>因为质心恰好远离格点，被误判成"狭窄空隙"——语义完全反了。</p>
+        <p style="color:var(--muted);font-size:13.5px">修正：该证据只在面积 ≤1.5 格时才参与空隙判定。</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--amber)">
+        <h4>归一化分母选错</h4>
+        <p>原本用"整个株距"做分母，导致即使质心已跑到两格正中，得分也只有 0.15，永远够不到判定线 0.55。</p>
+        <p style="color:var(--muted);font-size:13.5px">修正：改用"从容差走到两格中点"作为满分基准。</p>
+      </div>
+    </div>
+
+    <div class="verdict">
+      <b>效果</b>：不确定类别从 453 块降到 <strong>318 块</strong>，且分类语义更贴合补种决策（补 1 株 / 不用补 / 整片补）。
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- ============ 复盘 ============ -->
+<section id="lesson">
+  <h2><span class="num">08</span>复盘：这七次转折教了我们什么</h2>
+
+  <div class="grid g2">
+    <div class="card" style="border-top:3px solid var(--green)">
+      <h4>① 成熟的模型 ≠ 能直接用</h4>
+      <p>DeepForest 在自然林上是很成功的模型，但在油棕园上直接失效。评估任何"开箱即用"方案时，<strong>必须用真实数据验证，而不是看它的论文指标</strong>。</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--green)">
+      <h4>② 领域规律比通用模型更可靠</h4>
+      <p>人工种植园的"颜色差异"和"株行距规律"是稳定且可解释的。把这些显式建模，比让模型隐式学习更可靠，也更容易排查问题。</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--amber)">
+      <h4>③ 验证必须"放大到能看清"</h4>
+      <p>转折 ⑥ 那个严重 bug，在缩略图上看不出来——只有放大到原生分辨率，才看清"红块盖在绿草地上"。<strong>任何自动化结果都必须有人工抽检环节</strong>。</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--amber)">
+      <h4>④ 统计口径的坑比算法本身更隐蔽</h4>
+      <p>NoData 污染冠层率、跨航带曝光差 3 倍——这些都不是算法问题，而是<strong>测量口径问题</strong>。它们能让正确的算法得出错误的结论。</p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--cyan)">
+      <h4>⑤ 性能瓶颈往往在最不起眼的一行</h4>
+      <p>整条流水线 85% 的时间花在了一个形态学开运算上。换个等价实现就快 6 倍。<strong>先测量，再优化。</strong></p>
+    </div>
+    <div class="card" style="border-top:3px solid var(--violet)">
+      <h4>⑥ 工程约束要提前设计，不要事后补</h4>
+      <p>瓦片重叠、全局网格相位、断点续跑——这三件事如果一开始没设计，后期补的代价是重跑全部结果。</p>
+    </div>
+  </div>
+
+  <div class="note good">
+    <span class="ic">🎯</span>
+    <div>
+      <p><strong>一句话总结这条路线</strong></p>
+      <p>从"想用现成 AI 模型"开始，一路被真实数据教育，最终收敛到<strong>「自建判据 + 显式利用领域规律 + 全链路可验证」</strong>的方案。每一次推翻都不是浪费——它排除了一个"看起来可行但实际不行"的选项。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Forest Gap Detection · 项目进展历程</span>
+  <span>配套阅读：项目全过程（专业版 / 零基础版）</span>
+</footer>
+
+</div>
+</body>
+</html>

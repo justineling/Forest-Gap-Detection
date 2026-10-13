@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小白版 ①：无人机拍的这张"照片"，到底是什么？</title>
+<style>
+:root{
+  --bg:#0a0f1c;--panel:#121b2f;--panel2:#16203a;--border:#22304d;--border2:#2d3f63;
+  --text:#e8eefb;--text2:#c2cee4;--muted:#8496b4;
+  --cyan:#38bdf8;--violet:#a78bfa;--green:#34d399;--amber:#fbbf24;--red:#f87171;--pink:#f472b6;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-size:17px;line-height:1.9;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  -webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(900px 500px at 10% -5%,rgba(52,211,153,.10),transparent 60%),
+             radial-gradient(800px 500px at 90% 0%,rgba(56,189,248,.09),transparent 60%)}
+.wrap{position:relative;z-index:1;max-width:960px;margin:0 auto;padding:0 26px 90px}
+.hero{padding:60px 0 36px;border-bottom:1px solid var(--border)}
+.eyebrow{display:inline-flex;gap:8px;font-size:14px;color:var(--green);background:rgba(52,211,153,.09);
+  border:1px solid rgba(52,211,153,.28);border-radius:999px;padding:6px 15px;margin-bottom:20px}
+.hero h1{font-size:clamp(27px,4vw,42px);line-height:1.25;font-weight:800;letter-spacing:-.02em}
+.hero h1 span{background:linear-gradient(100deg,var(--green),var(--cyan) 65%,var(--violet));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{margin-top:16px;color:var(--text2);font-size:17.5px;max-width:820px}
+nav.toc{position:sticky;top:0;z-index:50;margin:0 -26px;padding:12px 26px;
+  background:rgba(10,15,28,.9);backdrop-filter:blur(14px);border-bottom:1px solid var(--border);
+  display:flex;gap:6px;overflow-x:auto}
+nav.toc a{color:var(--muted);text-decoration:none;font-size:13.5px;white-space:nowrap;
+  padding:6px 12px;border-radius:8px;border:1px solid transparent}
+nav.toc a:hover{color:var(--text);background:var(--panel);border-color:var(--border)}
+section{padding:54px 0 6px;scroll-margin-top:64px}
+h2{font-size:26px;font-weight:750;display:flex;align-items:center;gap:13px;margin-bottom:10px}
+h2 .num{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--green);
+  background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.28);border-radius:8px;padding:3px 11px;flex:none}
+h2+.lede{color:var(--muted);font-size:15.5px;margin-bottom:26px;max-width:860px}
+h3{font-size:19px;font-weight:700;margin:34px 0 12px}
+p{color:var(--text2);margin-bottom:14px}
+p strong,li strong{color:var(--text);font-weight:650}
+ul,ol{margin:0 0 16px 24px;color:var(--text2)}li{margin-bottom:9px}
+code{font-family:var(--mono);font-size:14px;background:var(--panel2);border:1px solid var(--border);
+  border-radius:5px;padding:2px 7px;color:var(--cyan)}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 22px}
+.card h4{margin:0 0 8px;font-size:16.5px;color:var(--text)}
+.card p:last-child{margin-bottom:0}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;margin:16px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:15.5px;min-width:480px}
+th{background:var(--panel2);color:var(--text);font-weight:700;text-align:left;padding:12px 15px;
+  border-bottom:1px solid var(--border2);white-space:nowrap}
+td{padding:11px 15px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.ok{color:var(--green)}td.no{color:var(--red)}
+.note{border-radius:12px;padding:17px 21px;margin:18px 0;border:1px solid;display:flex;gap:15px;align-items:flex-start}
+.note .ic{font-size:21px;flex:none;line-height:1.6}
+.note p:last-child{margin-bottom:0}
+.note.info{background:rgba(56,189,248,.07);border-color:rgba(56,189,248,.28)}
+.note.good{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.28)}
+.note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.3)}
+figure{margin:22px 0;background:#0e1526;border:1px solid var(--border);border-radius:14px;padding:18px}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:12px;font-size:14.5px;color:var(--muted);text-align:center}
+.big{font-size:20px;color:var(--text);font-weight:600;line-height:1.75}
+.analogy{background:linear-gradient(135deg,rgba(167,139,250,.10),rgba(56,189,248,.06));
+  border:1px solid rgba(167,139,250,.28);border-radius:14px;padding:20px 24px;margin:20px 0}
+.analogy .lbl{font-size:13.5px;color:var(--violet);font-weight:700;letter-spacing:.06em;margin-bottom:8px}
+.analogy p:last-child{margin-bottom:0}
+footer{margin-top:64px;padding-top:26px;border-top:1px solid var(--border);color:var(--muted);
+  font-size:14px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}
+@media(max-width:680px){.wrap{padding:0 16px 70px}nav.toc{margin:0 -16px;padding:10px 16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">零基础版 · 不需要任何计算机知识</div>
+  <h1>无人机拍的这张"照片"<br><span>到底是什么？</span></h1>
+  <p class="sub">这份文档只回答一个问题：我们手里那个 3.5 GB 的大文件，到底是什么东西？看完你就能明白，为什么它跟手机拍的照片完全不是一回事。</p>
+</header>
+
+<nav class="toc">
+  <a href="#what">它是一张照片吗</a>
+  <a href="#stitch">照片怎么变成一整张</a>
+  <a href="#ortho">"正射"是什么意思</a>
+  <a href="#pixel">像素：图是由小方块拼的</a>
+  <a href="#big">为什么有 3.5 GB</a>
+  <a href="#where">它知道自己在哪</a>
+  <a href="#summary">一页总结</a>
+</nav>
+
+<!-- ============ 1 ============ -->
+<section id="what">
+  <h2><span class="num">01</span>它是一张照片吗？</h2>
+  <p class="lede">是，但又不完全是。它长得像照片，骨子里却更像一张"地图"。</p>
+
+  <p>无人机在油棕园上空飞一圈，会拍下<strong>几千张照片</strong>。这些照片经过软件拼合、校正之后，变成一张<strong>覆盖整个园区的大图</strong>。</p>
+
+  <p>这张大图在电脑里存成一个文件，叫 <strong>tif 文件</strong>。我们这个项目的文件是 <code>WGR17.tif</code>，大小 <strong>3.5 GB</strong>。</p>
+
+  <div class="analogy">
+    <div class="lbl">打个比方</div>
+    <p>普通的照片像<strong>一张海报</strong>——好看，但你没法在上面量距离，因为近的地方看起来大、远的地方看起来小。</p>
+    <p>我们的这张图更像<strong>一张施工图纸</strong>——它是"压平"过的，没有近大远小的问题，所以<strong>可以在上面直接量出真实的米数</strong>。这一点后面算"空地有多少平方米"时非常关键。</p>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="stitch">
+  <h2><span class="num">02</span>几千张照片，怎么变成一整张？</h2>
+  <p class="lede">像贴瓷砖一样，一块一块拼起来。</p>
+
+  <p>无人机一边飞一边拍，每张照片只覆盖一小块地面，而且相邻两张会有<strong>重叠</strong>（就像贴瓷砖时故意压住前一块的边缘）。</p>
+
+  <p>软件靠这些重叠部分，把几千张照片"对齐"并粘成一张大图。这个过程叫 <strong>拼接</strong>。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 260" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="多张航拍照片拼接成一整张大图">
+      <defs>
+        <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#34d399" stop-opacity=".55"/>
+          <stop offset="1" stop-color="#38bdf8" stop-opacity=".45"/>
+        </linearGradient>
+      </defs>
+
+      <!-- 左：零散照片 -->
+      <text x="20" y="24" fill="#c2cee4" font-size="14" font-weight="700">① 无人机拍到的（零散、有重叠）</text>
+      <g stroke="#2d3f63" stroke-width="1.5">
+        <rect x="26" y="46" width="86" height="66" rx="5" fill="url(#g1)" opacity=".85"/>
+        <rect x="92" y="66" width="86" height="66" rx="5" fill="url(#g1)" opacity=".75"/>
+        <rect x="52" y="102" width="86" height="66" rx="5" fill="url(#g1)" opacity=".8"/>
+        <rect x="118" y="122" width="86" height="66" rx="5" fill="url(#g1)" opacity=".7"/>
+        <rect x="26" y="158" width="86" height="66" rx="5" fill="url(#g1)" opacity=".75"/>
+        <rect x="92" y="178" width="86" height="66" rx="5" fill="url(#g1)" opacity=".68"/>
+      </g>
+      <text x="120" y="248" fill="#8496b4" font-size="12" text-anchor="middle">相邻两张故意压住边缘 → 便于对齐</text>
+
+      <!-- 中间箭头 -->
+      <path d="M232 140 h56" stroke="#f472b6" stroke-width="3" stroke-linecap="round"/>
+      <path d="M282 132 l12 8 -12 8" fill="none" stroke="#f472b6" stroke-width="3"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="260" y="120" fill="#f472b6" font-size="12.5" text-anchor="middle" font-weight="700">拼接</text>
+
+      <!-- 右：一整张 -->
+      <text x="330" y="24" fill="#c2cee4" font-size="14" font-weight="700">② 拼好之后（一整张覆盖全园的大图）</text>
+      <rect x="330" y="46" width="322" height="198" rx="8" fill="url(#g1)"/>
+      <g stroke="#0a0f1c" stroke-opacity=".18" stroke-width="1">
+        <path d="M330 112 h322M330 178 h322M412 46 v198M494 46 v198M576 46 v198"/>
+      </g>
+      <text x="491" y="152" fill="#0a0f1c" font-size="15" text-anchor="middle" font-weight="800"
+            opacity=".72">WGR17.tif</text>
+      <text x="491" y="176" fill="#0a0f1c" font-size="12.5" text-anchor="middle" opacity=".6">
+        覆盖 229 公顷 ≈ 320 个足球场</text>
+    </svg>
+    <figcaption>拼接：把几千张小照片对齐、粘成一张覆盖全园的大图。</figcaption>
+  </figure>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="ortho">
+  <h2><span class="num">03</span>"正射"是什么意思？</h2>
+  <p class="lede">一句话：把照片"压平"，让它能当尺子用。</p>
+
+  <p>无人机拍照时，镜头是斜着往外看的。所以靠近画面中心的东西看起来正常，靠边的会被"拉歪"——就像你拍一栋高楼，楼顶会往一边倒。</p>
+
+  <p>如果直接拿这种照片量距离，量出来的数字是错的。</p>
+
+  <p><strong>正射校正</strong>就是把这个"歪"纠正回来：把每一处都按真实比例重新摆正，让整张图变成"从上往下垂直俯视"的效果。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 240" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="普通照片有透视变形，正射影像被压平">
+      <text x="20" y="24" fill="#c2cee4" font-size="14" font-weight="700">普通航拍照片</text>
+      <text x="380" y="24" fill="#c2cee4" font-size="14" font-weight="700">正射影像（压平后）</text>
+
+      <!-- 左：透视 -->
+      <g>
+        <path d="M30 40 L290 40 L250 210 L70 210 Z" fill="#38bdf8" fill-opacity=".13"
+              stroke="#38bdf8" stroke-opacity=".5" stroke-width="1.6"/>
+        <!-- 网格透视收缩 -->
+        <g stroke="#38bdf8" stroke-opacity=".28" stroke-width="1">
+          <path d="M63 40 L76 210M96 40 L111 210M129 40 L146 210M162 40 L181 210M195 40 L216 210M228 40 L232 210M261 40 L266 210"/>
+          <path d="M36 82 L285 82M44 124 L279 124M54 166 L271 166"/>
+        </g>
+        <text x="160" y="232" fill="#8496b4" font-size="12.5" text-anchor="middle">
+          近大远小 → 不能直接量距离</text>
+      </g>
+
+      <!-- 箭头 -->
+      <path d="M308 125 h44" stroke="#f472b6" stroke-width="3" stroke-linecap="round"/>
+      <path d="M344 117 l12 8 -12 8" fill="none" stroke="#f472b6" stroke-width="3"
+            stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="330" y="106" fill="#f472b6" font-size="12" text-anchor="middle" font-weight="700">校正</text>
+
+      <!-- 右：正射 -->
+      <g>
+        <rect x="372" y="40" width="258" height="170" fill="#34d399" fill-opacity=".13"
+              stroke="#34d399" stroke-opacity=".5" stroke-width="1.6"/>
+        <g stroke="#34d399" stroke-opacity=".28" stroke-width="1">
+          <path d="M415 40 V210M458 40 V210M501 40 V210M544 40 V210M587 40 V210
+                   M372 82 H630M372 124 H630M372 166 H630"/>
+        </g>
+        <text x="501" y="232" fill="#8496b4" font-size="12.5" text-anchor="middle">
+          方格均匀 → 可以直接量米数</text>
+      </g>
+    </svg>
+    <figcaption>校正前后：右边这张，每个方格的边长都代表同样多的米数。</figcaption>
+  </figure>
+
+  <div class="note good">
+    <span class="ic">✅</span>
+    <div>
+      <p><strong>为什么这件事对项目至关重要</strong></p>
+      <p>因为我们最终要输出的是"每块空地有多少平方米"。如果图没有被压平，量出来的面积就是错的。所以这张图必须是<strong>正射影像</strong>，不能是普通航拍照片。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="pixel">
+  <h2><span class="num">04</span>像素：图是由无数小方块拼出来的</h2>
+  <p class="lede">把图放到最大，你会看到它是一格一格的小方块。</p>
+
+  <p>每个小方块叫一个 <strong>像素</strong>。电脑眼里的图片，其实就是一张<strong>巨大的方格表</strong>，每个格子里存一个颜色。</p>
+
+  <p>我们这张图的格子数量是：</p>
+
+  <div class="grid g3" style="margin:18px 0">
+    <div class="card" style="text-align:center">
+      <div style="font-size:30px;font-weight:800;color:var(--cyan)">47,130</div>
+      <div style="color:var(--muted);font-size:14px">横向格子数</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:30px;font-weight:800;color:var(--cyan)">44,686</div>
+      <div style="color:var(--muted);font-size:14px">纵向格子数</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:30px;font-weight:800;color:var(--pink)">21 亿</div>
+      <div style="color:var(--muted);font-size:14px">总格子数</div>
+    </div>
+  </div>
+
+  <p>每一个格子代表地面上多大一块呢？实测是 <strong>3.3 厘米 × 3.3 厘米</strong>——大约一个鸡蛋的大小。</p>
+
+  <figure>
+    <svg viewBox="0 0 680 210" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="像素网格示意">
+      <text x="20" y="22" fill="#c2cee4" font-size="14" font-weight="700">放大后的样子：每个格子 = 地上 3.3 cm × 3.3 cm</text>
+      <g>
+        <rect x="24" y="40" width="180" height="140" fill="#121b2f" stroke="#2d3f63"/>
+        <g fill="#34d399" fill-opacity=".8">
+          <rect x="40" y="56" width="16" height="16"/><rect x="72" y="56" width="16" height="16"/>
+          <rect x="104" y="72" width="16" height="16"/><rect x="136" y="88" width="16" height="16"/>
+          <rect x="40" y="104" width="16" height="16"/><rect x="88" y="120" width="16" height="16"/>
+          <rect x="136" y="136" width="16" height="16"/><rect x="56" y="152" width="16" height="16"/>
+        </g>
+        <g fill="#b45309" fill-opacity=".85">
+          <rect x="88" y="72" width="16" height="16"/><rect x="56" y="88" width="16" height="16"/>
+          <rect x="120" y="104" width="16" height="16"/><rect x="104" y="152" width="16" height="16"/>
+          <rect x="152" y="120" width="16" height="16"/>
+        </g>
+      </g>
+      <!-- 引线 -->
+      <path d="M212 110 h40" stroke="#f472b6" stroke-width="2"/>
+      <circle cx="212" cy="110" r="4" fill="#f472b6"/>
+      <text x="262" y="100" fill="#e8eefb" font-size="14" font-weight="700">1 个像素 = 1 个格子</text>
+      <text x="262" y="124" fill="#8496b4" font-size="13">绿格子 ≈ 树叶　褐格子 ≈ 泥土地</text>
+      <text x="262" y="150" fill="#8496b4" font-size="13">电脑"看"图，就是挨个读这些格子的颜色</text>
+      <text x="262" y="176" fill="#38bdf8" font-size="13" font-weight="600">
+        → 所以"认树"这件事，最后都变成"判断每个格子是什么颜色"</text>
+    </svg>
+    <figcaption>像素网格。电脑不认识"树"和"土"，它只认识每个格子里的颜色数值。</figcaption>
+  </figure>
+
+  <div class="note info">
+    <span class="ic">💡</span>
+    <div>
+      <p><strong>记住这句话，后面全用得上</strong></p>
+      <p>电脑不会"看"图。它看到的是一张巨大的方格表，每个格子里是三个数字（代表红、绿、蓝的深浅）。<strong>所有"认树""找空地"的工作，本质都是在对这些数字做运算。</strong></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="big">
+  <h2><span class="num">05</span>为什么会有 3.5 GB 这么大？</h2>
+  <p class="lede">因为格子太多了，而且每个格子要存好几份颜色。</p>
+
+  <p>算一下就明白了：</p>
+
+  <div class="card" style="margin:18px 0">
+    <p style="font-size:16.5px;line-height:2.1">
+      21 亿个格子<br>
+      × 每个格子要存 <strong>红、绿、蓝 3 个数字</strong>（还有一个没用的透明通道）<br>
+      = 约 <strong>84 亿个数字</strong><br>
+      ≈ <strong>3.5 GB</strong>
+    </p>
+  </div>
+
+  <p>3.5 GB 是什么概念？大概相当于<strong>上千张手机照片</strong>，或者一部高清电影。</p>
+
+  <div class="note warn">
+    <span class="ic">⚠️</span>
+    <div>
+      <p><strong>这带来一个真实的工程难题</strong></p>
+      <p>普通电脑的内存（可以理解成"同时摊开在桌面上的空间"）装不下这么大的图。如果硬要一次性全打开，电脑会直接卡死。</p>
+      <p>所以我们的程序采取的办法是：<strong>把大图切成几百个小块，一块一块处理，处理完就存起来。</strong>就像看一张超大地图时，你不必把整张地图摊开，而是按格子一格一格地看。这个做法叫"分块处理"，是本项目的一个关键设计。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="where">
+  <h2><span class="num">06</span>这张图怎么知道自己在哪？</h2>
+  <p class="lede">因为它内部记着"我左上角在地球上的哪个位置"。</p>
+
+  <p>普通照片只有颜色，没有位置信息。我们的 tif 图不一样——它在文件内部<strong>额外记了两样东西</strong>：</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <h4>① 左上角的真实坐标</h4>
+      <p>告诉我们这张图覆盖的地方，在地球上的确切位置。实测是<strong>东经 111.197°、北纬 1.190°</strong>——马来西亚砂拉越（婆罗洲）。</p>
+    </div>
+    <div class="card">
+      <h4>② 每个像素代表多少度</h4>
+      <p>告诉我们一个格子在经纬度上跨多大。有了它，才能把"格子数"换算成"米数"，进而算出面积。</p>
+    </div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 680 200" xmlns="http://www.w3.org/2000/svg" role="img"
+         aria-label="影像带有地理坐标">
+      <rect x="20" y="30" width="300" height="140" rx="10" fill="#121b2f" stroke="#22304d"/>
+      <text x="40" y="58" fill="#8496b4" font-size="13" font-family="monospace">WGR17.tif</text>
+      <text x="40" y="86" fill="#c2cee4" font-size="13.5">图像数据</text>
+      <text x="40" y="112" fill="#38bdf8" font-size="13.5" font-weight="600">＋ 地理坐标信息</text>
+      <text x="40" y="138" fill="#38bdf8" font-size="13.5" font-weight="600">＋ 像素分辨率</text>
+      <text x="40" y="162" fill="#8496b4" font-size="12.5">（普通照片没有这两项）</text>
+
+      <path d="M336 100 h44" stroke="#f472b6" stroke-width="3" stroke-linecap="round"/>
+      <path d="M372 92 l12 8 -12 8" fill="none" stroke="#f472b6" stroke-width="3"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+      <rect x="396" y="30" width="264" height="140" rx="10" fill="#16203a" stroke="#2d3f63"/>
+      <text x="416" y="58" fill="#34d399" font-size="13.5" font-weight="700">所以电脑能算出：</text>
+      <text x="416" y="86" fill="#c2cee4" font-size="13.5">· 这块空地在哪（经纬度）</text>
+      <text x="416" y="112" fill="#c2cee4" font-size="13.5">· 这块空地有多大（平方米）</text>
+      <text x="416" y="138" fill="#c2cee4" font-size="13.5">· 导出的地图怎么对齐</text>
+      <text x="416" y="162" fill="#fbbf24" font-size="13" font-weight="600">→ 结果可直接给补种队用</text>
+    </svg>
+    <figcaption>带地理坐标，是"照片"和"可用地图"的分界线。</figcaption>
+  </figure>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="summary">
+  <h2><span class="num">07</span>一页总结</h2>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>你可能想问</th><th>答案</th></tr></thead>
+      <tbody>
+        <tr><td>这张图是照片吗？</td><td>长得像照片，但本质是<strong>一张能当尺子用的地图</strong>（已"压平"）</td></tr>
+        <tr><td>怎么来的？</td><td>无人机拍几千张 → 软件<strong>拼接</strong>成一张 → <strong>校正</strong>压平</td></tr>
+        <tr><td>电脑看到的是什么？</td><td>一张<strong>21 亿格的方格表</strong>，每格存颜色数字</td></tr>
+        <tr><td>一格代表多大？</td><td>地面上 <strong>3.3 厘米</strong>见方</td></tr>
+        <tr><td>为什么这么大？</td><td>格子太多 → 3.5 GB → 必须<strong>切块处理</strong></td></tr>
+        <tr><td>它知道自己在哪吗？</td><td>知道。内部存了<strong>经纬度和像素比例</strong>，所以能算面积</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note good">
+    <span class="ic">➡️</span>
+    <div>
+      <p><strong>接下来看什么</strong></p>
+      <p>你现在知道了"输入是什么"。下一篇讲<strong>电脑是怎么从这堆颜色数字里，认出哪些地方是空地的</strong>。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Forest Gap Detection · 零基础版文档 ①</span>
+  <span>下一步：小白版 ②《电脑是怎么"看出"空地的？》</span>
+</footer>
+
+</div>
+</body>
+</html>
