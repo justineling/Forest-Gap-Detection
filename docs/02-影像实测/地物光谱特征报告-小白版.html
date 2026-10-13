@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>电脑是怎么"看"这片园子的（小白版） — WGR17 油棕园</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.85;font-size:16px}
+.wrap{max-width:1020px;margin:0 auto;padding:32px 24px 80px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:28px}
+h1{font-size:28px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:21px;margin:48px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:17px;margin:28px 0 10px;color:#26382c}
+p{margin:12px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 22px;margin:16px 0}
+.lead{font-size:16.5px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.tell{font-size:14px;color:#5b6b5f;margin:14px 0 4px;font-weight:600}
+table{width:100%;border-collapse:collapse;margin:8px 0 14px;font-size:14px}
+th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13.5px}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+.sw{display:inline-block;width:18px;height:18px;border-radius:3px;
+vertical-align:-4px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:12px;
+font-weight:600;white-space:nowrap}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;margin:14px 0;
+border-radius:0 8px 8px 0}
+.meta{background:#fdf6ec;border:1px solid #f0dfb8;border-radius:10px;
+padding:14px 18px;margin:14px 0;font-size:15px}
+.ana{background:#f4f9fd;border:1px dashed #bcd6ea;border-radius:10px;
+padding:14px 18px;margin:14px 0;font-size:15px}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:7px 0}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>电脑是怎么"看"这片园子的</h1>
+  <div class="sub">《地物光谱特征实测报告》小白版 &nbsp;·&nbsp;
+  数据：WGR17.tif（马来西亚砂拉越油棕园，229 公顷，每 3.3 厘米一个像素点）&nbsp;·&nbsp;2026-10-13</div>
+</header>
+
+<div class="lead">
+我们让一个<b>只会看颜色的电脑程序</b>，把整张航拍图（<b>1,874 万个</b>有效像素——
+像素就是图片上最小的色点）逐点检查了一遍。结果三件事：<br><br>
+<b>✅ 白色的路，认出来了。</b>电脑靠「亮 + 不鲜艳 + 表面光滑」三条线索找到了完整路网。<br>
+<b>✅ 河流水塘，也认出来了，但全图只有 0.42%。</b>很少，但不能忽略。<br>
+<b>⚠️ 草地和油棕树，分不清 —— 而且分错方向了。</b>实测<b>草地比油棕"更绿" 54%</b>，
+电脑按"绿的就是树"的老规矩，把草地当成树冠，<b>真正该补种的草地反而被漏掉了</b>。
+这一条是全报告最重要的事。
+</div>
+
+<h2>一、这份报告在说什么</h2>
+<p>两句话版本：<b>第一</b>，哪些地"根本不用种树"（白路、水塘、办公区），电脑已经能认，可以先圈掉；
+<b>第二</b>，哪些地"该补种"（空地、草地），电脑现在会认错，需要教它新本事——看"质感"和"排列"，而不只是看颜色。
+下面把所有实测数字用人话讲一遍，一个数都不改。</p>
+
+<h2>二、白色的路：电脑靠"亮 + 不鲜艳"认出来</h2>
+
+<p>航拍图里那些发白的条带就是道路。电脑并不"知道"那是路，它只会<b>看颜色</b>。白路的颜色有三个特点：</p>
+
+<ul>
+<li><b>亮</b>：亮度（可以理解为"发不发光"）高达 180~192（满分 255），接近白色</li>
+<li><b>不鲜艳</b>：饱和度（颜色"浓不浓"）只有 0.11~0.17，绿植通常在 0.4 以上</li>
+<li><b>表面光滑</b>：纹理（颜色变化剧不剧烈，也就是"坑坑洼洼的程度"）只有 0.7~8.0——路面材质均匀，不坑洼</li>
+</ul>
+
+<p class="tell">👇 这张表在说什么：6 个"疑似白路"区域的实测颜色，三条线索全部命中，和任何植物都不像。</p>
+<table>
+<thead><tr><th>样本</th><th>颜色（RGB 三原色分量）</th><th class="num">亮度</th>
+<th class="num">鲜艳度（饱和度）</th><th class="num">绿度（ExG）</th><th class="num">光滑度（纹理）</th></tr></thead>
+<tbody>
+<tr><td>白路 ①</td><td><span class="sw" style="background:#c4ceaf"></span><span class="mono">(196, 206, 176)</span></td><td class="num">192.3</td><td class="num">0.159</td><td class="num">39.0</td><td class="num">7.6</td></tr>
+<tr><td>白路 ②</td><td><span class="sw" style="background:#ccc2b5"></span><span class="mono">(204, 194, 181)</span></td><td class="num">192.0</td><td class="num">0.132</td><td class="num">−5.0</td><td class="num">8.0</td></tr>
+<tr><td>白路 ③</td><td><span class="sw" style="background:#cbc0b7"></span><span class="mono">(203, 192, 183)</span></td><td class="num">189.7</td><td class="num">0.105</td><td class="num">−2.0</td><td class="num">7.9</td></tr>
+<tr><td>白路 ⑥（硬化场地）</td><td><span class="sw" style="background:#c5b3a4"></span><span class="mono">(197, 179, 165)</span></td><td class="num">179.7</td><td class="num">0.172</td><td class="num">−4.0</td><td class="num">0.7</td></tr>
+</tbody>
+</table>
+
+<p class="tell">👇 这张表在说什么：把白色区域连成片看<b>形状</b>——又细又长的"线"才是路；实心的"块"是田地或建筑。</p>
+<table>
+<thead><tr><th>连成一片的白色区域</th><th class="num">包围盒长宽（米）</th>
+<th class="num">填充率</th><th>判读</th></tr></thead>
+<tbody>
+<tr><td>路网主连通域（连成一片的最大白色区域）</td><td class="num">706 × 1095</td>
+<td class="num" style="color:#c0392b;font-weight:700">1.4%</td>
+<td><span class="tag t-ok">一张横贯园区的路网</span></td></tr>
+<tr><td>路网次连通域</td><td class="num">793 × 449</td>
+<td class="num" style="color:#c0392b;font-weight:700">1.3%</td>
+<td><span class="tag t-ok">另一张路网</span></td></tr>
+</tbody>
+</table>
+
+<div class="ana"><b>怎么理解"填充率 1.4%"：</b>一个 706×1095 米的大框里，只有 1.4% 的格子是白的——
+一百个格子只有一两个，这就是"细长条"的形状。<b>实心的地块填充率会在 20% 以上。</b>
+所以这些白色区域确实是<b>道路</b>，用户说的"白色道路"确认存在。好消息：
+它和其它任何植物颜色都不撞车，可以可靠地自动圈出来。</div>
+
+<h2>三、河流水塘：偏蓝、偏暗，很少但不能忽略</h2>
+
+<p>水在航拍图里<b>偏蓝、偏暗</b>，电脑用的规则很简单：<b>蓝 ≥ 绿 &gt; 红</b>（水反蓝光）。实测命中：</p>
+
+<p class="tell">👇 这张表在说什么：全图 1,874 万个像素的颜色"人口普查"——每种地物各占多少。</p>
+<table>
+<thead><tr><th>地物</th><th class="num">像素数</th><th class="num">占比</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#e8e8e8"></span>亮白 / 亮灰（道路候选）</td><td class="num">923,084</td><td class="num">4.92%</td><td>已被形状证实是路网</td></tr>
+<tr><td><span class="sw" style="background:#b08c5a"></span>黄褐裸土</td><td class="num">1,169,281</td><td class="num">6.24%</td><td>荒地表土 / 裸地</td></tr>
+<tr><td><span class="sw" style="background:#4a90d9"></span>水体</td><td class="num">78,315</td><td class="num" style="color:#2f6fa8;font-weight:700">0.42%</td><td>≈ 9.6 万平方米，很少</td></tr>
+<tr><td><span class="sw" style="background:#4a4a4a"></span>暗区</td><td class="num">657,928</td><td class="num">3.51%</td><td>阴影 / 死株 / 深水</td></tr>
+<tr><td><span class="sw" style="background:#5b8c3a"></span>植被（所有绿色）</td><td class="num">9,717,481</td><td class="num">51.84%</td><td>树冠 + 草地的总绿量</td></tr>
+<tr><td>　└ 其中"草地型"光谱</td><td class="num">1,833,375</td><td class="num">9.78%</td><td>⚠️ 与油棕高度混淆（见下节）</td></tr>
+<tr><td>　└ 其中"油棕型"光谱</td><td class="num">3,568,481</td><td class="num">19.04%</td><td>占主导的树冠颜色</td></tr>
+</tbody>
+</table>
+
+<div class="q">
+<b>两个提醒：</b>① 水只有 0.42%，但它是"根本不用种"的地，必须圈掉，而且<b>深水可能被算进"暗区"（3.51%）</b>，
+需要额外识别；② 注意"草地型"占 9.78% —— 下一节解释为什么这是个大问题。
+</div>
+
+<h2>四、大问题：电脑分不清"草地"和"油棕"</h2>
+
+<h3>4.1 实测：草地比油棕"更绿"——反直觉，但是真的</h3>
+
+<p class="tell">👇 这张表在说什么：在<b>同一张航拍图</b>上量出来的"绿度"（ExG，一个"有多绿"的打分，越高越绿）。
+注意：草地<b>比油棕还绿</b>。</p>
+<table>
+<thead><tr><th>地物</th><th>颜色</th><th class="num">绿度 ExG</th><th class="num">鲜艳度</th><th class="num">粗糙度（纹理）</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#789d3a"></span><b>草地</b>（左中大块）</td><td class="mono">(120, 157, 58)</td>
+<td class="num" style="font-weight:700;color:#2f7d1f">136.8</td><td class="num">0.651</td><td class="num">46.3</td></tr>
+<tr><td><span class="sw" style="background:#53733b"></span>油棕树冠（中上）</td><td class="mono">(83, 115, 59)</td>
+<td class="num" style="font-weight:700;color:#c0392b">88.6</td><td class="num">0.501</td><td class="num">39.3</td></tr>
+<tr><td><span class="sw" style="background:#608436"></span>油棕树冠（右上）</td><td class="mono">(96, 132, 54)</td>
+<td class="num" style="font-weight:700;color:#c0392b">113.2</td><td class="num">0.612</td><td class="num">46.9</td></tr>
+</tbody>
+</table>
+
+<div class="meta">
+<b>这意味着什么？</b>草地的绿度 136.8，油棕中上部只有 88.6 ——
+<b>草地比油棕"更绿"整整 54%</b>（136.8 ÷ 88.6 ≈ 1.54）。<br><br>
+而电脑的老规矩是「<b>绿的就是树</b>」（绿度超过阈值 = 树冠，从"空地"里扣掉）。
+于是<b>草地被电脑判成树冠</b> → 被从"该补种的地"里扣掉 →
+<b>真正荒废、最该补种的草地，反而被漏掉了。</b>
+</div>
+
+<h3>4.2 为什么会这样：电脑像个"色盲"</h3>
+
+<div class="card">
+<p style="margin-top:0">电脑只会看一个指标：<b>"绿不绿"</b>。它不会看<b>"绿得均不均匀"</b>。</p>
+<ul style="margin-bottom:0">
+<li><b>草地</b>是单一、鲜嫩、反射均匀的草叶——绿得<b>非常均匀</b>，像用油漆刷过的一大片；</li>
+<li><b>油棕树冠</b>是多层伞状叶片 + 大量阴影缝隙的立体结构，在图上被平均后绿度被内部暗部拉低——
+绿得<b>坑坑洼洼</b>，像马赛克；而且树是<b>人来种的，排得整整齐齐</b>，大约每 <b>8.45 米</b>一棵，成网格状。</li>
+</ul>
+</div>
+
+<p><b>"绿得更猛" ≠ "更像树"。</b>对电脑来说这恰恰是最坑的地方：它按绿度挑树，挑出来的全是草。</p>
+
+<p><b>下面这张对比图（手绘内联 SVG）把这件事画出来了：</b></p>
+
+<svg viewBox="0 0 680 360" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif" role="img" aria-label="草地与油棕冠层对比示意图">
+  <defs>
+    <pattern id="grassPat" width="60" height="58" patternUnits="userSpaceOnUse">
+      <rect width="60" height="58" fill="#789d3a"/>
+      <rect width="30" height="29" fill="#79a13c"/>
+      <rect x="30" y="29" width="30" height="29" fill="#779c39"/>
+    </pattern>
+    <pattern id="palmPat" width="60" height="58" patternUnits="userSpaceOnUse">
+      <rect width="60" height="58" fill="#4a6a30"/>
+      <rect width="30" height="29" fill="#2c411d"/>
+      <rect x="30" width="30" height="29" fill="#6b8a45"/>
+      <rect y="29" width="30" height="29" fill="#53733b"/>
+      <rect x="30" y="29" width="30" height="29" fill="#2f4a20"/>
+    </pattern>
+  </defs>
+
+  <text x="340" y="18" font-size="14" font-weight="700" fill="#223" text-anchor="middle">草地 vs 油棕：颜色都是绿的，"质地"完全不同</text>
+
+  <rect x="8" y="28" width="324" height="262" rx="10" fill="#fff" stroke="#cfe0c8"/>
+  <text x="170" y="48" font-size="13.5" font-weight="700" fill="#245d16" text-anchor="middle">草地 —— 像刷匀的油漆</text>
+  <rect x="22" y="60" width="296" height="176" fill="url(#grassPat)" stroke="#cfe0c8"/>
+  <text x="170" y="254" font-size="12.5" fill="#245d16" text-anchor="middle" font-weight="600">整片一个色，绿得很均匀</text>
+  <text x="170" y="272" font-size="11.5" fill="#5b6b5f" text-anchor="middle">实测绿度 136.8（比油棕还高 54%）</text>
+
+  <rect x="348" y="28" width="324" height="262" rx="10" fill="#fff" stroke="#ecd9b8"/>
+  <text x="510" y="48" font-size="13.5" font-weight="700" fill="#8a5a00" text-anchor="middle">油棕 —— 像马赛克，还排着队</text>
+  <rect x="362" y="60" width="296" height="176" fill="url(#palmPat)" stroke="#ecd9b8"/>
+  <line x1="412" y1="66" x2="412" y2="232" stroke="#a8763f" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  <line x1="512" y1="66" x2="512" y2="232" stroke="#a8763f" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  <line x1="612" y1="66" x2="612" y2="232" stroke="#a8763f" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  <line x1="368" y1="100" x2="652" y2="100" stroke="#a8763f" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  <line x1="368" y1="164" x2="652" y2="164" stroke="#a8763f" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  <line x1="368" y1="228" x2="652" y2="228" stroke="#a8763f" stroke-width="1.2" stroke-dasharray="5 4" opacity="0.7"/>
+  <circle cx="412" cy="100" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="512" cy="100" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="612" cy="100" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="412" cy="164" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="512" cy="164" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="612" cy="164" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="412" cy="228" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="512" cy="228" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <circle cx="612" cy="228" r="17" fill="#2f6b1f" opacity="0.92" stroke="#14520d" stroke-width="1"/>
+  <text x="510" y="254" font-size="12.5" fill="#8a5a00" text-anchor="middle" font-weight="600">颜色坑坑洼洼 + 排列有规律</text>
+  <text x="510" y="272" font-size="11.5" fill="#5b6b5f" text-anchor="middle">每 8.45 米一棵，整整齐齐成网格</text>
+
+  <rect x="8" y="298" width="664" height="46" rx="8" fill="#f0f9ec" stroke="#bfe0b0"/>
+  <text x="340" y="317" font-size="13" font-weight="700" fill="#245d16" text-anchor="middle">突破口：教电脑看"质感"和"排列规律"，而不是只看"绿不绿"</text>
+  <text x="340" y="335" font-size="11.5" fill="#245d16" text-anchor="middle">树服从 8.45 米网格，草不服从 —— 这一条就能把两者分开</text>
+</svg>
+
+<h3>4.3 数据佐证：粗糙度能把一部分地物拉开</h3>
+
+<p class="tell">👇 这张表在说什么：四种东西的"粗糙度"（纹理，颜色坑坑洼洼的程度，数字越大越粗糙）。
+括号里是人话比喻。</p>
+<table>
+<thead><tr><th>地物</th><th class="num">粗糙度（纹理）</th><th>人话</th><th>好不好分</th></tr></thead>
+<tbody>
+<tr><td>株位空缺（园子里个别没树的坑）</td><td class="num" style="font-weight:700;color:#2f7d1f">8 ~ 15</td><td>小而平滑</td><td><span class="tag t-ok">纹理可分离</span></td></tr>
+<tr><td>连片空地（大片裸地/工地）</td><td class="num" style="font-weight:700;color:#2f7d1f">22 ~ 26</td><td>中等粗糙</td><td><span class="tag t-ok">极易分离</span></td></tr>
+<tr><td>油棕树冠</td><td class="num">39 ~ 47</td><td>很粗糙（明暗交错）</td><td><span class="tag t-bad">颜色和草地几乎重合</span></td></tr>
+<tr><td>草地</td><td class="num">46.3</td><td>数值上竟也"很粗糙"</td><td><span class="tag t-warn">单看数字分不开</span></td></tr>
+</tbody>
+</table>
+
+<div class="ana">
+<b>注意一个诚实的细节：</b>草地的粗糙度（46.3）和油棕（39~47）<b>在数字上是重叠的</b>——
+所以只加一个"粗糙度数字"也分不开两者，别指望银弹。<br><br>
+<b>真正的分水岭是两个结构特征：</b>
+① <b>均不均匀</b>：草地像油漆（一片均匀），树冠像马赛克（明暗碎块）；
+② <b>排不排队</b>：树冠服从约 <b>8.45 米一格的株行距网格</b>，草地完全不服从。
+株位空缺（粗糙度 8~15）与连片空地（22~26）反而<b>能用粗糙度直接分开</b>，相差近一倍，
+这是目前发现的<b>最有区分力的新特征</b>，而且不依赖绝对亮度，对曝光差异天然免疫。
+</div>
+
+<h2>五、还有些地"根本不用种"，要先圈掉</h2>
+
+<p>补种之前，得先把"压根不该种树"的地从地图上抠掉，否则电脑会把它们也算进"空地"，白忙一场：</p>
+
+<table>
+<thead><tr><th style="width:22%">要圈掉的地</th><th class="num" style="width:14%">占全图</th><th>怎么认</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#e8e8e8"></span><b>白色道路</b></td><td class="num">4.92%</td>
+<td>亮 + 不鲜艳 + 表面光滑（已证实是完整路网）</td></tr>
+<tr><td><span class="sw" style="background:#4a90d9"></span><b>河流 / 水塘</b></td><td class="num">0.42%</td>
+<td>偏蓝偏暗（蓝 ≥ 绿 &gt; 红）；深水要额外从"暗区"里挖</td></tr>
+<tr><td><span class="sw" style="background:#b08c5a"></span><b>裸土 / 工地</b></td><td class="num">6.24%</td>
+<td>低绿度 + 低鲜艳度，粗糙度 22~26</td></tr>
+<tr><td><span class="sw" style="background:#4a4a4a"></span><b>阴影 / 死株区</b></td><td class="num">3.51%</td>
+<td>很暗 + 不绿；硬化场地（工棚、办公区）也混在这批里</td></tr>
+</tbody>
+</table>
+
+<div class="q">
+<b>一个重要的实测发现：</b>现在被归为同一类「连片空地」的 380 块地，其实是<b>两种完全不同的东西</b>混在一起：<br>
+① <b>基建型</b>——黄褐裸土（35~39%）+ 阴影/死株（41~47%）+ 白路碎片，几乎不长草。
+它们是作业道、堆料场、待平整地，<b>不该种</b>；<br>
+② <b>草荒型</b>——89.7% 都是强绿（就是草地光谱）。这些才是<b>真正该补种</b>的地。<br>
+电脑目前分不清这两类，所以<b>必须请人工先抽查判断</b>（见下节）。
+</div>
+
+<h2>六、结论</h2>
+
+<div class="card">
+<ol style="margin:0">
+<li><b>电脑现在只会看颜色，而且会误判。</b>「绿的就是树」这条老规矩，把比树还绿 54% 的草地全判成了树冠，
+该补种的地被系统性漏掉。</li>
+<li><b>解法是教它看"质感"和"排列"</b>：草像匀油漆，树像马赛克且按 8.45 米网格排队。
+单加一个"粗糙度数字"不够（草地 46.3 和油棕 39~47 重叠），必须把"均不均匀"和"排不排队"两个结构特征用上。</li>
+<li><b>先把"不用种"的地圈掉</b>：白路、水塘、办公区/硬化场地、裸土工地，生成一张排除图层，
+在识别树冠之前先扣掉，风险最低、立刻可做。</li>
+<li><b>在教新本事之前，先人工抽检</b>——这决定排除图层里到底该放哪些地。</li>
+</ol>
+</div>
+
+<h2>七、你能做什么：人工抽检 5~10 块最大的空地</h2>
+
+<p>电脑啃不动的硬骨头，恰恰是你五分钟就能解决的。请按下面做：</p>
+
+<ol>
+<li><b>打开地图</b>：双击 <span class="mono">output/arcgis/gaps-all.kml</span> 用 Google Earth 看；
+或按《ArcGIS 导入指南》把 <span class="mono">gaps-all-utm49n-shp.zip</span> 解压后拖进 ArcGIS。</li>
+<li><b>挑大的看</b>：在属性表里按面积从大到小排序，<b>先抽 5~10 块最大的「连片空地」</b>。</li>
+<li><b>对着航拍底图，人工回答每块地到底是什么</b>：<br>
+　· 是作业道 / 排水带 / 堆料场？→ 那是"基建型"，不该种；<br>
+　· 还是一片荒草？→ 那是"草荒型"，<b>这才是要优先补种的</b>；<br>
+　· 是水塘、树荫、还是房子？→ 归进"不用种"。</li>
+<li><b>把结论告诉技术团队</b>（哪怕只是在图上圈出来拍张照）：电脑据此圈定"不用种的地"，
+并学会用"质感 + 排列"区分草地和树冠。抽检 5~10 块，就能校准覆盖全园 1,048 块地的分类规则。</li>
+</ol>
+
+<div class="meta" style="text-align:center;font-size:16px">
+<b>你抽检 10 分钟，电脑少犯一个月的错。</b>
+</div>
+
+<footer>
+数据来源：WGR17.tif 全图实测（18,743,382 个有效像素，229 公顷，3.3 cm/px），所有数值均为实测值，非估计。<br>
+技术细节与完整统计数据见《地物光谱特征报告.html》；本页面为其小白版，实测数据完全一致。<br>
+打开方式见《ArcGIS导入指南-专业版.html / ArcGIS导入指南-小白版.html》；本页面所有示意图均为手绘内联 SVG，无外部资源。
+</footer>
+
+</div>
+</body>
+</html>

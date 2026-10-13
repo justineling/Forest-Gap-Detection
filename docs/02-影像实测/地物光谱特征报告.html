@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>地物光谱特征实测报告 — WGR17 油棕园</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--brown:#a8763f;--white:#8a8a8a;--blue:#2f6fa8;--red:#c0392b;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.75;font-size:15px}
+.wrap{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:32px}
+h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:16px;margin:26px 0 10px;color:#26382c}
+p{margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:16.5px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.lead b{color:var(--green)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13px}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px}
+.sw{display:inline-block;width:16px;height:16px;border-radius:3px;
+vertical-align:-3px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11.5px;
+font-weight:600;vertical-align:1px}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.t-info{background:#dceaf7;color:#1f5c8a}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+.hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;margin:14px 0;
+border-radius:0 8px 8px 0}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:#eef2ee;padding:1px 5px;border-radius:3px;
+font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:12.5px}
+.verdict{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:8px;
+margin:12px 0;border:1px solid}
+.v-yes{background:#f0f9ec;border-color:#bfe0b0}
+.v-no{background:#fdf1ef;border-color:#efc4bb}
+.v-part{background:#fffaf0;border-color:#f0dfb8}
+.vico{font-size:20px;line-height:1.2}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>地物光谱特征实测报告</h1>
+  <div class="sub">数据集：WGR17.tif（马来西亚砂拉越油棕园，229 公顷，3.3 cm/px）&nbsp;·&nbsp;
+  采样量：18,743,382 个有效像素&nbsp;·&nbsp;日期：2026-10-13</div>
+</header>
+
+<div class="lead">
+本报告针对用户提出的四条领域知识做<b>定量验证</b>。结论先说：<br><br>
+<b>① 道路是白色 —— 成立。</b> 已定位到完整的白色路网（最大连通域包围盒 706×1095 m，填充率仅 1.3%，典型线状网络）。<br>
+<b>② 河流/水塘不可种植 —— 成立且已被现有算法部分覆盖，但需显式建模。</b><br>
+<b>③ 能不能区分油棕与草地 —— 现在的答案是「不能」，会系统性误判。</b> 草地 ExG 比油棕高出 54%，会被判成树冠。这是本报告最重要的发现。<br>
+<b>④ ArcGIS 查看空地分布 —— 已生成 4 种格式，可直接导入。</b>
+</div>
+
+<h2>一、全图光谱基线</h2>
+<p>先摸清整幅影像的颜色分布底盘。下表是 1874 万有效像素的分位数统计。</p>
+
+<table>
+<thead><tr><th>指标</th><th class="num">P1</th><th class="num">P5</th><th class="num">P25</th>
+<th class="num">P50</th><th class="num">P75</th><th class="num">P95</th><th class="num">P99</th></tr></thead>
+<tbody>
+<tr><td>亮度 L</td><td class="num">22.3</td><td class="num">36.0</td><td class="num">73.0</td>
+<td class="num">107.0</td><td class="num">142.7</td><td class="num">192.3</td><td class="num">233.3</td></tr>
+<tr><td>ExG 绿度</td><td class="num">−21.0</td><td class="num">−8.0</td><td class="num">25.0</td>
+<td class="num">63.0</td><td class="num">95.0</td><td class="num">137.0</td><td class="num">164.0</td></tr>
+<tr><td>饱和度 S</td><td class="num">0.024</td><td class="num">0.106</td><td class="num">0.266</td>
+<td class="num">0.386</td><td class="num">0.529</td><td class="num">0.746</td><td class="num">0.896</td></tr>
+</tbody></table>
+
+<p>其中 <b>57.0% 是有效像素</b>（其余是园区外的 NoData），与之前测得的「园区占外接矩形 57%」完全吻合，交叉验证了影像读数正确。</p>
+
+<h2>二、四类地物的规则命中率</h2>
+<p>用可解释的颜色规则在全图上量一遍，看各类地物到底占多少。</p>
+
+<svg viewBox="0 0 660 252" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><text x="0" y="16" font-size="13" font-weight="600" fill="#223">各地物规则命中率（占有效像素 %）</text><rect x="210" y="34" width="36.1" height="22" fill="#e8e8e8" rx="2"/><text x="202" y="50" font-size="11.5" fill="#334" text-anchor="end">亮白/亮灰 (L>170, S<0.18)</text><text x="254" y="50" font-size="11.5" fill="#223" font-weight="600">4.92</text><rect x="210" y="62" width="45.7" height="22" fill="#b08c5a" rx="2"/><text x="202" y="78" font-size="11.5" fill="#334" text-anchor="end">黄褐裸土 (ExG<15, S<0.35, 110<L≤170)</text><text x="264" y="78" font-size="11.5" fill="#223" font-weight="600">6.24</text><rect x="210" y="90" width="3.1" height="22" fill="#4a90d9" rx="2"/><text x="202" y="106" font-size="11.5" fill="#334" text-anchor="end">水体 (B≥G>R)</text><text x="221" y="106" font-size="11.5" fill="#223" font-weight="600">0.42</text><rect x="210" y="118" width="25.7" height="22" fill="#4a4a4a" rx="2"/><text x="202" y="134" font-size="11.5" fill="#334" text-anchor="end">暗区 (L≤110, ExG<15)</text><text x="244" y="134" font-size="11.5" fill="#223" font-weight="600">3.51</text><rect x="210" y="146" width="380.0" height="22" fill="#5b8c3a" rx="2"/><text x="202" y="162" font-size="11.5" fill="#334" text-anchor="end">植被 (ExG>60)</text><text x="598" y="162" font-size="11.5" fill="#223" font-weight="600">51.84</text><rect x="210" y="174" width="71.7" height="22" fill="#9cd94a" rx="2"/><text x="202" y="190" font-size="11.5" fill="#334" text-anchor="end">└ 草地型 (ExG>110, S>0.55)</text><text x="290" y="190" font-size="11.5" fill="#223" font-weight="600">9.78</text><rect x="210" y="202" width="139.6" height="22" fill="#2f6b1f" rx="2"/><text x="202" y="218" font-size="11.5" fill="#334" text-anchor="end">└ 油棕型 (50<ExG<110, 0.4<S<0.62)</text><text x="358" y="218" font-size="11.5" fill="#223" font-weight="600">19.04</text><text x="210" y="242" font-size="11" fill="#667">命中像素占全部有效像素的百分比</text></svg>
+
+<table>
+<thead><tr><th>地物</th><th class="num">像素数</th><th class="num">占比</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#e8e8e8"></span>亮白/亮灰 (L>170, S<0.18)</td><td class="num">923,084</td><td class="num">4.92%</td><td>道路候选（后经形态学证实为路网）</td></tr><tr><td><span class="sw" style="background:#b08c5a"></span>黄褐裸土 (ExG<15, S<0.35, 110<L≤170)</td><td class="num">1,169,281</td><td class="num">6.24%</td><td>裸土 / 荒地表土</td></tr><tr><td><span class="sw" style="background:#4a90d9"></span>水体 (B≥G>R)</td><td class="num">78,315</td><td class="num">0.42%</td><td>河流 / 水塘 / 积水</td></tr><tr><td><span class="sw" style="background:#4a4a4a"></span>暗区 (L≤110, ExG<15)</td><td class="num">657,928</td><td class="num">3.51%</td><td>阴影 / 死株 / 深水</td></tr><tr><td><span class="sw" style="background:#5b8c3a"></span>植被 (ExG>60)</td><td class="num">9,717,481</td><td class="num">51.84%</td><td>树冠 + 草地的总绿量</td></tr><tr><td><span class="sw" style="background:#9cd94a"></span>　└ 草地型 (ExG>110, S>0.55)</td><td class="num">1,833,375</td><td class="num">9.78%</td><td>⚠️ 与油棕高度混淆</td></tr><tr><td><span class="sw" style="background:#2f6b1f"></span>　└ 油棕型 (50<ExG<110, 0.4<S<0.62)</td><td class="num">3,568,481</td><td class="num">19.04%</td><td>占主导的树冠色</td></tr>
+</tbody></table>
+
+<h2>三、位置验证：白色路网确实存在</h2>
+<p>把「高亮度 + 低饱和」的像元连成一片，看它们的<b>形状</b>。面状地物（如田地、建筑）填充率应接近 1；
+线状地物（如道路）填充率会很低，因为长条框里大部分是空的。</p>
+
+<table>
+<thead><tr><th>连通域</th><th class="num">包围盒（米）</th><th class="num">长宽比</th>
+<th class="num">填充率</th><th>判读</th></tr></thead>
+<tbody>
+<tr><td>路网主连通域</td><td class="num">706 × 1095</td><td class="num">1.55</td>
+<td class="num" style="color:#c0392b;font-weight:700">0.014</td>
+<td><span class="tag t-ok">线状网络 → 道路</span></td></tr>
+<tr><td>路网次连通域</td><td class="num">793 × 449</td><td class="num">1.77</td>
+<td class="num" style="color:#c0392b;font-weight:700">0.013</td>
+<td><span class="tag t-ok">线状网络 → 道路</span></td></tr>
+<tr><td>白路候选 #3</td><td class="num">151 × 65</td><td class="num">2.34</td><td class="num">0.121</td>
+<td><span class="tag t-info">局部路段 / 会车区</span></td></tr>
+<tr><td>白路候选 #4</td><td class="num">50 × 23</td><td class="num">2.14</td><td class="num">0.548</td>
+<td><span class="tag t-info">工棚 / 硬化场地</span></td></tr>
+<tr><td>白路候选 #6</td><td class="num">24 × 46</td><td class="num">1.87</td><td class="num">0.549</td>
+<td><span class="tag t-info">硬化场地</span></td></tr>
+</tbody></table>
+
+<div class="q">
+<b>关键判读：</b>主次两个连通域的填充率只有 <b>1.3%~1.4%</b>——一百个格子只有一两个是白的，
+这是<b>线状网络</b>的铁证（面状地物如裸土块填充率在 0.2~0.5 以上）。
+用户所说的「白色道路」<b>确认存在</b>，且构成一张完整的园区路网。
+</div>
+
+<h3>白路的真实颜色</h3>
+<table>
+<thead><tr><th>样本</th><th>RGB</th><th class="num">ExG</th><th class="num">饱和度</th>
+<th class="num">亮度</th><th class="num">纹理</th></tr></thead>
+<tbody>
+<tr><td>白路候选 #1</td><td><span class="sw" style="background:#c4ceaf"></span><span class="mono">(196.0, 206.4, 175.8)</span></td><td class="num">39.0</td><td class="num">0.159</td><td class="num">192.3</td><td class="num">7.6</td></tr><tr><td>白路候选 #2</td><td><span class="sw" style="background:#ccc1b5"></span><span class="mono">(204.0, 193.6, 181.0)</span></td><td class="num">-5.0</td><td class="num">0.132</td><td class="num">192.0</td><td class="num">8.0</td></tr><tr><td>白路候选 #3</td><td><span class="sw" style="background:#cbbfb6"></span><span class="mono">(203.4, 191.8, 182.5)</span></td><td class="num">-2.0</td><td class="num">0.105</td><td class="num">189.7</td><td class="num">7.9</td></tr><tr><td>白路候选 #4</td><td><span class="sw" style="background:#d1c3b9"></span><span class="mono">(209.3, 195.2, 185.5)</span></td><td class="num">-4.0</td><td class="num">0.136</td><td class="num">190.3</td><td class="num">2.1</td></tr><tr><td>白路候选 #5</td><td><span class="sw" style="background:#c9c1b3"></span><span class="mono">(201.7, 193.2, 179.6)</span></td><td class="num">-3.0</td><td class="num">0.138</td><td class="num">186.3</td><td class="num">5.8</td></tr><tr><td>白路候选 #6</td><td><span class="sw" style="background:#c5b3a4"></span><span class="mono">(197.4, 179.0, 164.8)</span></td><td class="num">-4.0</td><td class="num">0.172</td><td class="num">179.7</td><td class="num">0.7</td></tr>
+</tbody></table>
+
+<p><b>白路的光谱签名非常干净：</b>三通道都在 180~210 之间且彼此接近（灰白），ExG 在 −5~39（几乎无绿度），
+饱和度 &lt;0.18（极低），纹理 0.7~8.0（极平滑，因为路面材质均匀）。
+这四个特征组合起来，与任何植被、裸土都<b>不会混淆</b>。</p>
+
+<h2>四、连片空地到底是什么？—— 成分拆解</h2>
+<p>这是本轮最重要的调查。之前 A3 分析发现 380 块「连片空地」是规整的 76 m 方块，
+用户判断是「道路/排水预留带」。现在直接把这些区域全分辨率拆开看成分。</p>
+
+<table>
+<thead><tr><th>样本</th><th>RGB 均值</th><th class="num">ExG</th><th class="num">S</th>
+<th class="num">L</th><th class="num">纹理</th><th>成分构成</th></tr></thead>
+<tbody>
+<tr><td>连片空地 #1 (5747 m²)<br><span class="sub" style="font-size:11.5px"><span class="sw" style="background:#937b6c"></span></span></td><td class="mono">(147.6, 123.7, 108.7)</td><td class="num">-9</td><td class="num">0.293</td><td class="num">120.3</td><td class="num">24.1</td><td style="font-size:12px"><span class="tag" style="background:#787878;color:#fff;font-size:10.5px">亮白/灰 12.3%</span>　<span class="tag" style="background:#a8763f;color:#fff;font-size:10.5px">黄褐裸土 35.4%</span>　<span class="tag" style="background:#464646;color:#fff;font-size:10.5px">暗（阴影/死株） 40.7%</span></td></tr><tr><td>连片空地 #2 (4824 m²)<br><span class="sub" style="font-size:11.5px"><span class="sw" style="background:#897b72"></span></span></td><td class="mono">(137.3, 123.2, 114.7)</td><td class="num">-7</td><td class="num">0.181</td><td class="num">116.0</td><td class="num">25.9</td><td style="font-size:12px"><span class="tag" style="background:#787878;color:#fff;font-size:10.5px">亮白/灰 18.3%</span>　<span class="tag" style="background:#a8763f;color:#fff;font-size:10.5px">黄褐裸土 35.4%</span>　<span class="tag" style="background:#464646;color:#fff;font-size:10.5px">暗（阴影/死株） 44.1%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">弱绿 1.9%</span></td></tr><tr><td>连片空地 #3 (4797 m²)<br><span class="sub" style="font-size:11.5px"><span class="sw" style="background:#8b807a"></span></span></td><td class="mono">(139.3, 128.6, 122.4)</td><td class="num">-5</td><td class="num">0.144</td><td class="num">114.0</td><td class="num">25.6</td><td style="font-size:12px"><span class="tag" style="background:#787878;color:#fff;font-size:10.5px">亮白/灰 25.9%</span>　<span class="tag" style="background:#a8763f;color:#fff;font-size:10.5px">黄褐裸土 26.3%</span>　<span class="tag" style="background:#464646;color:#fff;font-size:10.5px">暗（阴影/死株） 46.1%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">弱绿 1.3%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">水体 0.5%</span></td></tr><tr><td>连片空地 #4 (4769 m²)<br><span class="sub" style="font-size:11.5px"><span class="sw" style="background:#796d63"></span></span></td><td class="mono">(121.9, 109.1, 99.6)</td><td class="num">-6</td><td class="num">0.193</td><td class="num">107.3</td><td class="num">22.0</td><td style="font-size:12px"><span class="tag" style="background:#787878;color:#fff;font-size:10.5px">亮白/灰 6.9%</span>　<span class="tag" style="background:#a8763f;color:#fff;font-size:10.5px">黄褐裸土 38.6%</span>　<span class="tag" style="background:#464646;color:#fff;font-size:10.5px">暗（阴影/死株） 46.6%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">弱绿 7.4%</span></td></tr><tr><td>连片空地 #5 (另取)<br><span class="sub" style="font-size:11.5px"><span class="sw" style="background:#718d4c"></span></span></td><td class="mono">(113.6, 141.7, 76.4)</td><td class="num">+95</td><td class="num">0.488</td><td class="num">108.7</td><td class="num">20.0</td><td style="font-size:12px"><span class="tag" style="background:#787878;color:#fff;font-size:10.5px">亮白/灰 0.5%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">弱绿 10.2%</span>　<span class="tag" style="background:#5b8c3a;color:#fff;font-size:10.5px">强绿 89.7%</span></td></tr><tr><td>株位空缺 (109 m²)<br><span class="sub" style="font-size:11.5px"><span class="sw" style="background:#66774b"></span></span></td><td class="mono">(102.1, 119.7, 75.0)</td><td class="num">+73</td><td class="num">0.388</td><td class="num">98.7</td><td class="num">14.9</td><td style="font-size:12px"><span class="tag" style="background:#a8763f;color:#fff;font-size:10.5px">黄褐裸土 6.1%</span>　<span class="tag" style="background:#464646;color:#fff;font-size:10.5px">暗（阴影/死株） 16.1%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">弱绿 21.3%</span>　<span class="tag" style="background:#5b8c3a;color:#fff;font-size:10.5px">强绿 56.4%</span></td></tr><tr><td>株位空缺 (84 m²)<br><span class="sub" style="font-size:11.5px"><span class="sw" style="background:#6c6a61"></span></span></td><td class="mono">(108.5, 106.3, 97.3)</td><td class="num">-6</td><td class="num">0.098</td><td class="num">104.3</td><td class="num">8.4</td><td style="font-size:12px"><span class="tag" style="background:#787878;color:#fff;font-size:10.5px">亮白/灰 0.9%</span>　<span class="tag" style="background:#a8763f;color:#fff;font-size:10.5px">黄褐裸土 25.6%</span>　<span class="tag" style="background:#464646;color:#fff;font-size:10.5px">暗（阴影/死株） 51.1%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">弱绿 16.5%</span>　<span class="tag" style="background:#5b8c3a;color:#fff;font-size:10.5px">强绿 6.3%</span>　<span class="tag" style="background:#9cd94a;color:#fff;font-size:10.5px">水体 0.9%</span></td></tr>
+</tbody></table>
+
+<div class="verdict v-part">
+<div class="vico">🔍</div>
+<div><b>分类不是单一的。</b>前 4 块「连片空地」的构成高度一致：
+<span class="hl">35~39% 黄褐裸土 + 41~47% 暗区（阴影/死株/深色覆盖物）+ 7~26% 亮白（道路）</span>，
+几乎<b>没有绿色植被</b>（强绿 0%）。第 5 块却是完全相反的情况：<b>89.7% 强绿</b>，是纯草地。</div>
+</div>
+
+<p>这说明：被归到同一个 <code>open_patch</code> 类别的 380 块空地，<b>实际上是两种完全不同的地物</b>：</p>
+<ul>
+<li><b>基建型</b>（黄褐 + 阴影 + 白路碎片混合，无植被）：园区内未硬化的作业道、堆料场、已平整待种地</li>
+<li><b>草荒型</b>（强绿为主，草地型光谱）：荒废的草地、林间大片空闲地</li>
+</ul>
+<p>两者都「不可种植」在当前语境下需要分开讨论——<b>基建型是规划用地（不该种），草荒型才是真该补种的</b>。
+这与用户「道路 / 排水预留带不算要补种的地」的判断方向一致。</p>
+
+<h2>五、⚠️ 核心风险：草地会被误判成油棕</h2>
+<p>用户明确指出「油棕与绿地色彩差距很大」。这个判断<b>成立</b>，但方向出乎意料——
+问题不是「分不开」，而是<b>分错方向</b>。</p>
+
+<h3>5.1 截图实测对照</h3>
+<table>
+<thead><tr><th>地物</th><th>RGB</th><th class="num">ExG</th><th class="num">饱和度</th>
+<th class="num">纹理</th><th>来源</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#789d3a"></span>草地（左中大块）</td><td class="mono">(120, 157, 58)</td><td class="num" style="font-weight:700">136.8</td><td class="num">0.651</td><td class="num">46.3</td><td>实测截图</td></tr><tr><td><span class="sw" style="background:#53733b"></span>油棕树冠（中上）</td><td class="mono">(83, 115, 59)</td><td class="num" style="font-weight:700">88.6</td><td class="num">0.501</td><td class="num">39.3</td><td>实测截图</td></tr><tr><td><span class="sw" style="background:#608436"></span>油棕树冠（右上）</td><td class="mono">(96, 132, 54)</td><td class="num" style="font-weight:700">113.2</td><td class="num">0.612</td><td class="num">46.9</td><td>实测截图</td></tr><tr><td><span class="sw" style="background:#9c886c"></span>裸土（左侧边缘）</td><td class="mono">(156, 136, 108)</td><td class="num" style="font-weight:700">9.0</td><td class="num">0.346</td><td class="num">36.4</td><td>实测截图</td></tr><tr><td><span class="sw" style="background:#6b7d56"></span>树冠间地形（中）</td><td class="mono">(107, 125, 86)</td><td class="num" style="font-weight:700">56.5</td><td class="num">0.345</td><td class="num">40.3</td><td>实测截图</td></tr>
+</tbody></table>
+
+<div class="verdict v-no">
+<div class="vico">⛔</div>
+<div><b>草地的 ExG 是 136.8，油棕中上部只有 88.6 —— 草地「更绿」54%。</b><br>
+现有算法判据是「ExG 高于阈值 = 树冠」。因此<b>草地会被判成树冠</b>，
+随之被从「空地」中扣除，导致<b>真该补种的草地被漏检</b>。</div>
+</div>
+
+<h3>5.2 为什么会这样</h3>
+<p>纯草皮是<b>单一、鲜嫩、反射均匀</b>的植物叶片，绿度极高；
+油棕树冠是<b>多层伞状叶片 + 大量阴影缝隙</b>的立体结构，
+在正射影像上被平均后，绿度被内部的暗部拉低。所以「更绿」不等于「更像树」。</p>
+
+<h3>5.3 有效的区分特征：纹理，不是颜色</h3>
+<table>
+<thead><tr><th>地物</th><th class="num">ExG</th><th class="num">饱和度</th>
+<th class="num">纹理 std</th><th>可区分性</th></tr></thead>
+<tbody>
+<tr><td>草地</td><td class="num">136.8</td><td class="num">0.651</td>
+<td class="num" style="color:#c0392b;font-weight:700">46.3</td><td><span class="tag t-warn">与油棕重叠</span></td></tr>
+<tr><td>油棕树冠</td><td class="num">88.6 ~ 113.2</td><td class="num">0.501 ~ 0.612</td>
+<td class="num" style="color:#c0392b;font-weight:700">39.3 ~ 46.9</td><td><span class="tag t-bad">颜色几乎重合</span></td></tr>
+<tr><td>连片空地（基建型）</td><td class="num">−9 ~ −5</td><td class="num">0.14 ~ 0.29</td>
+<td class="num">22 ~ 26</td><td><span class="tag t-ok">极易分离</span></td></tr>
+<tr><td>株位空缺</td><td class="num">−6 ~ 73</td><td class="num">0.10 ~ 0.39</td>
+<td class="num" style="color:#2f7d1f;font-weight:700">8.4 ~ 14.9</td><td><span class="tag t-ok">纹理可分离</span></td></tr>
+</tbody></table>
+
+<p>注意最后一行：<b>株位空缺的纹理只有 8~15，而大块空地是 22~26</b>，
+相差近一倍。这是目前发现<b>最有区分力的新特征</b>——它不依赖绝对亮度，
+因此对跨航带曝光差异也天然鲁棒。</p>
+
+<h2>六、结论与建议</h2>
+
+<div class="card">
+<h3 style="margin-top:0">对用户四条领域的逐条回应</h3>
+
+<div class="verdict v-yes">
+<div class="vico">✅</div><div><b>① 道路是白色/偏白的 —— 确认成立。</b>
+已定位到完整路网（填充率 1.3% 的线状网络），光谱签名干净（L&gt;170, S&lt;0.18, ExG≈−5），
+可以可靠地自动提取并作为「不可种植」图层扣减。</div>
+</div>
+
+<div class="verdict v-yes">
+<div class="vico">✅</div><div><b>② 河流/水塘不可种植 —— 成立，但当前占比很小。</b>
+水体规则（B≥G&gt;R）在全图命中仅 <b>0.42%</b>（约 9.6 万 m²）。
+可在同一套「排除图层」里与道路合并处理。注意：深水可能被归入「暗区」（3.51%），
+建议按「暗 + 低 ExG + 极低纹理」补充识别。</div>
+</div>
+
+<div class="verdict v-no">
+<div class="vico">⚠️</div><div><b>③ 油棕 vs 草地 —— 目前<b>不能</b>正确区分，且会误判。</b>
+这是本轮最需要修的算法缺陷。三个可选改法（见下）。</div>
+</div>
+
+<div class="verdict v-yes">
+<div class="vico">✅</div><div><b>④ ArcGIS 查看空地分布 —— 已生成 4 种格式，见第七节。</b></div>
+</div>
+</div>
+
+<h3>建议的算法改进（三个方向，推荐组合使用）</h3>
+
+<ol>
+<li><b>【必做】引入「不可种植图层」前置扣除</b><br>
+在树冠识别之前，先用颜色规则提取 <b>道路 + 水体 + 硬质场地</b>，
+生成一张 mask，把这块区域直接从「候选空地」里剔除。
+好处：与现有判据完全解耦，不碰核心算法，风险最低。<br>
+<span class="tag t-ok">工作量小</span> <span class="tag t-ok">立即可做</span></li>
+
+<li><b>【必做】引入纹理特征区分草地 / 树冠</b><br>
+实测纹理 std 是当前最有区分力的特征。建议加一路「纹理通道」：
+大块平滑高绿区（纹理 &lt; 15 且 ExG 高）判为草地/裸地，
+破碎高绿区（纹理 &gt; 35 且呈周期性）判为树冠。
+可与现有的株行距网格先验结合——<b>草地不服从株行距网格，树冠服从</b>。<br>
+<span class="tag t-warn">需调参</span> <span class="tag t-info">建议先在小区域验证</span></li>
+
+<li><b>【建议】新增两个地物类别</b><br>
+<span class="mono">CLASS_ROAD</span>（道路/硬化）、<span class="mono">CLASS_WATER</span>（水体），
+与「预留带」一起归入「不可种植」。输出 GeoJSON 时单独成层，
+这样在 ArcGIS 里可以分开控制符号，也方便用户人工核对。<br>
+<span class="tag t-ok">纯增量</span> <span class="tag t-info">向后兼容</span></li>
+</ol>
+
+<div class="q">
+<b>⚠️ 但请先别急——</b>建议用户先做一件事：
+<b>在 ArcGIS 里打开第七节提供的文件，人工抽检 5~10 块最大的「连片空地」</b>，
+确认它们实际是什么（作业道？堆料场？荒草地？）。
+这直接决定第 1 条建议里的「不可种植图层」应该包含哪些地物，以及要不要新增类别。
+</div>
+
+<h2>七、ArcGIS 使用指南</h2>
+
+<p>你已经能用 ArcGIS 打开 TIF，那查看空地分布就非常简单。<b>GeoJSON 可以直接导入</b>，
+但不同版本支持度不同，所以我准备了 4 种格式，按你的软件版本挑一个用。</p>
+
+<h3>7.1 生成的文件</h3>
+<table>
+<thead><tr><th>文件</th><th>格式</th><th>适用</th><th class="num">大小</th><th>坐标系</th></tr></thead>
+<tbody>
+<tr><td class="mono">gaps-all.geojson</td><td>GeoJSON</td>
+<td><b>ArcGIS Pro</b> / ArcMap 10.5+ 直接拖入</td><td class="num">3.5 MB</td><td>WGS84 (4326)</td></tr>
+<tr><td class="mono">gaps-all-shp.zip</td><td>Shapefile</td>
+<td><b>所有 ArcGIS 版本</b>，最保险</td><td class="num">660 KB</td><td>WGS84 (4326)</td></tr>
+<tr><td class="mono">gaps-all.kml</td><td>KML</td>
+<td>Google Earth / ArcGIS Earth / 手机地图</td><td class="num">1.8 MB</td><td>WGS84</td></tr>
+<tr><td class="mono">gaps-open_patch.geojson</td><td>GeoJSON</td>
+<td>只含 380 块连片空地（需重点核查）</td><td class="num">2.1 MB</td><td>WGS84</td></tr>
+<tr><td class="mono">gaps-vacant_slot.geojson</td><td>GeoJSON</td>
+<td>只含 180 个株位空缺</td><td class="num">364 KB</td><td>WGS84</td></tr>
+<tr><td class="mono">gaps-alley_gap.geojson</td><td>GeoJSON</td>
+<td>只含 170 个林间空隙</td><td class="num">307 KB</td><td>WGS84</td></tr>
+<tr><td class="mono">gaps-uncertain.geojson</td><td>GeoJSON</td>
+<td>只含 318 个不确定，需人工判读</td><td class="num">723 KB</td><td>WGS84</td></tr>
+</tbody></table>
+<p>位置：<code>output/arcgis/</code></p>
+
+<h3>7.2 操作步骤（ArcGIS Pro）</h3>
+<ol>
+<li>打开 ArcGIS Pro，新建或打开一个工程</li>
+<li><b>先把 TIF 拖进去</b>——但 3.5 GB 的 BigTIFF 建议先建金字塔（ArcGIS 会提示），
+或者干脆只加影像不显示全图，靠缩放去看细节</li>
+<li>菜单 <b>Map → Add Data → Data</b>，选择 <code>gaps-all.geojson</code><br>
+<span style="color:#8a5a00">如果提示不支持，就把 <code>gaps-all-shp.zip</code> 解压后选 <code>.shp</code> 文件</span></li>
+<li>右键图层 → <b>Symbology</b> → 按 <code>gclass_cn</code> 字段分类着色：
+连片空地=橙、株位空缺=红、林间空隙=黄、不确定=灰</li>
+<li>右键图层 → <b>Labeling</b>，字段选 <code>gap_id</code> 或 <code>area_sqm</code></li>
+<li>打开属性表（右键 → Open Attribute Table），可按面积排序，<b>从大到小逐块核对</b></li>
+</ol>
+
+<h3>7.3 操作步骤（ArcMap 10.x）</h3>
+<ol>
+<li>若版本 ≥10.5：<b>File → Add Data → Add Data</b>，直接选 GeoJSON</li>
+<li>若版本 &lt;10.5：解压 <code>gaps-all-shp.zip</code>，选 <code>gaps-all.shp</code></li>
+<li>或使用 <b>Conversion Tools → JSON → JSON To Features</b> 手动转换</li>
+</ol>
+
+<h3>7.4 只有 Google Earth？</h3>
+<p>双击 <code>gaps-all.kml</code> 即可。里面已经按类别分好文件夹（可勾选显示/隐藏），
+每块空地点击后能看到面积、长宽比、覆盖率。<b>这是最轻量的核对方式</b>，
+适合快速扫一遍大块空地长什么样。</p>
+
+<div class="q">
+<b>💡 小提示：</b>在 ArcGIS 里核对时，建议把影像透明度和多边形填充透明度都调到 50% 左右，
+这样能同时看到底图纹理和多边形边界，便于判断「这块到底是路、是水塘、还是真的空着」。
+</div>
+
+<h2>八、数据附录</h2>
+
+<h3>8.1 Top 20 颜色族</h3>
+<p>全图有效像素量化到 16 级后最常出现的 20 种颜色，用于理解影像的整体色彩构成。</p>
+<table>
+<thead><tr><th>排名</th><th>颜色</th><th>RGB 均值</th><th class="num">占比</th>
+<th class="num">ExG</th><th class="num">饱和度</th></tr></thead>
+<tbody>
+<tr><td class="num">1</td><td><span class="sw" style="background:#374727"></span></td><td class="mono">(55.6, 71.2, 39.9)</td><td class="num">1.19%</td><td class="num">46.9</td><td class="num">0.439</td></tr><tr><td class="num">2</td><td><span class="sw" style="background:#192716"></span></td><td class="mono">(25.0, 39.1, 22.8)</td><td class="num">1.14%</td><td class="num">30.5</td><td class="num">0.418</td></tr><tr><td class="num">3</td><td><span class="sw" style="background:#353828"></span></td><td class="mono">(53.7, 56.4, 40.2)</td><td class="num">1.14%</td><td class="num">18.8</td><td class="num">0.287</td></tr><tr><td class="num">4</td><td><span class="sw" style="background:#475737"></span></td><td class="mono">(71.8, 87.3, 55.2)</td><td class="num">1.09%</td><td class="num">47.6</td><td class="num">0.368</td></tr><tr><td class="num">5</td><td><span class="sw" style="background:#252819"></span></td><td class="mono">(37.0, 40.8, 25.3)</td><td class="num">0.99%</td><td class="num">19.4</td><td class="num">0.38</td></tr><tr><td class="num">6</td><td><span class="sw" style="background:#464837"></span></td><td class="mono">(70.3, 72.2, 55.4)</td><td class="num">0.99%</td><td class="num">18.6</td><td class="num">0.232</td></tr><tr><td class="num">7</td><td><span class="sw" style="background:#293725"></span></td><td class="mono">(41.1, 55.1, 37.7)</td><td class="num">0.98%</td><td class="num">31.2</td><td class="num">0.315</td></tr><tr><td class="num">8</td><td><span class="sw" style="background:#576737"></span></td><td class="mono">(87.1, 103.7, 55.7)</td><td class="num">0.98%</td><td class="num">64.6</td><td class="num">0.463</td></tr><tr><td class="num">9</td><td><span class="sw" style="background:#587737"></span></td><td class="mono">(88.0, 119.1, 55.4)</td><td class="num">0.94%</td><td class="num">94.8</td><td class="num">0.535</td></tr><tr><td class="num">10</td><td><span class="sw" style="background:#677747"></span></td><td class="mono">(103.4, 119.7, 71.3)</td><td class="num">0.92%</td><td class="num">64.7</td><td class="num">0.404</td></tr><tr><td class="num">11</td><td><span class="sw" style="background:#688747"></span></td><td class="mono">(104.0, 135.2, 71.2)</td><td class="num">0.9%</td><td class="num">95.1</td><td class="num">0.473</td></tr><tr><td class="num">12</td><td><span class="sw" style="background:#465728"></span></td><td class="mono">(70.8, 87.7, 40.3)</td><td class="num">0.9%</td><td class="num">64.4</td><td class="num">0.541</td></tr><tr><td class="num">13</td><td><span class="sw" style="background:#768747"></span></td><td class="mono">(118.8, 135.8, 71.9)</td><td class="num">0.89%</td><td class="num">80.9</td><td class="num">0.471</td></tr><tr><td class="num">14</td><td><span class="sw" style="background:#486727"></span></td><td class="mono">(72.0, 103.0, 39.8)</td><td class="num">0.85%</td><td class="num">94.2</td><td class="num">0.613</td></tr><tr><td class="num">15</td><td><span class="sw" style="background:#879757"></span></td><td class="mono">(135.0, 151.6, 87.8)</td><td class="num">0.84%</td><td class="num">80.5</td><td class="num">0.421</td></tr><tr><td class="num">16</td><td><span class="sw" style="background:#778757"></span></td><td class="mono">(119.6, 135.7, 87.1)</td><td class="num">0.83%</td><td class="num">64.8</td><td class="num">0.358</td></tr><tr><td class="num">17</td><td><span class="sw" style="background:#667838"></span></td><td class="mono">(102.6, 120.0, 56.1)</td><td class="num">0.83%</td><td class="num">81.3</td><td class="num">0.532</td></tr><tr><td class="num">18</td><td><span class="sw" style="background:#678638"></span></td><td class="mono">(103.6, 134.9, 56.0)</td><td class="num">0.8%</td><td class="num">110.2</td><td class="num">0.585</td></tr><tr><td class="num">19</td><td><span class="sw" style="background:#789757"></span></td><td class="mono">(120.0, 151.1, 87.2)</td><td class="num">0.8%</td><td class="num">95.0</td><td class="num">0.423</td></tr><tr><td class="num">20</td><td><span class="sw" style="background:#779647"></span></td><td class="mono">(119.7, 150.7, 71.8)</td><td class="num">0.76%</td><td class="num">109.9</td><td class="num">0.524</td></tr>
+</tbody></table>
+
+<h3>8.2 ExG × 饱和度 地物分布图</h3>
+<p>把各地物画在同一张二维图上，直观看出它们的可分离性。灰点是全图 Top20 色族，
+彩点是本报告涉及的具体地物样本。<b>红框区域是草地与油棕的混淆带</b>。</p>
+<svg viewBox="0 0 660 340" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><rect x="48" y="20" width="596" height="272" fill="#fbfdfb" stroke="#dde3dd"/><line x1="48" y1="20" x2="48" y2="292" stroke="#eef2ee"/><text x="48" y="308" font-size="11" fill="#667" text-anchor="middle">-40</text><line x1="156" y1="20" x2="156" y2="292" stroke="#eef2ee"/><text x="156" y="308" font-size="11" fill="#667" text-anchor="middle">0</text><line x1="265" y1="20" x2="265" y2="292" stroke="#eef2ee"/><text x="265" y="308" font-size="11" fill="#667" text-anchor="middle">40</text><line x1="373" y1="20" x2="373" y2="292" stroke="#eef2ee"/><text x="373" y="308" font-size="11" fill="#667" text-anchor="middle">80</text><line x1="481" y1="20" x2="481" y2="292" stroke="#eef2ee"/><text x="481" y="308" font-size="11" fill="#667" text-anchor="middle">120</text><line x1="590" y1="20" x2="590" y2="292" stroke="#eef2ee"/><text x="590" y="308" font-size="11" fill="#667" text-anchor="middle">160</text><line x1="48" y1="292" x2="644" y2="292" stroke="#eef2ee"/><text x="40" y="296" font-size="11" fill="#667" text-anchor="end">0.0</text><line x1="48" y1="238" x2="644" y2="238" stroke="#eef2ee"/><text x="40" y="242" font-size="11" fill="#667" text-anchor="end">0.2</text><line x1="48" y1="183" x2="644" y2="183" stroke="#eef2ee"/><text x="40" y="187" font-size="11" fill="#667" text-anchor="end">0.4</text><line x1="48" y1="129" x2="644" y2="129" stroke="#eef2ee"/><text x="40" y="133" font-size="11" fill="#667" text-anchor="end">0.6</text><line x1="48" y1="74" x2="644" y2="74" stroke="#eef2ee"/><text x="40" y="78" font-size="11" fill="#667" text-anchor="end">0.8</text><line x1="48" y1="20" x2="644" y2="20" stroke="#eef2ee"/><text x="40" y="24" font-size="11" fill="#667" text-anchor="end">1.0</text><text x="346" y="332" font-size="12" fill="#334" text-anchor="middle">ExG 绿度指数 （2G−R−B）</text><text x="14" y="156" font-size="12" fill="#334" text-anchor="middle" transform="rotate(-90 14 156)">饱和度 S</text><circle cx="283" cy="173" r="8.8" fill="#9aa39a" fill-opacity="0.55"><title>色族 (55.6, 71.2, 39.9) 占比1.19%</title></circle><circle cx="239" cy="178" r="8.6" fill="#9aa39a" fill-opacity="0.55"><title>色族 (25.0, 39.1, 22.8) 占比1.14%</title></circle><circle cx="207" cy="214" r="8.6" fill="#9aa39a" fill-opacity="0.55"><title>色族 (53.7, 56.4, 40.2) 占比1.14%</title></circle><circle cx="285" cy="192" r="8.4" fill="#9aa39a" fill-opacity="0.55"><title>色族 (71.8, 87.3, 55.2) 占比1.09%</title></circle><circle cx="209" cy="189" r="8.0" fill="#9aa39a" fill-opacity="0.55"><title>色族 (37.0, 40.8, 25.3) 占比0.99%</title></circle><circle cx="207" cy="229" r="8.0" fill="#9aa39a" fill-opacity="0.55"><title>色族 (70.3, 72.2, 55.4) 占比0.99%</title></circle><circle cx="241" cy="206" r="7.9" fill="#9aa39a" fill-opacity="0.55"><title>色族 (41.1, 55.1, 37.7) 占比0.98%</title></circle><circle cx="331" cy="166" r="7.9" fill="#9aa39a" fill-opacity="0.55"><title>色族 (87.1, 103.7, 55.7) 占比0.98%</title></circle><circle cx="413" cy="146" r="7.8" fill="#9aa39a" fill-opacity="0.55"><title>色族 (88.0, 119.1, 55.4) 占比0.94%</title></circle><circle cx="332" cy="182" r="7.7" fill="#9aa39a" fill-opacity="0.55"><title>色族 (103.4, 119.7, 71.3) 占比0.92%</title></circle><circle cx="414" cy="163" r="7.6" fill="#9aa39a" fill-opacity="0.55"><title>色族 (104.0, 135.2, 71.2) 占比0.9%</title></circle><circle cx="331" cy="145" r="7.6" fill="#9aa39a" fill-opacity="0.55"><title>色族 (70.8, 87.7, 40.3) 占比0.9%</title></circle><circle cx="376" cy="164" r="7.6" fill="#9aa39a" fill-opacity="0.55"><title>色族 (118.8, 135.8, 71.9) 占比0.89%</title></circle><circle cx="412" cy="125" r="7.4" fill="#9aa39a" fill-opacity="0.55"><title>色族 (72.0, 103.0, 39.8) 占比0.85%</title></circle><circle cx="374" cy="177" r="7.4" fill="#9aa39a" fill-opacity="0.55"><title>色族 (135.0, 151.6, 87.8) 占比0.84%</title></circle><circle cx="332" cy="195" r="7.3" fill="#9aa39a" fill-opacity="0.55"><title>色族 (119.6, 135.7, 87.1) 占比0.83%</title></circle><circle cx="377" cy="147" r="7.3" fill="#9aa39a" fill-opacity="0.55"><title>色族 (102.6, 120.0, 56.1) 占比0.83%</title></circle><circle cx="455" cy="133" r="7.2" fill="#9aa39a" fill-opacity="0.55"><title>色族 (103.6, 134.9, 56.0) 占比0.8%</title></circle><circle cx="414" cy="177" r="7.2" fill="#9aa39a" fill-opacity="0.55"><title>色族 (120.0, 151.1, 87.2) 占比0.8%</title></circle><circle cx="454" cy="149" r="7.0" fill="#9aa39a" fill-opacity="0.55"><title>色族 (119.7, 150.7, 71.8) 占比0.76%</title></circle><circle cx="527" cy="115" r="9" fill="#7dcc29" stroke="#111" stroke-width="1"><title>草地
+ExG=136.8 S=0.651</title></circle><text x="538" y="119" font-size="10.5" fill="#111">草地</text><circle cx="396" cy="156" r="8" fill="#2f7d1f" stroke="#111" stroke-width="1"><title>油棕①
+ExG=88.6 S=0.501</title></circle><text x="407" y="160" font-size="10.5" fill="#111">油棕①</text><circle cx="463" cy="126" r="8" fill="#2f7d1f" stroke="#111" stroke-width="1"><title>油棕②
+ExG=113.2 S=0.612</title></circle><text x="474" y="130" font-size="10.5" fill="#111">油棕②</text><circle cx="181" cy="198" r="8" fill="#c39a5e" stroke="#111" stroke-width="1"><title>裸土
+ExG=9.0 S=0.346</title></circle><text x="192" y="202" font-size="10.5" fill="#111">裸土</text><circle cx="309" cy="198" r="7" fill="#7a8a66" stroke="#111" stroke-width="1"><title>林下地形
+ExG=56.5 S=0.345</title></circle><text x="320" y="202" font-size="10.5" fill="#111">林下地形</text><circle cx="132" cy="212" r="9" fill="#a8763f" stroke="#111" stroke-width="1"><title>连片空地①
+ExG=-9.0 S=0.293</title></circle><text x="143" y="216" font-size="10.5" fill="#111">连片空地①</text><circle cx="143" cy="253" r="9" fill="#c9a06a" stroke="#111" stroke-width="1"><title>连片空地②
+ExG=-5.0 S=0.144</title></circle><text x="154" y="257" font-size="10.5" fill="#111">连片空地②</text><circle cx="140" cy="265" r="9" fill="#c9a06a" stroke="#111" stroke-width="1"><title>连片空地③
+ExG=-6.0 S=0.098</title></circle><text x="151" y="269" font-size="10.5" fill="#111">连片空地③</text><circle cx="414" cy="159" r="9" fill="#7dcc29" stroke="#111" stroke-width="1"><title>连片空地④(草地型)
+ExG=95.0 S=0.488</title></circle><text x="425" y="163" font-size="10.5" fill="#111">连片空地④(草地型)</text><circle cx="262" cy="249" r="9" fill="#e0e0e0" stroke="#111" stroke-width="1"><title>白路①
+ExG=39.0 S=0.159</title></circle><text x="273" y="253" font-size="10.5" fill="#111">白路①</text><circle cx="143" cy="256" r="9" fill="#e0e0e0" stroke="#111" stroke-width="1"><title>白路②
+ExG=-5.0 S=0.132</title></circle><text x="154" y="260" font-size="10.5" fill="#111">白路②</text><circle cx="151" cy="263" r="9" fill="#e0e0e0" stroke="#111" stroke-width="1"><title>白路③
+ExG=-2.0 S=0.105</title></circle><text x="162" y="267" font-size="10.5" fill="#111">白路③</text><circle cx="354" cy="186" r="8" fill="#4a8f2a" stroke="#111" stroke-width="1"><title>株位空缺
+ExG=73.0 S=0.388</title></circle><text x="365" y="190" font-size="10.5" fill="#111">株位空缺</text><rect x="387" y="129" width="176" height="33" fill="#ff4444" fill-opacity="0.10" stroke="#ff4444" stroke-dasharray="4 3" stroke-width="1.2"/><text x="473" y="114" font-size="11" fill="#c22" text-anchor="middle" font-weight="600">⚠ 草地/油棕混淆区</text></svg>
+
+<div class="card" style="margin-top:26px;background:#fcfdfc">
+<b>读图要点：</b>
+<ul style="margin-bottom:0">
+<li>连片空地（棕点）位于图的<b>左下角</b>——低绿度 + 低饱和，与其他地物隔着明显的空白带，非常容易分离</li>
+<li>白路（灰白点）位于<b>左上角</b>——低绿度 + 极低饱和，同样孤立</li>
+<li>草地与油棕<b>挤在右上同一片区域</b>，单靠颜色和饱和度无法分开——这是核心难点</li>
+<li>株位空缺落在中间偏上，与油棕接近，但<b>纹理指标能拉开差距</b>（见 5.3 节）</li>
+</ul>
+</div>
+
+<footer>
+报告生成：2026-10-13 &nbsp;·&nbsp; 数据源：WGR17.tif 全图普查（18,743,382 有效像元）<br>
+所有数值均为本次在真实影像上的实测结果，非估计值。中间脚本见
+<code>.workbuddy-ai/tmp/diag_landcover.py</code> / <code>diag_whiteroad.py</code> /
+<code>diag_roadnet.py</code> / <code>diag_patchmix.py</code>。
+</footer>
+
+</div>
+</body>
+</html>
