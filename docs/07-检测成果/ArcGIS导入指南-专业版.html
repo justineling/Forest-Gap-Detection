@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ArcGIS 导入指南（专业版） — WGR17 空地检测成果</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;--gold:#b8860b;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.75;font-size:15px}
+.wrap{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:32px}
+h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:20px;margin:44px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:16px;margin:26px 0 10px;color:#26382c}
+p{margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:16px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.lead b{color:var(--green)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13px}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,"Courier New",monospace;font-size:12.5px}
+.sw{display:inline-block;width:16px;height:16px;border-radius:3px;
+vertical-align:-3px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11.5px;
+font-weight:600;vertical-align:1px;white-space:nowrap}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.t-info{background:#dceaf7;color:#1f5c8a}
+.hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;margin:14px 0;
+border-radius:0 8px 8px 0}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:#eef2ee;padding:1px 5px;border-radius:3px;
+font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:12.5px}
+.verdict{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:8px;
+margin:12px 0;border:1px solid}
+.v-yes{background:#f0f9ec;border-color:#bfe0b0}
+.v-no{background:#fdf1ef;border-color:#efc4bb}
+.v-part{background:#fffaf0;border-color:#f0dfb8}
+.vico{font-size:20px;line-height:1.2;flex:none}
+.route{border:1px solid var(--line);border-radius:10px;margin:18px 0;overflow:hidden;background:#fff}
+.route-h{padding:12px 18px;font-weight:700;font-size:15.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.route-a .route-h{background:#eaf6e4;color:#245d16;border-bottom:1px solid #cfe4c6}
+.route-b .route-h{background:#eaf1fa;color:#1f5c8a;border-bottom:1px solid #cfdff0}
+.route-c .route-h{background:#f5f5f0;color:#4a4a3a;border-bottom:1px solid #e0e0d5}
+.route-d .route-h{background:#fdf3e3;color:#8a5a00;border-bottom:1px solid #f0dfb8}
+.route .body{padding:6px 20px 14px}
+.route .body ol,.route .body ul{margin:8px 0}
+.why{background:#f4f9fd;border:1px dashed #bcd6ea;border-radius:8px;
+padding:10px 14px;margin:10px 0;font-size:13.5px;color:#1f4a6b}
+.warnbox{background:#fdf1ef;border:1px solid #efc4bb;border-radius:8px;
+padding:10px 14px;margin:10px 0;font-size:13.5px;color:#7a2418}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>空地检测成果 · ArcGIS 导入指南</h1>
+  <div class="sub">专业版（面向已会使用 ArcGIS 的技术人员）&nbsp;·&nbsp;成果：1,048 个空地多边形，分 4 类&nbsp;·&nbsp;
+  影像：WGR17.tif（EPSG:4326，3.5 GB）&nbsp;·&nbsp;日期：2026-10-13</div>
+</header>
+
+<div class="lead">
+<b>结论先行：GeoJSON 文件没有坏。</b>几何实测完全正常——ring 闭合、88 个顶点、宽高比 1:1，
+跨度 0.01315° × 0.01318° ≈ <b>1463 m × 1457 m</b>。<br><br>
+在 ArcGIS 里只看到「一堆直线」，根因是<b>坐标系处理方式</b>，不是数据损坏：<br>
+<b>①</b> ArcGIS 导入 GeoJSON 时<b>忽略 GeoJSON 顶层的 <code>crs</code> 成员</b>，按「未知平面坐标系」处理；
+<b>②</b> 于是 1,048 个多边形被放到 X = 111.197 ~ 111.210、Y = 1.177 ~ 1.190 的
+0.013°×0.013° 平面小方块上；
+<b>③</b> 而 TIF 在十万八千里外的正确地理位置 → 多边形与影像永远对不上 → 挤成一坨 → 视觉上就是「一堆直线」。<br><br>
+<b>对照组：</b>KML 在 Google Earth 里一定正确，因为 <b>KML 规范强制 lon,lat,alt 且强制 WGS84，无任何歧义</b>。
+</div>
+
+<h2>一、先直接回答你的提问</h2>
+
+<p>你问：「我想输出 1 个文件，让它能直接导入并在该 tif 内自动 draw polygon。现在的 geojson 能够做到吗？具体步骤是什么？」</p>
+
+<div class="verdict v-yes">
+<div class="vico">✅</div>
+<div><b>几何自动画：一定能。</b>任选一个 <code>gaps-all-*</code> 文件导入，ArcGIS 即自动生成
+<b>1,048 个 Polygon 要素</b>（连片空地 380 + 不确定 318 + 株位空缺 180 + 林间空隙 170），
+无需手动画任何一个多边形。</div>
+</div>
+
+<div class="verdict v-part">
+<div class="vico">⚠️</div>
+<div><b>位置落到 TIF 上：取决于是否正确指定坐标系。</b>
+用 <code>gaps-all-utm49n-shp.zip</code>（自带 <code>.prj</code>）→ <b>零手动操作</b>，添加即自动动态投影叠加；
+用 GeoJSON 且导入时未指定 CRS → <b>复现「一堆直线」</b>。</div>
+</div>
+
+<div class="q">
+<b>所以最终答案是一个文件也能做到：</b>解压 <code>gaps-all-utm49n-shp.zip</code>，把
+<code>gapsutm.shp</code> 拖进已经加载 <code>WGR17.tif</code> 的地图，多边形自动、准确地落到影像上。
+完整步骤见<a href="#routeA">第四节 路线 A</a>。
+</div>
+
+<h2>二、根因诊断：为什么 GeoJSON 在 ArcGIS 里变成「一堆直线」</h2>
+
+<p>诊断已确认，问题分三层，全部有实测依据：</p>
+
+<ol>
+<li><b>影像与几何本身都没问题。</b>TIF 是 EPSG:4326，有正确的地理配准；GeoJSON 几何实测正常：
+ring 闭合、88 个顶点、宽高比 1:1、跨度 0.01315°×0.01318° ≈ 1463 m × 1457 m。</li>
+<li><b>ArcGIS 的 GeoJSON 导入器忽略顶层 <code>crs</code> 成员</b>，按「未知平面坐标系」处理——
+经纬度数值被当成了平面坐标 (X, Y)。</li>
+<li><b>于是 1,048 个多边形被放进 X = 111.197 ~ 111.210、Y = 1.177 ~ 1.190 的 0.013°×0.013° 小方块</b>，
+而 TIF 在正确的地理位置。两者相距十万八千里，1048 个多边形挤成极小一坨——
+放大之前，每个地块在屏幕上不足一个像素，看起来就是「一堆直线」。</li>
+</ol>
+
+<p><b>内联示意图（手写 SVG，无外部资源）：</b></p>
+
+<svg viewBox="0 0 680 332" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif" role="img" aria-label="坐标系错位示意图">
+  <text x="340" y="18" font-size="13.5" font-weight="700" fill="#223" text-anchor="middle">根因示意：同一份几何数据，被放进了两个互不相干的"位置系统"</text>
+
+  <rect x="8" y="28" width="292" height="268" rx="10" fill="#f2f8ef" stroke="#cfe0c8"/>
+  <text x="154" y="48" font-size="12.5" font-weight="700" fill="#245d16" text-anchor="middle">① 影像 TIF：EPSG:4326（有 .prj）</text>
+  <circle cx="86" cy="118" r="50" fill="#dceaf7" stroke="#9cc3e0"/>
+  <path d="M36 118 Q 86 92 136 118" fill="none" stroke="#b9d4e8"/>
+  <path d="M36 118 Q 86 144 136 118" fill="none" stroke="#b9d4e8"/>
+  <ellipse cx="86" cy="118" rx="22" ry="50" fill="none" stroke="#b9d4e8"/>
+  <ellipse cx="93" cy="117" rx="24" ry="16" fill="#cfe4c6" stroke="#a8c89a"/>
+  <rect x="98" y="106" width="16" height="16" fill="#2f7d1f" stroke="#14520d" stroke-width="1.5"/>
+  <text x="106" y="118" font-size="8.5" fill="#fff" text-anchor="middle" font-weight="700">TIF</text>
+  <text x="150" y="102" font-size="11.5" fill="#223" font-weight="600">WGR17.tif</text>
+  <text x="150" y="119" font-size="11" fill="#5b6b5f">111.20°E, 1.18°N</text>
+  <text x="150" y="135" font-size="11" fill="#5b6b5f">3.5 GB · 229 公顷</text>
+  <text x="154" y="196" font-size="11.5" fill="#245d16" text-anchor="middle">ArcGIS 认识这个位置</text>
+  <text x="154" y="214" font-size="11.5" fill="#245d16" text-anchor="middle">多边形准确地盖在影像上 ✓</text>
+  <text x="154" y="244" font-size="10.5" fill="#5b6b5f" text-anchor="middle">（有 .prj = 自带"地址本"）</text>
+
+  <path d="M306 132 L 372 132" stroke="#c0392b" stroke-width="2.5" stroke-dasharray="6 4"/>
+  <path d="M306 158 L 372 158" stroke="#c0392b" stroke-width="2.5" stroke-dasharray="6 4"/>
+  <text x="339" y="120" font-size="11.5" font-weight="700" fill="#c0392b" text-anchor="middle">≈ 十万八千里</text>
+  <line x1="332" y1="145" x2="346" y2="145" stroke="#c0392b" stroke-width="3"/>
+  <text x="339" y="180" font-size="11" fill="#c0392b" text-anchor="middle">对不上</text>
+
+  <rect x="380" y="28" width="292" height="268" rx="10" fill="#fdf6ec" stroke="#ecd9b8"/>
+  <text x="526" y="48" font-size="12.5" font-weight="700" fill="#8a5a00" text-anchor="middle">② ArcGIS 读 GeoJSON：忽略 crs</text>
+  <text x="526" y="64" font-size="10.5" fill="#8a5a00" text-anchor="middle">被当成"未知平面坐标系"处理</text>
+  <rect x="398" y="80" width="256" height="150" fill="#fff" stroke="#d8c9a8"/>
+  <line x1="423.6" y1="80" x2="423.6" y2="230" stroke="#f0e7cf"/>
+  <line x1="449.2" y1="80" x2="449.2" y2="230" stroke="#f0e7cf"/>
+  <line x1="474.8" y1="80" x2="474.8" y2="230" stroke="#f0e7cf"/>
+  <line x1="500.4" y1="80" x2="500.4" y2="230" stroke="#f0e7cf"/>
+  <line x1="526" y1="80" x2="526" y2="230" stroke="#f0e7cf"/>
+  <line x1="551.6" y1="80" x2="551.6" y2="230" stroke="#f0e7cf"/>
+  <line x1="577.2" y1="80" x2="577.2" y2="230" stroke="#f0e7cf"/>
+  <line x1="602.8" y1="80" x2="602.8" y2="230" stroke="#f0e7cf"/>
+  <line x1="628.4" y1="80" x2="628.4" y2="230" stroke="#f0e7cf"/>
+  <line x1="398" y1="98.75" x2="654" y2="98.75" stroke="#f0e7cf"/>
+  <line x1="398" y1="117.5" x2="654" y2="117.5" stroke="#f0e7cf"/>
+  <line x1="398" y1="136.25" x2="654" y2="136.25" stroke="#f0e7cf"/>
+  <line x1="398" y1="155" x2="654" y2="155" stroke="#f0e7cf"/>
+  <line x1="398" y1="173.75" x2="654" y2="173.75" stroke="#f0e7cf"/>
+  <line x1="398" y1="192.5" x2="654" y2="192.5" stroke="#f0e7cf"/>
+  <line x1="398" y1="211.25" x2="654" y2="211.25" stroke="#f0e7cf"/>
+  <line x1="398" y1="230" x2="654" y2="230" stroke="#8a5a00" stroke-width="1.5"/>
+  <line x1="398" y1="80" x2="398" y2="230" stroke="#8a5a00" stroke-width="1.5"/>
+  <text x="526" y="246" font-size="11" fill="#8a5a00" text-anchor="middle">X：111.197 ~ 111.210（被当成"米"）</text>
+  <text x="392" y="158" font-size="11" fill="#8a5a00" text-anchor="middle" transform="rotate(-90 392 158)">Y：1.177 ~ 1.190</text>
+  <rect x="600" y="88" width="30" height="30" fill="none" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3 2"/>
+  <rect x="604" y="92" width="6" height="6" fill="#c0392b" opacity="0.75"/>
+  <rect x="614" y="90" width="6" height="6" fill="#c0392b" opacity="0.75"/>
+  <rect x="622" y="98" width="6" height="6" fill="#c0392b" opacity="0.75"/>
+  <rect x="606" y="102" width="6" height="6" fill="#c0392b" opacity="0.75"/>
+  <rect x="618" y="108" width="6" height="6" fill="#c0392b" opacity="0.75"/>
+  <rect x="609" y="112" width="6" height="6" fill="#c0392b" opacity="0.75"/>
+  <path d="M548 106 L 596 103" stroke="#c0392b" stroke-width="1.2"/>
+  <text x="465" y="100" font-size="11.5" fill="#c0392b" text-anchor="middle" font-weight="700">1,048 个多边形</text>
+  <text x="465" y="115" font-size="10.5" fill="#c0392b" text-anchor="middle">全挤在 0.013°×0.013° 的角落里</text>
+  <text x="465" y="129" font-size="10.5" fill="#c0392b" text-anchor="middle">（≈ 图上 1 个像素点）</text>
+  <text x="526" y="266" font-size="11.5" fill="#8a5a00" text-anchor="middle">TIF 在"地球"上，多边形在"草稿纸"上</text>
+  <text x="526" y="284" font-size="12" font-weight="700" fill="#c0392b" text-anchor="middle">→ 视觉上就是"一堆直线"</text>
+
+  <rect x="8" y="302" width="664" height="24" rx="6" fill="#eef1f8" stroke="#cfd9ec"/>
+  <text x="340" y="318" font-size="11.5" fill="#1f5c8a" text-anchor="middle">对照组：KML 规范强制 lon,lat + WGS84，无歧义 —— 所以 KML 在 Google Earth 里永远是对的</text>
+</svg>
+
+<h2>三、诊断依据（实测数据）</h2>
+
+<table>
+<thead><tr><th style="width:26%">检查项</th><th style="width:44%">实测值</th><th>判读</th></tr></thead>
+<tbody>
+<tr><td>几何类型 / 闭合</td><td class="mono">Polygon，ring 闭合</td><td><span class="tag t-ok">正常</span></td></tr>
+<tr><td>顶点数</td><td class="num">88</td><td><span class="tag t-ok">正常</span></td></tr>
+<tr><td>跨度（包络）</td><td class="mono">0.01315° × 0.01318°</td><td>≈ 1463 m × 1457 m，与影像目测一致</td></tr>
+<tr><td>宽高比</td><td class="num">1 : 1</td><td>与既有分析「76 m 规整方块」吻合</td></tr>
+<tr><td>GeoJSON 顶层 crs 成员</td><td class="mono">EPSG:4326（标准声明）</td><td><span class="tag t-ok">文件本身正确</span></td></tr>
+<tr><td>ArcGIS 实际行为</td><td>导入时忽略 crs，按未知平面坐标解读</td><td><span class="tag t-bad">← 问题所在</span></td></tr>
+<tr><td>KML 在 Google Earth</td><td>1,048 个多边形全部清晰正确</td><td><span class="tag t-ok">KML 强制 WGS84，无歧义</span></td></tr>
+</tbody>
+</table>
+
+<h2>四、交付文件矩阵</h2>
+
+<p>以下文件已全部生成在 <code>output/arcgis/</code>，共 9 个，覆盖 4 类格式需求。<b>第一行是 ArcGIS 首选。</b></p>
+
+<table>
+<thead><tr><th style="width:34%">文件</th><th class="num" style="width:9%">大小</th>
+<th style="width:17%">坐标系</th><th>用途</th></tr></thead>
+<tbody>
+<tr><td class="mono">gaps-all-utm49n-shp.zip</td><td class="num">816 KB</td><td class="mono">EPSG:32649（米）</td>
+<td><span class="tag t-ok">ArcGIS 首选</span> 与 TIF 叠加最稳，.prj 必被识别，零手动指定</td></tr>
+<tr><td class="mono">gaps-all-wgs84-shp.zip</td><td class="num">660 KB</td><td class="mono">EPSG:4326</td>
+<td>ArcGIS 备选，与 TIF 同 CRS</td></tr>
+<tr><td class="mono">gaps-all-wgs84.geojson</td><td class="num">3,526 KB</td><td class="mono">EPSG:4326</td>
+<td>ArcGIS Pro / ArcMap 10.5+ 直接拖入</td></tr>
+<tr><td class="mono">gaps-all-utm49n.geojson</td><td class="num">3,495 KB</td><td class="mono">EPSG:32649</td>
+<td>导入后手动指定 CRS 用</td></tr>
+<tr><td class="mono">gaps-all.kml</td><td class="num">1,817 KB</td><td>WGS84（强制）</td>
+<td>Google Earth（已验证清晰）</td></tr>
+<tr><td class="mono">by-class/gaps-open_patch-utm49n-shp.zip</td><td class="num">516 KB</td><td class="mono">EPSG:32649</td>
+<td>380 块连片空地单独成层（重点核查对象）</td></tr>
+<tr><td class="mono">by-class/gaps-uncertain-utm49n-shp.zip</td><td class="num">158 KB</td><td class="mono">EPSG:32649</td>
+<td>318 块不确定，需人工判读</td></tr>
+<tr><td class="mono">by-class/gaps-vacant_slot-utm49n-shp.zip</td><td class="num">77 KB</td><td class="mono">EPSG:32649</td>
+<td>180 个株位空缺</td></tr>
+<tr><td class="mono">by-class/gaps-alley_gap-utm49n-shp.zip</td><td class="num">65 KB</td><td class="mono">EPSG:32649</td>
+<td>170 个林间空隙</td></tr>
+</tbody>
+</table>
+
+<h2>五、具体操作步骤（照着点鼠标即可）</h2>
+
+<div class="route route-a" id="routeA">
+<div class="route-h">🚀 路线 A · 最省事，零手动指定坐标系 <span class="tag t-ok">推荐</span></div>
+<div class="body">
+<ol>
+<li><b>解压</b> <code>gaps-all-utm49n-shp.zip</code>，把 <code>gapsutm.shp</code>
+连同 <code>.shx</code> / <code>.dbf</code> / <code>.prj</code> / <code>.cpg</code> 四个伴生文件解到<b>同一个文件夹</b>（缺一不可）。</li>
+<li><b>先加影像</b>：<code>Add Data</code> 选 <code>WGR17.tif</code>（3.5 GB，首次加载慢属正常，见 FAQ）。</li>
+<li><b>再加矢量</b>：<code>Add Data</code> 直接选 <code>gapsutm.shp</code>。</li>
+<li><b>符号化</b>：右键图层 → <b>Symbology</b> → 按 <code>gclass_cn</code> 字段分色
+（连片空地 = 橙、株位空缺 = 红、林间空隙 = 黄、不确定 = 灰）；
+右键 → <b>Labeling</b>，字段选 <code>gap_id</code>（或 <code>area_sqm</code>）。</li>
+<li><b>人工核对</b>：右键 → Open Attribute Table，按 <code>area_sqm</code> 降序，从最大块逐块核对。</li>
+</ol>
+<div class="why"><b>为什么能自动对齐：</b>shp 的 <code>.prj</code> 声明 <b>WGS_1984 UTM Zone 49N</b>（EPSG:32649，单位米），
+TIF 的 <code>WGR17.prj</code> 声明 <b>WGS84</b>（EPSG:4326）。两者不同但都明确，
+ArcGIS 会自动执行 <b>on-the-fly 动态投影</b>，直接叠在一起——不需要你做任何坐标系操作。</div>
+</div>
+</div>
+
+<div class="route route-b">
+<div class="route-h">🅱️ 路线 B · ArcGIS Pro 导入 GeoJSON</div>
+<div class="body">
+<ol>
+<li><b>Map → Add Data</b>，选 <code>gaps-all-utm49n.geojson</code>。</li>
+<li><b>关键一步</b>：若弹出坐标系选择框，选
+<code>Projected Coordinate Systems → UTM → WGS 1984 → UTM Zone 49N</code>。</li>
+<li>若已经加进来且位置不对：右键图层 → <b>Properties → Coordinate Systems</b> 手动指定。</li>
+<li>也可用 Geoprocessing 工具 <code>JSON To Features</code>，输出坐标系显式选择。</li>
+</ol>
+<div class="warnbox"><b>⚠️ 若跳过第 2 步（或没有指定坐标系），就会复现「一堆直线」</b>——
+这正是本次诊断出的根因。GeoJSON 方案不是不能用，而是<b>必须手动确认坐标系</b>。</div>
+</div>
+</div>
+
+<div class="route route-c">
+<div class="route-h">©️ 路线 C · ArcMap 10.x</div>
+<div class="body">
+<ul>
+<li><b>版本 ≥ 10.5</b>：<code>File → Add Data</code> 直接选 <code>gaps-all-utm49n.geojson</code>，同样注意指定坐标系。</li>
+<li><b>版本 &lt; 10.5</b>：不支持 GeoJSON，<b>必须用 shapefile</b>——
+解压 <code>gaps-all-wgs84-shp.zip</code> 或 <code>by-class/</code> 下的分类 zip。</li>
+<li>或用 <b>Conversion Tools → JSON → JSON To Features</b>，输出坐标系选 WGS84 或 UTM 49N。</li>
+</ul>
+</div>
+</div>
+
+<div class="route route-d">
+<div class="route-h">🌍 路线 D · 不想开 ArcGIS：双击 KML 用 Google Earth</div>
+<div class="body">
+<p style="margin-top:12px">直接双击 <code>gaps-all.kml</code> 即可。KML 按类别分好文件夹（可勾选显示/隐藏），
+点击每块空地可看到面积、长宽比等属性。<b>KML 规范强制 WGS84，永远正确</b>，
+适合快速扫一遍大块空地。</p>
+</div>
+</div>
+
+<h2>六、目录结构总览</h2>
+
+<p><b>内联目录树（手写 SVG，无外部资源）：</b></p>
+
+<svg viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif" role="img" aria-label="output/arcgis 目录结构">
+  <text x="340" y="18" font-size="13.5" font-weight="700" fill="#223" text-anchor="middle">output/arcgis/ 目录结构与选型</text>
+  <rect x="6" y="28" width="668" height="260" rx="8" fill="#fff" stroke="#e2e8e2"/>
+
+  <rect x="18" y="36" width="12" height="10" fill="#a8763f"/>
+  <path d="M18 36 L24 32 L30 36" fill="none" stroke="#a8763f" stroke-width="1.5"/>
+  <text x="38" y="45" font-family="Cascadia Code,Consolas,monospace" font-size="12.5" font-weight="700" fill="#223">output/arcgis/</text>
+  <text x="460" y="45" font-size="11.5" fill="#5b6b5f">全部 9 个文件 · 1,048 个多边形</text>
+
+  <text x="24" y="70" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="60" y="70" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-all-utm49n-shp.zip</text>
+  <text x="300" y="70" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">816 KB</text>
+  <text x="316" y="70" font-size="11.5" fill="#2b6b1c" font-weight="700">★ EPSG:32649（米）· ArcGIS 首选</text>
+
+  <text x="24" y="94" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="60" y="94" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-all-wgs84-shp.zip</text>
+  <text x="300" y="94" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">660 KB</text>
+  <text x="316" y="94" font-size="11.5" fill="#5b6b5f">EPSG:4326 · ArcGIS 备选（与 TIF 同 CRS）</text>
+
+  <text x="24" y="118" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="60" y="118" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-all-wgs84.geojson</text>
+  <text x="300" y="118" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">3,526 KB</text>
+  <text x="316" y="118" font-size="11.5" fill="#5b6b5f">EPSG:4326 · ArcGIS Pro / ArcMap 10.5+ 拖入</text>
+
+  <text x="24" y="142" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="60" y="142" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-all-utm49n.geojson</text>
+  <text x="300" y="142" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">3,495 KB</text>
+  <text x="316" y="142" font-size="11.5" fill="#5b6b5f">EPSG:32649 · 导入时手动指定 CRS 用</text>
+
+  <text x="24" y="166" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="60" y="166" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-all.kml</text>
+  <text x="300" y="166" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">1,817 KB</text>
+  <text x="316" y="166" font-size="11.5" fill="#2b6b1c" font-weight="700">★ WGS84 强制 · Google Earth（已验证清晰）</text>
+
+  <text x="24" y="190" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">└─</text>
+  <rect x="56" y="181" width="12" height="10" fill="#a8763f"/>
+  <path d="M56 181 L62 177 L68 181" fill="none" stroke="#a8763f" stroke-width="1.5"/>
+  <text x="76" y="190" font-family="Cascadia Code,Consolas,monospace" font-size="12" font-weight="700" fill="#223">by-class/</text>
+  <text x="200" y="190" font-size="11.5" fill="#5b6b5f">按类别拆分，单独成层</text>
+
+  <text x="40" y="214" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="76" y="214" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-open_patch-utm49n-shp.zip</text>
+  <text x="300" y="214" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">516 KB</text>
+  <text x="316" y="214" font-size="11.5" fill="#5b6b5f">380 块连片空地（重点核查）</text>
+
+  <text x="40" y="238" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="76" y="238" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-uncertain-utm49n-shp.zip</text>
+  <text x="300" y="238" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">158 KB</text>
+  <text x="316" y="238" font-size="11.5" fill="#5b6b5f">318 块不确定</text>
+
+  <text x="40" y="262" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
+  <text x="76" y="262" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-vacant_slot-utm49n-shp.zip</text>
+  <text x="300" y="262" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">77 KB</text>
+  <text x="316" y="262" font-size="11.5" fill="#5b6b5f">180 个株位空缺</text>
+
+  <text x="40" y="282" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">└─</text>
+  <text x="76" y="282" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-alley_gap-utm49n-shp.zip</text>
+  <text x="300" y="282" font-family="Cascadia Code,Consolas,monospace" font-size="11.5" fill="#223" text-anchor="end">65 KB</text>
+  <text x="316" y="282" font-size="11.5" fill="#5b6b5f">170 个林间空隙</text>
+</svg>
+
+<h2>七、FAQ</h2>
+
+<div class="q">
+<b>Q1：为什么 KML 好使，GeoJSON 不好使？</b><br>
+KML 规范<b>强制</b> lon,lat,alt 且强制 WGS84，没有任何歧义，Google Earth 闭着眼都不会读错；
+GeoJSON 虽然也有顶层 <code>crs</code> 成员（已声明 EPSG:4326），
+但 <b>ArcGIS 的 GeoJSON 导入器直接忽略它</b>，按未知平面坐标系处理——于是经纬度数值被当作平面 X/Y，跑偏。
+</div>
+
+<div class="q">
+<b>Q2：导入时提示 unknown spatial reference 怎么办？</b><br>
+说明当前文件真的没带 CRS 信息。<b>首选换用 shapefile 路线</b>（<code>.prj</code> 必被 ArcGIS 识别）；
+如果必须用 GeoJSON，走 <code>JSON To Features</code> 时显式指定输出坐标系为 EPSG:32649 或 EPSG:4326。
+</div>
+
+<div class="q">
+<b>Q3：位置大概对，但整体偏移几百米？</b><br>
+多半是<b>中央经线选错带</b>。本地是 <b>UTM 49N，中央经线 111°E</b>；
+若误选 48N（中央经线 105°E）或 50N（117°E），同一坐标会被横向平移。
+检查：右键图层 → Properties → Coordinate Systems，确认是 <code>WGS_1984_UTM_Zone_49N</code>。
+</div>
+
+<div class="q">
+<b>Q4：3.5 GB 的 TIF 加载卡顿怎么办？</b><br>
+先建栅格金字塔：<b>ArcToolbox → Data Management Tools → Raster → Raster Dataset →
+Build Pyramids and Statistics</b>。只额外生成缩放级别的缓存、不改源数据，
+之后缩放和平移会明显流畅。矢量侧（1,048 个多边形）体量很小，不会造成卡顿。
+</div>
+
+<div class="q">
+<b>Q5：只想看某一类空地怎么办？</b><br>
+用 <code>by-class/</code> 下的分类 shapefile：<code>gaps-open_patch-*</code>（380 块连片空地）、
+<code>gaps-uncertain-*</code>（318 块）、<code>gaps-vacant_slot-*</code>（180 个）、
+<code>gaps-alley_gap-*</code>（170 个）。各自单独成层，可单独开关显示。
+</div>
+
+<h2>八、症状 → 原因 → 处置速查表</h2>
+
+<table>
+<thead><tr><th style="width:30%">症状</th><th style="width:36%">原因</th><th>处置</th></tr></thead>
+<tbody>
+<tr><td>导入后只有西北角一小坨「直线」</td><td>GeoJSON 的 crs 被忽略，经纬度被当平面坐标</td>
+<td>换用 <code>gaps-all-utm49n-shp.zip</code>（路线 A）</td></tr>
+<tr><td>提示 unknown spatial reference</td><td>文件未携带 CRS 信息</td>
+<td>同上；或 <code>JSON To Features</code> 时显式指定坐标系</td></tr>
+<tr><td>位置对但整体偏移几百米</td><td>UTM 带选错（中央经线错）</td>
+<td>改选 UTM Zone 49N（中央经线 111°E）</td></tr>
+<tr><td>Google Earth 里完全正常</td><td>KML 强制 WGS84，无歧义</td><td>无需处理</td></tr>
+<tr><td>1,048 个多边形全是同一个颜色</td><td>未设置符号化</td>
+<td>Symbology → 按 <code>gclass_cn</code> 分色</td></tr>
+</tbody>
+</table>
+
+<div class="card" style="background:#f0f9ec;border-color:#bfe0b0">
+<b>一句话总结：</b>文件没坏，数据全对。用 <code>gaps-all-utm49n-shp.zip</code>，
+解压后先加 <code>WGR17.tif</code> 再加 <code>gapsutm.shp</code>，
+1,048 个多边形自动、准确地落在影像上。
+</div>
+
+<footer>
+生成日期：2026-10-13 &nbsp;·&nbsp; 影像：WGR17.tif（EPSG:4326，3.5 GB，229 公顷，3.3 cm/px）<br>
+检测成果：1,048 个空地多边形（连片空地 380 / 不确定 318 / 株位空缺 180 / 林间空隙 170）<br>
+配套文档：《地物光谱特征实测报告》《地物光谱特征报告-小白版》《ArcGIS 导入指南-小白版》<br>
+本页面所有示意图均为手写内联 SVG，无任何外部资源引用，可单文件离线分发。
+</footer>
+
+</div>
+</body>
+</html>

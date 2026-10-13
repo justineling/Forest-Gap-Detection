@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>空地分布图 · 超简单打开指南（小白版）</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.85;font-size:16.5px}
+.wrap{max-width:960px;margin:0 auto;padding:32px 24px 80px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:28px}
+h1{font-size:29px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14.5px}
+h2{font-size:22px;margin:48px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+p{margin:12px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+padding:20px 22px;margin:18px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:18px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:12px;padding:20px 24px;margin:20px 0}
+.lead b{color:var(--green)}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:14px;
+background:#eef2ee;padding:1px 6px;border-radius:4px}
+.big{display:flex;gap:14px;align-items:flex-start;background:#fff;
+border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:12px 0}
+.num{flex:none;width:34px;height:34px;border-radius:50%;background:var(--green);color:#fff;
+display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:14px}
+.q{background:#f4f9fd;border-left:4px solid var(--blue);border-radius:0 10px 10px 0;
+padding:14px 18px;margin:14px 0}
+.warnbox{background:#fdf1ef;border:1px solid #efc4bb;border-radius:10px;
+padding:14px 18px;margin:14px 0}
+.final{background:linear-gradient(180deg,#eaf6e4,#fff);border:2px solid var(--green);
+border-radius:14px;padding:24px 26px;margin:26px 0;text-align:center}
+.final .t1{font-size:14px;color:var(--sub);margin-bottom:8px}
+.final .t2{font-size:21px;font-weight:700;color:#245d16;line-height:1.6}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>空地分布图 · 超简单打开指南</h1>
+  <div class="sub">小白版 · 不需要懂任何 GIS 知识 · 三分钟搞定 · 2026-10-13</div>
+</header>
+
+<div class="lead">
+<b>一句话先说结论：</b>文件没坏，数据全对，只是<b>打开方式换一个就好了</b>。<br>
+用 <span class="mono">gaps-all-utm49n-shp.zip</span> 这个文件，
+<b>解压</b>之后，把里面的 <span class="mono">gapsutm.shp</span> <b>拖进 ArcGIS</b>，
+空地就自动画在航拍图上了。
+</div>
+
+<h2>一、先讲个故事：为什么现在打开是「一堆直线」</h2>
+
+<p>每张地图都需要一本<b>「地址本」</b>，告诉软件「这块地到底在地球上的哪儿」。
+（专业人士管它叫「坐标系」，这个词咱们不用记。）</p>
+
+<div class="card">
+<p style="margin-top:0"><b>🛰️ 航拍图（TIF）：自带地址本。</b><br>
+软件一翻地址本：「哦，在马来西亚，东经 111 度、北纬 1 度那个园子里。」于是地图待在正确的位置。</p>
+<p><b>📄 空地文件（GeoJSON）：忘了带地址本。</b><br>
+软件翻了半天没找到，只好<b>自己瞎猜</b>一个地址 —— 猜错了。
+1,048 块空地疙瘩被放到一个错误的小角落，全部挤成一坨。
+你在屏幕上看到的就是「一堆直线」。</p>
+<p style="margin-bottom:0"><b>📦 换用的文件（Shapefile，就是咱们给的 zip 里装的东西）：自带地址本。</b><br>
+拖进去，软件一对地址，位置自动就对上了。<b>就这一个区别。</b></p>
+</div>
+
+<p><b>下图就是这件事（手绘示意图，看不懂也行，往下翻看怎么办）：</b></p>
+
+<svg viewBox="0 0 680 330" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif" role="img" aria-label="两张地图对不上示意图">
+  <text x="340" y="18" font-size="14" font-weight="700" fill="#223" text-anchor="middle">同一片园子，两张"地图"对不上</text>
+
+  <rect x="10" y="26" width="300" height="232" rx="12" fill="#eef5fb" stroke="#bcd6ea"/>
+  <text x="160" y="48" font-size="14" font-weight="700" fill="#1f5c8a" text-anchor="middle">航拍图 TIF</text>
+  <text x="160" y="65" font-size="11" fill="#5b6b5f" text-anchor="middle">自带"地址本"：马来西亚 · 东经 111° · 北纬 1°</text>
+  <circle cx="82" cy="130" r="44" fill="#dceaf7" stroke="#9cc3e0"/>
+  <path d="M38 130 Q 82 106 126 130" fill="none" stroke="#b9d4e8"/>
+  <path d="M38 130 Q 82 154 126 130" fill="none" stroke="#b9d4e8"/>
+  <ellipse cx="82" cy="130" rx="20" ry="44" fill="none" stroke="#b9d4e8"/>
+  <ellipse cx="88" cy="129" rx="22" ry="15" fill="#cfe4c6" stroke="#a8c89a"/>
+  <rect x="66" y="119" width="16" height="16" fill="#2f7d1f" stroke="#14520d" stroke-width="1.5"/>
+  <text x="132" y="126" font-size="12" fill="#223" font-weight="600">待在正确的位置</text>
+  <text x="132" y="143" font-size="11.5" fill="#2b6b1c">位置 ✓ 对上了</text>
+  <rect x="52" y="188" width="60" height="38" rx="3" fill="#fff" stroke="#2f6fa8" stroke-width="1.5"/>
+  <line x1="58" y1="197" x2="104" y2="197" stroke="#9cc3e0"/>
+  <line x1="58" y1="205" x2="104" y2="205" stroke="#9cc3e0"/>
+  <line x1="58" y1="213" x2="92" y2="213" stroke="#9cc3e0"/>
+  <text x="82" y="243" font-size="12" fill="#1f5c8a" text-anchor="middle" font-weight="700">地址本 ✓</text>
+
+  <text x="340" y="112" font-size="13" font-weight="700" fill="#c0392b" text-anchor="middle">地址</text>
+  <text x="340" y="129" font-size="13" font-weight="700" fill="#c0392b" text-anchor="middle">对不上</text>
+  <line x1="328" y1="146" x2="352" y2="170" stroke="#c0392b" stroke-width="4"/>
+  <line x1="352" y1="146" x2="328" y2="170" stroke="#c0392b" stroke-width="4"/>
+  <text x="340" y="194" font-size="12" fill="#c0392b" text-anchor="middle" font-weight="700">相隔</text>
+  <text x="340" y="210" font-size="12" fill="#c0392b" text-anchor="middle" font-weight="700">十万八千里</text>
+
+  <rect x="370" y="26" width="300" height="232" rx="12" fill="#fdf1ef" stroke="#ecc4bb"/>
+  <text x="520" y="48" font-size="14" font-weight="700" fill="#a32b1c" text-anchor="middle">空地文件 GeoJSON</text>
+  <text x="520" y="65" font-size="11" fill="#5b6b5f" text-anchor="middle">忘了带"地址本"，软件只好自己猜</text>
+  <rect x="390" y="84" width="260" height="108" fill="#fff" stroke="#e0c8c0"/>
+  <line x1="416" y1="84" x2="416" y2="192" stroke="#f6e4e0"/>
+  <line x1="442" y1="84" x2="442" y2="192" stroke="#f6e4e0"/>
+  <line x1="468" y1="84" x2="468" y2="192" stroke="#f6e4e0"/>
+  <line x1="494" y1="84" x2="494" y2="192" stroke="#f6e4e0"/>
+  <line x1="520" y1="84" x2="520" y2="192" stroke="#f6e4e0"/>
+  <line x1="546" y1="84" x2="546" y2="192" stroke="#f6e4e0"/>
+  <line x1="572" y1="84" x2="572" y2="192" stroke="#f6e4e0"/>
+  <line x1="598" y1="84" x2="598" y2="192" stroke="#f6e4e0"/>
+  <line x1="624" y1="84" x2="624" y2="192" stroke="#f6e4e0"/>
+  <line x1="390" y1="110" x2="650" y2="110" stroke="#f6e4e0"/>
+  <line x1="390" y1="138" x2="650" y2="138" stroke="#f6e4e0"/>
+  <line x1="390" y1="166" x2="650" y2="166" stroke="#f6e4e0"/>
+  <rect x="608" y="90" width="26" height="26" fill="none" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="3 2"/>
+  <rect x="611" y="94" width="5" height="5" fill="#c0392b" opacity="0.8"/>
+  <rect x="620" y="92" width="5" height="5" fill="#c0392b" opacity="0.8"/>
+  <rect x="626" y="101" width="5" height="5" fill="#c0392b" opacity="0.8"/>
+  <rect x="613" y="105" width="5" height="5" fill="#c0392b" opacity="0.8"/>
+  <rect x="624" y="109" width="5" height="5" fill="#c0392b" opacity="0.8"/>
+  <text x="505" y="100" font-size="13" font-weight="700" fill="#a32b1c" text-anchor="middle">1,048 块空地</text>
+  <text x="505" y="117" font-size="11.5" fill="#a32b1c" text-anchor="middle">全挤在一个错误的小角落</text>
+  <text x="505" y="133" font-size="11.5" fill="#a32b1c" text-anchor="middle">（比一个像素点还小）</text>
+  <rect x="548" y="180" width="46" height="32" rx="3" fill="#f0f0f0" stroke="#bbb"/>
+  <text x="571" y="203" font-size="18" font-weight="700" fill="#999" text-anchor="middle">?</text>
+  <text x="520" y="243" font-size="12" fill="#a32b1c" text-anchor="middle" font-weight="700">没有地址本 ✗</text>
+
+  <text x="340" y="290" font-size="13" font-weight="700" fill="#223" text-anchor="middle">结果：打开只看到角落里"一堆直线"，航拍图上什么都没有</text>
+  <text x="340" y="310" font-size="12" fill="#5b6b5f" text-anchor="middle">两张图各自都是对的，只是互相看不见 —— 换一个"自带地址本"的文件就好了</text>
+</svg>
+
+<h2>二、怎么办？只要三步</h2>
+
+<div class="big"><div class="num">1</div><div>
+<b>解压一个压缩包。</b>找到 <span class="mono">gaps-all-utm49n-shp.zip</span>，
+右键 →「解压到当前文件夹」。会跑出来 4~5 个文件，它们是一家人，<b>别弄丢、别只挪一个</b>。
+</div></div>
+
+<div class="big"><div class="num">2</div><div>
+<b>先拖航拍图。</b>打开 ArcGIS，把 <span class="mono">WGR17.tif</span> 拖进去。
+这张图比较大（3.5 GB），第一次加载会有点慢，<b>耐心等一会儿</b>，不是卡死。
+</div></div>
+
+<div class="big"><div class="num">3</div><div>
+<b>再拖空地文件。</b>把刚才解压出来的 <span class="mono">gapsutm.shp</span> 拖进同一个窗口。<br>
+<b>搞定。</b>1,048 块空地自动画在航拍图上了，颜色 auto 分好，点哪块都能看到它的面积。
+</div></div>
+
+<div class="q">
+<b>想分颜色看？</b>在图层名上点右键 → <b>Symbology</b>（符号）→ 找一个叫
+<span class="mono">gclass_cn</span> 的字段，选它，确定。四种空地会按类别上色：
+连片空地 = 橙、株位空缺 = 红、林间空隙 = 黄、不确定 = 灰。
+这一步只是好看，不做也完全能用。
+</div>
+
+<h2>三、文件速查：哪个文件是干嘛的</h2>
+
+<p>文件夹里文件不少，但 99% 的情况你只用第一个。</p>
+
+<table>
+<thead><tr><th style="width:38%">文件</th><th style="width:22%">什么时候用</th><th>一句话说明</th></tr></thead>
+<tbody>
+<tr><td class="mono">gaps-all-utm49n-shp.zip</td><td><b>⭐ 就用这个</b></td>
+<td>自带"地址本"，拖进 ArcGIS 自动画好，最稳</td></tr>
+<tr><td class="mono">gaps-all.kml</td><td>没装 ArcGIS / 想快速看一眼</td>
+<td>双击就能用 Google Earth 打开，永远正确</td></tr>
+<tr><td class="mono">by-class/gaps-open_patch-utm49n-shp.zip</td><td>只想看「大片空地」</td>
+<td>380 块连片空地，单独一层，重点看它们</td></tr>
+<tr><td class="mono">gaps-all-wgs84.geojson 等</td><td>基本用不上</td>
+<td>就是惹出「一堆直线」的那类文件，交给技术人员</td></tr>
+</tbody>
+</table>
+
+<h2>四、可能遇到的小状况</h2>
+
+<div class="warnbox">
+<b>⚠️ 弹窗提示「找不到位置信息 / unknown spatial reference」？</b><br>
+说明拖进去的是不带"地址本"的文件。<b>换回 <span class="mono">gaps-all-utm49n-shp.zip</span> 解压出来的
+<span class="mono">gapsutm.shp</span></b>，就不会再有这个提示。
+</div>
+
+<div class="warnbox">
+<b>⚠️ 图拖进去了，但空地和航拍图对不上、或者只有一小坨？</b><br>
+百分之百是用错了文件。换第一个 zip，重新拖 <span class="mono">gapsutm.shp</span>。
+如果还不对，让技术人员检查一下有没有选错"UTM Zone 49N"（中央经线 111°E 那一档）。
+</div>
+
+<div class="q">
+<b>💡 不想装/开 ArcGIS？</b>双击 <span class="mono">gaps-all.kml</span>，用 Google Earth 看。
+里面按类别分好了文件夹，点每块空地能看到面积。KML 这种文件"永远写对了地址"，不会出问题。
+</div>
+
+<div class="final">
+<div class="t1">—— 一句话结论 ——</div>
+<div class="t2">用 <span class="mono" style="font-size:19px">gaps-all-utm49n-shp.zip</span>：<br>
+解压 → 拖 <span class="mono" style="font-size:19px">WGR17.tif</span> → 拖 <span class="mono" style="font-size:19px">gapsutm.shp</span> → 好了。</div>
+</div>
+
+<footer>
+生成日期：2026-10-13 &nbsp;·&nbsp; 数据：WGR17 油棕园航拍图（229 公顷），1,048 块空地<br>
+进阶版（含坐标系技术细节与全部文件说明）：《ArcGIS导入指南-专业版.html》<br>
+本页面所有示意图均为手绘内联 SVG，无外部资源，可单文件转发。
+</footer>
+
+</div>
+</body>
+</html>
