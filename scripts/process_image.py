@@ -557,7 +557,10 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
     # 这里把「过于鲜绿 + 高饱和 + 连片」的区域从树冠里剔除，让它们回到空地。
     # 详见 docs/03-算法教学/草地与油棕区分方案.html
     if not args.no_grass_recheck:
-        grass = detect_grass(rgb, valid, px_m)
+        # LandcoverParams 统一承载草地判据开关：grid=False 时只跑
+        # 颜色 + 开运算（2026-10-14 前的行为），便于 A/B 对比与回退。
+        grass_params = LandcoverParams(grass_grid=not args.no_grass_grid)
+        grass = detect_grass(rgb, valid, px_m, grass_params)
         canopy = canopy & ~grass
 
     gap = complement(canopy, valid)
@@ -860,6 +863,10 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--no-grass-recheck", action="store_true",
                     help="关闭草地回检。默认开启：把「过于鲜绿且连片」的区域从树冠中"
                          "剔除，修正草地被误判成油棕导致的漏检")
+    ap.add_argument("--no-grass-grid", action="store_true",
+                    help="关闭草地回检的第二道判据（株行距网格周期性回检）。"
+                         "默认开启：树心按 8.45 m 规则排列的候选区判为油棕林并剔除，"
+                         "只保留无空间周期的真草地（见 docs/03-算法教学/草地与油棕区分方案.html 方案 B）")
 
     ap.add_argument("--quiet", action="store_true", help="精简日志")
     return ap
@@ -913,6 +920,7 @@ def main() -> int:
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
         "no_grass_recheck": args.no_grass_recheck,
+        "no_grass_grid": args.no_grass_grid,
         "method": args.method,
     }
     fp = fingerprint(str(in_path), fp_params)

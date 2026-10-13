@@ -112,6 +112,29 @@ class LandcoverParams:
     grass_sat_min: float = 0.60     # 饱和度下限（油棕实测上限约 0.53）
     grass_open_m: float = 2.0       # 开运算半径（米）：只保留成片草地，滤掉零散受光斑
 
+    # --- 草地回检的第二道判据：株行距网格周期性（方案 B，见方案文档 §4）---
+    # 原理：油棕按 8.35 m 株距规则网格种植，草皮是自然生长、无空间周期。
+    # 实现分两步（2026-10-14 从"局部 nn 统计"改为"格点贴合"）：
+    #   ① estimate_grid() 用**全瓦片树心**拟合种植网格。树心少、间距发散时
+    #      网格质量自动不及格（quality < grass_grid_min_quality）→ 不判；
+    #   ② 对每个候选连通域，算其像素到最近格点距离的中位数：
+    #      ≤ grass_grid_node_tol_m（约半个冠幅）→ 斑块压在种植格上
+    #      → 是油棕（受光面 / 幼林）→ 剔除；否则 → 草地 → 保留。
+    # ⚠️ 为什么放弃"邻域最近邻比例"（第一版做法，两次实测失败）：
+    #     失败 A —— frac ≥ 0.50 单闸门把南部稀疏林下草荒区整片误剔 96%
+    #               （散树伪峰 nn 中位 5.54 m、frac 恰好压线）；
+    #     失败 B —— 受光面连片区把树心位置整体覆盖成均匀亮绿，局部树心检测
+    #               在斑块内部失效，环状邻域的 nn 统计被"洞效应"污染
+    #               （实测中位从 8.45 掉到 6.43 m），规则林反判不出来。
+    #     改全局格点拟合后，邻域外的树心仍能定出网格，"斑块是否坐在格点上"
+    #     才是种植几何的直接证据。
+    # 实测依据：密林树心 CV 0.118~0.136（规则）、南部草荒区树心稀散
+    # （24 株/ha，网格质量否决）、随机泊松点过程 CV≈0.52。
+    grass_grid: bool = True          # 是否启用网格周期性回检
+    grass_grid_pitch_m: float = 8.45     # 种植间距先验（grid_prior.DEFAULT_PRIOR_PITCH_M）
+    grass_grid_min_quality: float = 0.15  # 网格质量门槛（与 grid_prior.is_usable 一致）
+    grass_grid_node_tol_m: float = 3.5    # 斑块像素距最近格点的中位上限（约半个冠幅）
+
 
 # ----------------------------------------------------------------------------
 # 基础特征
@@ -359,11 +382,22 @@ def detect_grass(rgb: np.ndarray, valid: np.ndarray, px_m: float,
          所以 ExG 过高反而说明不是树；
       2. ``饱和度 > grass_sat_min`` —— 草地鲜嫩饱和度高（0.64），油棕偏低（≤0.53）；
       3. **形态学开运算只保留连片区域** —— 油棕受光面（亮绿叶片）是零散小斑块，
-         草地是成片的。这一条专治误伤。
+         草地是成片的。这一条专治误伤；
+      4. **株行距网格周期性回检**（``_grid_period_filter``，方案 B）——
+         用全瓦片树心拟合种植网格后，剔除"坐在种植格点上"的候选连通域
+         （油棕受光面 / 幼林）；偏离格点、或网格质量不及格（树心稀散，
+         如草荒区）→ 保留为草地。
+         前三层管"颜色像不像草"，这一层管"位置像不像树"。
 
-    ⚠️ 已知局限：若某片油棕恰好整体处于强光下且无阴影（如极陡的向阳坡），
-    仍可能被误判为草地。因此该步骤默认**只从树冠中剔除**，不直接断言「可种植」，
-    最终仍由空地分类与人工复核把关。
+    ⚠️ 已知局限（2026-10-14 实测确认，待真值坐标验证）：
+       1. 若"树没了的大片草荒"与密林同瓦片，且网格质量达标，草荒斑块
+          可能因"坐在格点上"被误剔——本判据分的不是"树在不在"，
+          而是"斑块是否压住种植几何位置"。南部草荒区因树心稀散
+          （24 株/ha）触发质量门槛而幸免，但更密的情况需要用户指认
+          真值坐标后做最终校验；
+       2. 若某片油棕恰好整体处于强光下且无阴影（如极陡的向阳坡），
+          仍可能被误判为草地。因此该步骤默认**只从树冠中剔除**，
+          不直接断言「可种植」，最终仍由空地分类与人工复核把关。
     """
     p = p or LandcoverParams()
 
@@ -402,10 +436,119 @@ def detect_grass(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     dist_out = ndi.distance_transform_edt(~eroded)
     opened = (dist_out <= r) & raw
 
+    # 第二道判据（方案 B）：剔除「坐在种植网格上」的候选连通域——
+    # 那是油棕林（受光面 / 幼林），不是草地。在**低分辨率**上做
+    # （此时 opened/small/small_valid 都是 1/4 尺寸，px_s = px_m·ds_factor）。
+    if p.grass_grid:
+        opened = _grid_period_filter(opened, raw, small, small_valid, px_s, p)
+
     if ds_factor == 1:
         return opened
     return np.repeat(np.repeat(opened, ds_factor, axis=0), ds_factor,
                      axis=1)[:H, :W]
+
+
+def _grid_period_filter(opened: np.ndarray, raw: np.ndarray, rgb: np.ndarray,
+                        valid: np.ndarray, px_m: float,
+                        p: LandcoverParams) -> np.ndarray:
+    """株行距网格周期性回检（草地判据的第二道闸，方案 B）。
+
+    对 ``opened``（颜色+开运算后的草地候选）的每个连通域：
+
+      1. 用**全瓦片**树心（ExG 局部极大）拟合种植网格
+         （``grid_prior.estimate_grid``，先验株距 ``grass_grid_pitch_m``）。
+         树心太少、间距发散 → 网格质量 < ``grass_grid_min_quality``
+         → 结构判据不可用 → 整个函数直接返回，一个都不剔；
+      2. 对每个连通域，算其全部像素到**最近种植格点**距离的中位数
+         （向量化实现，等价 ``GridModel.xy_to_grid`` 第三返回值）：
+
+         - 中位 ≤ ``grass_grid_node_tol_m``（约半个冠幅）→ 斑块坐在
+           种植格上 → 是油棕（受光面 / 幼林）→ 剔除；
+         - 否则 → 斑块偏离所有格点 → 无种植周期 → 保留为草地。
+
+    ⚠️ 为什么不是"斑块内树心按 8.45 m 排列"（2026-10-14 两次实测失败后的
+       修正，详见 LandcoverParams.grass_grid 注释）：受光面连片区会把树心
+       位置整体覆盖成均匀亮绿，局部树心检测在斑块内部失效；稀疏草荒区又
+       只有稀疏散树（nn 中位 5.54 m）冒充周期。"是否坐在格点上"绕开了
+       这两个陷阱——它问的是斑块与**种植几何**的关系，不是斑块内部纹理。
+
+    参数
+    ----
+    opened : 候选掩膜（已开运算，低分辨率）
+    raw    : 开运算前的颜色候选掩膜，仅用于 estimate_grid 的折叠投影兜底
+    rgb    : 低分辨率 RGB（树心检测用）
+    valid  : 低分辨率有效掩膜
+    px_m   : 低分辨率地面分辨率（米/像素）
+    """
+    if not opened.any():
+        return opened
+
+    from rasterio.transform import Affine
+    from grid_prior import estimate_grid
+
+    # 网格估计在低分辨率坐标里自洽进行（树心像素 × px_m = 斑块像素 × px_m），
+    # 因此仿射传 identity 原点即可，无需引入瓦片地理坐标。
+    aff = Affine(px_m, 0.0, 0.0, 0.0, -px_m, 0.0)
+    grid = estimate_grid(raw, aff, px_m, rgb=rgb, valid=valid,
+                         prior_pitch_m=p.grass_grid_pitch_m)
+
+    log = getattr(detect_grass, "_log", None)
+    if grid.quality < p.grass_grid_min_quality:
+        if log:
+            log(f"grass-grid: 网格质量 {grid.quality:.2f} < "
+                f"{p.grass_grid_min_quality}（method={grid.method}，"
+                f"树心 {grid.node_count} 个）→ 结构判据不可用，不剔除")
+        return opened
+
+    lab, n = ndi.label(opened)
+    if n == 0:
+        return opened
+    objs = ndi.find_objects(lab)
+
+    # --- 向量化「像素 → 最近格点距离」（等价 GridModel.xy_to_grid）---
+    a = np.radians(grid.row_azimuth_deg)
+    ux, uy = np.cos(a), np.sin(a)
+    vx, vy = -np.sin(a), np.cos(a)
+    plant, row, skew = (grid.plant_pitch_m, grid.row_pitch_m,
+                        grid.skew_offset_m)
+
+    def _node_dist(xs_px: np.ndarray, ys_px: np.ndarray) -> np.ndarray:
+        X, Y = xs_px * px_m, ys_px * px_m
+        dx, dy = X - grid.origin_x_m, Y - grid.origin_y_m
+        gy = (dx * vx + dy * vy) / max(row, 1e-6)
+        gx = (dx * ux + dy * uy - gy * skew) / max(plant, 1e-6)
+        ix = np.round(gx)
+        iy = np.round(gy)
+        along_u = ix * plant + iy * skew
+        nx = grid.origin_x_m + along_u * ux + iy * row * vx
+        ny = grid.origin_y_m + along_u * uy + iy * row * vy
+        return np.hypot(X - nx, Y - ny)
+
+    kept = opened.copy()
+    removed = kept_area = 0
+    for i in range(1, n + 1):
+        sl = objs[i - 1]
+        if sl is None:
+            continue
+        sub = lab[sl] == i
+        ys, xs = np.nonzero(sub)
+        if ys.size == 0:
+            continue
+        d = _node_dist(xs + sl[1].start, ys + sl[0].start)
+        dmed = float(np.median(d))
+        area = float(ys.size) * px_m * px_m
+        if dmed <= p.grass_grid_node_tol_m:
+            kept[sl][sub] = False
+            removed += 1
+            kept_area += area
+
+    if log:
+        log(f"grass-grid: 网格质量 {grid.quality:.2f}，株距 "
+            f"{grid.plant_pitch_m:.2f} m / 行距 {grid.row_pitch_m:.2f} m / "
+            f"错行角 {grid.skew_angle_deg:.0f}°，树心 {grid.node_count} 个；"
+            f"剔除 {removed} 个压在种植格上的候选连通域"
+            f"（{kept_area:.1f} m²），其余 {n - removed} 个保留为草地")
+    return kept
 
 
 # ----------------------------------------------------------------------------

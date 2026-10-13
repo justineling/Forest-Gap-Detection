@@ -136,6 +136,8 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     "unplantable_overlap": (float, 0.5),
     # 草地回检：把「过于鲜绿且连片」的区域从树冠中剔除（修正草地被误判成油棕）
     "grass_recheck":  (bool,  True),
+    # 草地回检第二道判据：株行距网格周期性（树心规则排列 → 油棕林 → 剔除）
+    "grass_grid":     (bool,  True),
     # 通道控制
     "quiet":            (bool,  False),
     "progress_every":   (int,   20),
@@ -146,6 +148,7 @@ _ARG_ALIASES = {
     "separate_gaps": "no_separate",   # 语义相反：True → no_separate=False
     "landcover_unplantable": "no_landcover",  # 语义相反：True → no_landcover=False
     "grass_recheck": "no_grass_recheck",      # 语义相反：True → no_grass_recheck=False
+    "grass_grid": "no_grass_grid",            # 语义相反：True → no_grass_grid=False
 }
 
 
@@ -276,6 +279,7 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     args.no_landcover = not bool(values["landcover_unplantable"])
     args.unplantable_overlap = values["unplantable_overlap"]
     args.no_grass_recheck = not bool(values["grass_recheck"])
+    args.no_grass_grid = not bool(values["grass_grid"])
     args.quiet = bool(values["quiet"])
     args.progress_every = values["progress_every"]
 
@@ -323,6 +327,7 @@ def params_echo(args: SimpleNamespace) -> dict:
         "landcover_unplantable": not args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
         "grass_recheck": not args.no_grass_recheck,
+        "grass_grid": not args.no_grass_grid,
         "progress_every": args.progress_every,
     }
 
@@ -436,6 +441,7 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
         "no_grass_recheck": args.no_grass_recheck,
+        "no_grass_grid": args.no_grass_grid,
         "method": args.method,
     }
     fp = PI.fingerprint(str(in_path), fp_params)
