@@ -105,8 +105,10 @@ from grid_prior import (  # noqa: E402
     estimate_grid, gap_geometry, classify_gaps, GridModel,
     CLASS_VACANT_SLOT, CLASS_ALLEY_GAP, CLASS_OPEN_PATCH, CLASS_UNCERTAIN,
     CLASS_LABEL_CN, METHOD_PRIOR_FALLBACK, summarize_classes,
+    summarize_unplantable, UNPLANTABLE_CLASSES, CLASS_SEMANTICS,
     DEFAULT_PRIOR_PITCH_M,
 )
+from landcover import detect_unplantable, LandcoverParams  # noqa: E402
 
 
 def shp_transform(func, geom):
@@ -572,6 +574,54 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                            min_coverage_for_slot=args.min_coverage_for_slot)
     lab_by_id = {l["gap_id"]: l for l in labels}
 
+    # --- 不可种植地物改判 -------------------------------------------------
+    # 用户 2026-10-13 要求：道路（白色）、河流/水塘、油棕树、办公生活区
+    # 四类算"不可种植"，其余才算空地。前三类由 landcover 检测；
+    # 油棕树已是 canopy，天然不落在空地补集里。
+    #
+    # 做法：对每个空地多边形，把它**反投影回瓦片栅格**，与三类掩膜算重叠占比，
+    # 超过 --unplantable-overlap 阈值就改判为对应类别。
+    # 这些多边形仍然输出（class = road/water/office），只是不再计入"需补种"统计。
+    unplantable_stats: dict[str, float] = {}
+    if not args.no_landcover:
+        from rasterio.features import rasterize as rio_rasterize
+
+        masks = detect_unplantable(rgb, valid, px_m, LandcoverParams())
+        rows = gap_units.shape[0]
+        cols = gap_units.shape[1]
+        for gid, p, area in polys_utm:
+            g_img = shp_transform(bwd, p)          # 回到影像坐标系（经纬度）
+            try:
+                poly_r = rio_rasterize([(g_img, 1)], out_shape=(rows, cols),
+                                       transform=aff_buf, dtype=np.uint8,
+                                       all_touched=False)
+            except Exception as exc:               # noqa: BLE001
+                log(f"  [{tile.tile_id}] landcover 栅格化失败 {gid}: {exc}")
+                continue
+            n_poly = int(poly_r.sum())
+            if n_poly == 0:
+                continue
+            best_cls, best_frac = None, 0.0
+            for cls in ("water", "road", "office"):   # 优先级：水 > 路 > 办公
+                mk = masks.get(cls)
+                if mk is None:
+                    continue
+                inter = int((poly_r.astype(bool) & mk).sum())
+                frac = inter / n_poly
+                if frac > best_frac:
+                    best_cls, best_frac = cls, frac
+            if best_cls is not None and best_frac >= args.unplantable_overlap:
+                lab = lab_by_id.setdefault(gid, {})
+                lab["class"] = best_cls
+                lab["class_label"] = CLASS_LABEL_CN[best_cls]
+                lab["class_method"] = "landcover_mask"
+                lab["class_confidence"] = round(float(best_frac), 3)
+                lab["class_reason"] = (
+                    f"该区域 {best_frac*100:.0f}% 的像素命中"
+                    f"{CLASS_LABEL_CN[best_cls]}掩膜 → 判为不可种植，不计入需补种空地")
+                lab["class_semantics"] = CLASS_SEMANTICS[best_cls]
+                unplantable_stats[best_cls] = unplantable_stats.get(best_cls, 0.0) + area
+
     features = []
     total_area = 0.0
     for gid, p, area in sorted(polys_utm, key=lambda t: -t[2]):
@@ -604,16 +654,17 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
 
     counts = summarize_classes(labels)
     if len(labels) != len(features):
-        counts = {
-            CLASS_VACANT_SLOT: sum(1 for f in features
-                                   if f["properties"]["class"] == CLASS_VACANT_SLOT),
-            CLASS_ALLEY_GAP: sum(1 for f in features
-                                 if f["properties"]["class"] == CLASS_ALLEY_GAP),
-            CLASS_OPEN_PATCH: sum(1 for f in features
-                                  if f["properties"]["class"] == CLASS_OPEN_PATCH),
-            CLASS_UNCERTAIN: sum(1 for f in features
-                                 if f["properties"]["class"] == CLASS_UNCERTAIN),
-        }
+        # 有不可种植改判时 labels 数量会对不上，直接按最终 feature 统计
+        counts = summarize_classes(features and
+                                   [{"class": f["properties"]["class"]}
+                                    for f in features])
+
+    unplantable = summarize_unplantable(
+        [{"class": f["properties"]["class"],
+          "area_sqm": f["properties"]["area_sqm"]} for f in features])
+
+    # 需补种面积 = 全部空地面积 − 不可种植面积
+    plantable_area = round(total_area - unplantable["area_sqm"], 2)
 
     return {
         "tile_id": tile.tile_id,
@@ -624,9 +675,12 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
         "stats": {
             "n_gaps": len(features),
             "area_sqm": round(total_area, 2),
+            "plantable_area_sqm": plantable_area,
+            "unplantable_area_sqm": unplantable["area_sqm"],
             "canopy_cover_pct": round(float(canopy.mean() * 100), 2),
             "valid_ratio": round(float(valid.mean()), 4),
             "by_class": counts,
+            "unplantable": unplantable,
         },
     }
 
@@ -723,6 +777,13 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--survey-samples", type=int, default=7,
                     help="网格勘察的采样瓦片数，默认 7")
 
+    # --- 不可种植地物参数（2026-10-13 用户要求）---
+    ap.add_argument("--no-landcover", action="store_true",
+                    help="关闭道路/水体/办公区检测（退化为旧行为）")
+    ap.add_argument("--unplantable-overlap", type=float, default=0.5,
+                    help="空地多边形与不可种植掩膜的重叠占比阈值，"
+                         "超过则改判为对应类别，默认 0.5")
+
     ap.add_argument("--quiet", action="store_true", help="精简日志")
     return ap
 
@@ -772,6 +833,8 @@ def main() -> int:
         "elongate_ratio": args.elongate_ratio,
         "min_coverage_for_slot": args.min_coverage_for_slot,
         "min_valid_ratio": args.min_valid_ratio,
+        "no_landcover": args.no_landcover,
+        "unplantable_overlap": args.unplantable_overlap,
         "method": args.method,
     }
     fp = fingerprint(str(in_path), fp_params)
@@ -997,6 +1060,8 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "min_gap_width_m": args.min_gap_width_m,
             "simplify_m": args.simplify_m,
             "separate_gaps": not args.no_separate,
+            "landcover_unplantable": not args.no_landcover,
+            "unplantable_overlap": args.unplantable_overlap,
             "node_tol_ratio": args.node_tol_ratio,
             "elongate_ratio": args.elongate_ratio,
         },

@@ -109,11 +109,22 @@ CLASS_ALLEY_GAP = "alley_gap"       # 林间空隙
 CLASS_OPEN_PATCH = "open_patch"     # 连片空地
 CLASS_UNCERTAIN = "uncertain"       # 不确定
 
+# --- 不可种植地物（2026-10-13 用户拍板新增）--------------------------------
+# 用户明确要求：道路（白色）、河流/水塘、油棕树、办公生活区四类算"不可种植"，
+# "其他的都可以算空地"。油棕树本身已是 canopy 掩膜，天然不在空地补集里；
+# 其余三类由 scripts/landcover.py 检测，在此登记类别常量。
+CLASS_ROAD = "road"                 # 园区道路 / 硬化路面
+CLASS_WATER = "water"               # 河流 / 水塘
+CLASS_OFFICE = "office"             # 办公生活区 / 堆料场等硬化场地
+
 CLASS_LABEL_CN = {
     CLASS_VACANT_SLOT: "株位空缺",
     CLASS_ALLEY_GAP: "林间空隙",
     CLASS_OPEN_PATCH: "连片空地",
     CLASS_UNCERTAIN: "不确定",
+    CLASS_ROAD: "道路",
+    CLASS_WATER: "水体",
+    CLASS_OFFICE: "办公生活区",
 }
 
 # 三个给出类别的"语义锚点"（用于 UI 提示与补种建议）
@@ -122,7 +133,13 @@ CLASS_SEMANTICS = {
     CLASS_ALLEY_GAP: "树冠之间的正常缝隙，无需补种",
     CLASS_OPEN_PATCH: "连续多个株位空缺成片，需按网格整片补种",
     CLASS_UNCERTAIN: "证据不足，需人工核实",
+    CLASS_ROAD: "园区道路或硬化路面，不可种植，无需补种",
+    CLASS_WATER: "河流、水塘或积水，不可种植，无需补种",
+    CLASS_OFFICE: "办公生活区、堆料场等硬化场地，不可种植，无需补种",
 }
+
+# 不可种植类别：统计"需补种面积"时必须剔除
+UNPLANTABLE_CLASSES = (CLASS_ROAD, CLASS_WATER, CLASS_OFFICE)
 
 # 估计方法标识（写进 JSON，便于回溯是哪条路线得出的网格）
 METHOD_POINT_LATTICE = "point_lattice"      # 树心点阵（主力）
@@ -1536,14 +1553,36 @@ def build_grid_and_classify(canopy: np.ndarray, affine, px_m: float,
 
 
 def summarize_classes(labels: Sequence[dict[str, Any]]) -> dict[str, int]:
-    """统计各类别数量。"""
-    out = {CLASS_VACANT_SLOT: 0, CLASS_ALLEY_GAP: 0,
-           CLASS_OPEN_PATCH: 0, CLASS_UNCERTAIN: 0}
+    """统计各类别数量（含不可种植三类）。"""
+    out = {c: 0 for c in CLASS_LABEL_CN}
     for it in labels:
         c = it.get("class")
         if c in out:
             out[c] += 1
     return out
+
+
+def summarize_unplantable(labels: Sequence[dict[str, Any]]) -> dict[str, float]:
+    """按类别汇总**不可种植**地物的数量与面积。
+
+    这些类别不计入"需补种空地"，用户明确要求剔除
+    （原话："道路 / 排水预留带不算『要补种的地』"，
+     并把道路、河流、油棕树、办公区一并列为不可种植）。
+    """
+    cnt: dict[str, int] = {c: 0 for c in UNPLANTABLE_CLASSES}
+    area: dict[str, float] = {c: 0.0 for c in UNPLANTABLE_CLASSES}
+    for it in labels:
+        c = it.get("class")
+        if c not in cnt:
+            continue
+        cnt[c] += 1
+        area[c] += float(it.get("area_sqm") or 0.0)
+    return {
+        "count": sum(cnt.values()),
+        "area_sqm": round(sum(area.values()), 2),
+        "by_class": {c: {"count": cnt[c], "area_sqm": round(area[c], 2)}
+                     for c in UNPLANTABLE_CLASSES if cnt[c] > 0 or area[c] > 0},
+    }
 
 
 # ============================================================================

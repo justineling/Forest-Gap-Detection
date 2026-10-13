@@ -131,6 +131,9 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     "elongate_ratio":   (float, 2.2),
     "min_coverage_for_slot": (float, 0.15),
     "survey_samples":   (int,   7),
+    # 不可种植地物（2026-10-13 新增）
+    "landcover_unplantable": (bool, True),
+    "unplantable_overlap": (float, 0.5),
     # 通道控制
     "quiet":            (bool,  False),
     "progress_every":   (int,   20),
@@ -139,6 +142,7 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
 # 与 args 命名空间字段名的映射差异（契约用 snake_case，内部用 argparse 风格名）
 _ARG_ALIASES = {
     "separate_gaps": "no_separate",   # 语义相反：True → no_separate=False
+    "landcover_unplantable": "no_landcover",  # 语义相反：True → no_landcover=False
 }
 
 
@@ -265,6 +269,9 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     args.elongate_ratio = values["elongate_ratio"]
     args.min_coverage_for_slot = values["min_coverage_for_slot"]
     args.survey_samples = values["survey_samples"]
+    # 不可种植地物（语义取反：landcover_unplantable=True → no_landcover=False）
+    args.no_landcover = not bool(values["landcover_unplantable"])
+    args.unplantable_overlap = values["unplantable_overlap"]
     args.quiet = bool(values["quiet"])
     args.progress_every = values["progress_every"]
 
@@ -309,6 +316,8 @@ def params_echo(args: SimpleNamespace) -> dict:
         "elongate_ratio": args.elongate_ratio,
         "min_coverage_for_slot": args.min_coverage_for_slot,
         "survey_samples": args.survey_samples,
+        "landcover_unplantable": not args.no_landcover,
+        "unplantable_overlap": args.unplantable_overlap,
         "progress_every": args.progress_every,
     }
 
@@ -419,6 +428,8 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         "elongate_ratio": args.elongate_ratio,
         "min_coverage_for_slot": args.min_coverage_for_slot,
         "min_valid_ratio": args.min_valid_ratio,
+        "no_landcover": args.no_landcover,
+        "unplantable_overlap": args.unplantable_overlap,
         "method": args.method,
     }
     fp = PI.fingerprint(str(in_path), fp_params)
