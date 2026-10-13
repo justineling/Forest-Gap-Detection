@@ -106,12 +106,22 @@ import numpy as np
 # ----------------------------------------------------------------------------
 CLASS_VACANT_SLOT = "vacant_slot"   # 株位空缺
 CLASS_ALLEY_GAP = "alley_gap"       # 林间空隙
+CLASS_OPEN_PATCH = "open_patch"     # 连片空地
 CLASS_UNCERTAIN = "uncertain"       # 不确定
 
 CLASS_LABEL_CN = {
     CLASS_VACANT_SLOT: "株位空缺",
     CLASS_ALLEY_GAP: "林间空隙",
+    CLASS_OPEN_PATCH: "连片空地",
     CLASS_UNCERTAIN: "不确定",
+}
+
+# 三个给出类别的"语义锚点"（用于 UI 提示与补种建议）
+CLASS_SEMANTICS = {
+    CLASS_VACANT_SLOT: "单个株位上缺了一株，补种 1 株即可",
+    CLASS_ALLEY_GAP: "树冠之间的正常缝隙，无需补种",
+    CLASS_OPEN_PATCH: "连续多个株位空缺成片，需按网格整片补种",
+    CLASS_UNCERTAIN: "证据不足，需人工核实",
 }
 
 # 估计方法标识（写进 JSON，便于回溯是哪条路线得出的网格）
@@ -1387,30 +1397,61 @@ def classify_gaps(gaps: Sequence[GapGeometry], grid: GridModel,
         frac_gy = abs(gy - round(gy))
         g.in_row_distance_m = float(frac_gy * grid.row_pitch_m)
 
-        # --- 分类：先算两个互相独立的证据强度，再按优先级裁决 ---
-        #   c_slot  = 「贴近格点 + 形状偏圆 + 面积够一格」的综合强度
-        #   c_alley = 「形状细长 / 面积远小于一格 / 远离格点」的最大值
+        # --- 分类：先算三个互相独立的证据强度，再按优先级裁决 ---
+        #   c_slot  = 「贴近格点 + 形状偏圆 + 面积刚好一格」的综合强度
+        #   c_patch = 「面积明显跨多个格」的强度（连片空地）
+        #   c_alley = 「形状细长 / 面积远小于一格 / 明显夹在两行之间」的最大值
         # 用"证据打分"而不是硬 if-else 链，是为了避免容差边界上的抖动
         # （同一块空地在不同瓦片里因相位误差被判成不同类）。
         pos = float(np.clip(1.0 - d_node / max(node_tol, 1e-6), 0.0, 1.0))
         shape_round = float(np.clip(1.0 - (g.elongation - 1.0) / elongate_ratio, 0.0, 1.0))
-        size_ok = float(np.clip(g.coverage_ratio / max(min_coverage_for_slot, 1e-6),
-                                0.0, 1.0))
+
+        # size_ok：面积刚好一个格左右最佳（>1.5 格反而说明不止缺一株）
+        cov = float(g.coverage_ratio)
+        size_ok = float(np.clip(cov / max(min_coverage_for_slot, 1e-6), 0.0, 1.0))
+        if cov > 1.5:
+            size_ok *= float(np.clip(2.2 - cov, 0.0, 1.0))   # 2.2 格以上完全否决
         c_slot = 0.45 * pos + 0.30 * shape_round + 0.25 * size_ok
+
+        # 连片空地：面积跨过多个株位格 → 不是"缺一株"，而是一整片没种/死光了
+        # 起点取 2.0 格（略高于"单株空缺"的上限 1.5 格），到 4 格饱和
+        c_patch = float(np.clip((cov - 2.0) / 2.0, 0.0, 1.0))
 
         elo_clear = float(np.clip((g.elongation - elongate_ratio) / elongate_ratio,
                                   0.0, 1.0))
         # 面积远小于一格 → 不可能是"一株树的位置"，只能是缝隙（实测有效判据）
         tiny = float(np.clip(1.0 - g.coverage_ratio / max(min_coverage_for_slot, 1e-6),
                              0.0, 1.0))
-        dev = float(np.clip((d_node - node_tol) / max(period_min, 1e-6), 0.0, 1.0))
-        c_alley = max(elo_clear, tiny, dev)
+        # ⚠️ dev 的归一化必须用「容差外还要走多远」而不是整个 period。
+        #    旧写法 (d_node - node_tol)/period 在 period=7.4 m 时，即使质心已经
+        #    跑到两格正中（d_node≈3.7 m、容差 2.6 m），也只得到 0.15 分，
+        #    永远够不到 0.55 的判定线 —— 实测所有"行间小空隙"因此全掉进 uncertain。
+        #    正确写法：把「从容差走到两格中点」定义为满分。
+        far_ref = max(node_tol * 0.5, period_min * 0.5 - node_tol)
+        dev = float(np.clip((d_node - node_tol) / max(far_ref, 1e-6), 0.0, 1.0)) \
+            if d_node > node_tol else 0.0
+
+        # ⚠️ 关键：dev 是「弱证据」，不能单独把一块大空地判成"林间空隙"。
+        #    实测踩过：470 m² 的连片空地（7.4 个单位格）因质心恰好远离格点而
+        #    拿到 dev=1.0，被误判成"空隙"——语义完全反了。
+        #    形态证据（细长 / 远小于一格）才是空隙的"强证据"。
+        #    所以：dev 只在「面积不超过一格半」时才参与空隙判定。
+        dev_gated = dev if cov <= 1.5 else 0.0
+        c_alley = max(elo_clear, tiny, dev_gated)
 
         if not grid.is_usable:
             cls = CLASS_UNCERTAIN
             conf = 0.0
             reason = (f"网格先验不可信（quality={grid.quality:.2f} < 0.15，"
                       f"method={grid.method}），本块空地无法分类，交人工确认")
+        elif c_patch > 0.0 and c_patch >= max(c_slot, c_alley):
+            # 连片空地优先于空隙：形状证据不足以把一块跨多格的大空地叫"缝隙"
+            cls = CLASS_OPEN_PATCH
+            est = max(1, int(round(cov)))     # 粗估涉及几个株位
+            conf = float(np.clip(0.45 + 0.5 * c_patch, 0.0, 1.0)) * max(grid.quality, 0.30)
+            reason = (f"面积 {g.area_sqm:.0f} m² ≈ {cov:.1f} 个单位格，跨多个株位，"
+                      f"长宽比 {g.elongation:.2f} → 判定为连片空地"
+                      f"（约需补种 {est} 株）")
         elif c_alley >= 0.55 and c_slot < 0.60:
             cls = CLASS_ALLEY_GAP
             conf = float(np.clip(c_alley, 0.0, 1.0)) * max(grid.quality, 0.30)
@@ -1420,8 +1461,8 @@ def classify_gaps(gaps: Sequence[GapGeometry], grid: GridModel,
                            f"（不足一株树冠的投影面积）")
             if elo_clear > 0.0:
                 why.append(f"长宽比 {g.elongation:.2f} ≥ {elongate_ratio}")
-            if dev > 0.5:
-                why.append(f"距格点 {d_node:.2f} m")
+            if dev_gated > 0.5:
+                why.append(f"质心距格点 {d_node:.2f} m，已远离所有株位")
             reason = "、".join(why) + " → 判定为林间空隙"
         elif c_slot >= 0.55 and d_node <= node_tol and g.elongation < elongate_ratio:
             cls = CLASS_VACANT_SLOT
@@ -1431,11 +1472,12 @@ def classify_gaps(gaps: Sequence[GapGeometry], grid: GridModel,
                       f"→ 判定为格点上缺株")
         else:
             cls = CLASS_UNCERTAIN
-            conf = float(np.clip(max(c_slot, c_alley) * grid.quality * 0.6, 0.0, 0.45))
+            conf = float(np.clip(max(c_slot, c_patch, c_alley) * grid.quality * 0.6,
+                                 0.0, 0.45))
             reason = (f"距格点 {d_node:.2f} m、长宽比 {g.elongation:.2f}、"
                       f"占单位格 {g.coverage_ratio*100:.0f}%"
-                      f"（株位证据 {c_slot:.2f} / 空隙证据 {c_alley:.2f}，均不充分），"
-                      f"交人工确认")
+                      f"（株位证据 {c_slot:.2f} / 连片证据 {c_patch:.2f} / "
+                      f"空隙证据 {c_alley:.2f}，均不充分），交人工确认")
 
         results.append({
             "gap_id": g.gap_id,
@@ -1444,8 +1486,10 @@ def classify_gaps(gaps: Sequence[GapGeometry], grid: GridModel,
             "class_confidence": round(float(conf), 3),
             "class_method": "planting_grid_prior",
             "class_reason": reason,
+            "class_semantics": CLASS_SEMANTICS[cls],
             "evidence": {
                 "slot_score": round(float(c_slot), 3),
+                "patch_score": round(float(c_patch), 3),
                 "alley_score": round(float(c_alley), 3),
                 "node_tol_m": round(float(node_tol), 2),
             },
@@ -1493,7 +1537,8 @@ def build_grid_and_classify(canopy: np.ndarray, affine, px_m: float,
 
 def summarize_classes(labels: Sequence[dict[str, Any]]) -> dict[str, int]:
     """统计各类别数量。"""
-    out = {CLASS_VACANT_SLOT: 0, CLASS_ALLEY_GAP: 0, CLASS_UNCERTAIN: 0}
+    out = {CLASS_VACANT_SLOT: 0, CLASS_ALLEY_GAP: 0,
+           CLASS_OPEN_PATCH: 0, CLASS_UNCERTAIN: 0}
     for it in labels:
         c = it.get("class")
         if c in out:
