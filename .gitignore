@@ -1,0 +1,27 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# ---- 模型权重与本地缓存（体积大，均可由 setup_env.ps1 重新获取）----
+models/*
+!models/README.md
+.cache/
+
+# ---- 运行产物 ----
+output/
+*.log
+
+# ---- 编辑器 / 系统 ----
+.workbuddy-ai/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- 临时文件 ----
+*.tmp

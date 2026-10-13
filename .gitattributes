@@ -1,2 +1,18 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Windows 脚本必须用 CRLF，否则批处理可能解析异常
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件不做任何转换
+*.tif  binary
+*.tiff binary
+*.ovr  binary
+*.safetensors binary
+*.pt   binary
+*.onnx binary
+*.png  binary
+*.jpg  binary
+*.zip  binary
