@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forest Gap Detection — 可行性分析与系统架构方案</title>
+<style>
+:root{
+  --bg:#0a0f1c;
+  --bg2:#0e1526;
+  --panel:#121b2f;
+  --panel2:#16203a;
+  --border:#22304d;
+  --border2:#2d3f63;
+  --text:#e8eefb;
+  --text2:#b7c4dc;
+  --muted:#8496b4;
+  --cyan:#38bdf8;
+  --violet:#a78bfa;
+  --green:#34d399;
+  --amber:#fbbf24;
+  --red:#f87171;
+  --pink:#f472b6;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",sans-serif;
+  font-size:15px;
+  line-height:1.75;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(900px 500px at 12% -5%, rgba(56,189,248,.10), transparent 60%),
+    radial-gradient(800px 500px at 88% 0%, rgba(167,139,250,.10), transparent 60%);
+}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 28px 100px}
+
+/* ---------- HERO ---------- */
+.hero{padding:64px 0 40px;border-bottom:1px solid var(--border)}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--cyan);background:rgba(56,189,248,.08);
+  border:1px solid rgba(56,189,248,.25);border-radius:999px;padding:5px 14px;margin-bottom:22px;
+}
+.hero h1{font-size:clamp(28px,4.2vw,46px);line-height:1.22;font-weight:800;letter-spacing:-.02em}
+.hero h1 span{
+  background:linear-gradient(100deg,var(--cyan),var(--violet) 60%,var(--pink));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
+.hero .sub{margin-top:16px;color:var(--text2);font-size:17px;max-width:820px}
+.meta-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+.chip{
+  font-family:var(--mono);font-size:12px;color:var(--text2);
+  background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 12px;
+}
+.verdict{
+  margin-top:32px;display:flex;flex-wrap:wrap;gap:18px;align-items:center;
+  background:linear-gradient(120deg,rgba(52,211,153,.10),rgba(56,189,248,.06));
+  border:1px solid rgba(52,211,153,.32);border-radius:16px;padding:22px 26px;
+}
+.verdict .badge{
+  font-size:22px;font-weight:800;color:var(--green);white-space:nowrap;
+  display:flex;align-items:center;gap:10px;
+}
+.verdict p{color:var(--text2);font-size:15px;flex:1;min-width:280px}
+.verdict strong{color:var(--text)}
+
+/* ---------- NAV ---------- */
+nav.toc{
+  position:sticky;top:0;z-index:50;margin:0 -28px 0;padding:12px 28px;
+  background:rgba(10,15,28,.88);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--border);
+  display:flex;gap:6px;overflow-x:auto;scrollbar-width:thin;
+}
+nav.toc a{
+  color:var(--muted);text-decoration:none;font-size:13px;white-space:nowrap;
+  padding:6px 12px;border-radius:8px;border:1px solid transparent;transition:.15s;
+}
+nav.toc a:hover{color:var(--text);background:var(--panel);border-color:var(--border)}
+
+/* ---------- SECTIONS ---------- */
+section{padding:56px 0 8px;scroll-margin-top:64px}
+h2{
+  font-size:26px;font-weight:750;letter-spacing:-.01em;
+  display:flex;align-items:center;gap:14px;margin-bottom:8px;
+}
+h2 .num{
+  font-family:var(--mono);font-size:13px;font-weight:600;color:var(--cyan);
+  background:rgba(56,189,248,.10);border:1px solid rgba(56,189,248,.28);
+  border-radius:8px;padding:3px 10px;flex:none;
+}
+h2 + .lede{color:var(--muted);font-size:14.5px;margin-bottom:28px;max-width:900px}
+h3{font-size:17.5px;font-weight:700;margin:36px 0 14px;color:var(--text)}
+h3 .tag{font-family:var(--mono);font-size:11px;color:var(--violet);margin-right:8px}
+h4{font-size:15px;font-weight:700;margin:22px 0 10px;color:var(--text2)}
+p{color:var(--text2);margin-bottom:12px}
+p strong,li strong{color:var(--text);font-weight:650}
+ul,ol{margin:0 0 14px 22px;color:var(--text2)}
+li{margin-bottom:7px}
+code{
+  font-family:var(--mono);font-size:12.5px;background:var(--panel2);
+  border:1px solid var(--border);border-radius:5px;padding:2px 6px;color:var(--cyan);
+}
+a{color:var(--cyan)}
+
+/* ---------- CARDS ---------- */
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.card{
+  background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 22px;
+}
+.card h4{margin-top:0}
+.card p:last-child{margin-bottom:0}
+.card.accent{border-color:var(--border2);background:linear-gradient(150deg,var(--panel2),var(--panel))}
+.kpi{display:flex;gap:8px;align-items:baseline;margin-bottom:6px}
+.kpi .v{font-size:26px;font-weight:800;font-family:var(--mono);color:var(--cyan)}
+.kpi .u{font-size:12px;color:var(--muted)}
+
+/* ---------- TABLES ---------- */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;margin:16px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
+th{
+  background:var(--panel2);color:var(--text);font-weight:700;text-align:left;
+  padding:12px 14px;border-bottom:1px solid var(--border2);white-space:nowrap;
+}
+td{padding:11px 14px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:rgba(56,189,248,.035)}
+td.ok{color:var(--green)}
+td.no{color:var(--red)}
+td.mid{color:var(--amber)}
+td strong{color:var(--text)}
+
+/* ---------- LAYERED ARCH ---------- */
+.layers{display:flex;flex-direction:column;gap:10px;margin:20px 0}
+.layer{
+  border:1px solid var(--border2);border-radius:12px;padding:14px 18px;
+  background:linear-gradient(100deg,var(--panel2),var(--panel));
+  display:grid;grid-template-columns:132px 1fr;gap:18px;align-items:center;
+}
+.layer .lname{
+  font-family:var(--mono);font-size:11.5px;font-weight:700;letter-spacing:.06em;
+  color:var(--cyan);text-transform:uppercase;
+}
+.layer .lbody{display:flex;flex-wrap:wrap;gap:8px}
+.mod{
+  font-size:12.5px;background:var(--bg2);border:1px solid var(--border);
+  border-radius:8px;padding:5px 11px;color:var(--text2);
+}
+.mod b{color:var(--text);font-weight:600}
+.l1{border-left:3px solid var(--cyan)}
+.l2{border-left:3px solid var(--violet)}
+.l3{border-left:3px solid var(--green)}
+.l4{border-left:3px solid var(--amber)}
+
+/* ---------- FLOW ---------- */
+.flow{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding:8px 0 4px}
+.step{
+  flex:none;min-width:132px;background:var(--panel);border:1px solid var(--border);
+  border-radius:12px;padding:14px 14px;position:relative;
+}
+.step .snum{font-family:var(--mono);font-size:10.5px;color:var(--muted);letter-spacing:.1em}
+.step .stitle{font-size:13.5px;font-weight:700;color:var(--text);margin:4px 0 6px}
+.step .sdesc{font-size:11.5px;color:var(--muted);line-height:1.6}
+.arrow{
+  flex:none;display:flex;align-items:center;justify-content:center;width:34px;
+  color:var(--border2);font-size:18px;
+}
+
+/* ---------- CODE BLOCK ---------- */
+pre{
+  background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  padding:18px 20px;overflow-x:auto;margin:14px 0;
+}
+pre code{
+  background:none;border:none;padding:0;color:var(--text2);
+  font-size:12.5px;line-height:1.75;
+}
+pre .k{color:var(--violet)}
+pre .s{color:var(--green)}
+pre .c{color:var(--muted);font-style:italic}
+
+/* ---------- CALLOUTS ---------- */
+.note{
+  border-radius:12px;padding:16px 20px;margin:16px 0;border:1px solid;
+  display:flex;gap:14px;align-items:flex-start;
+}
+.note .ic{font-size:18px;flex:none;line-height:1.5}
+.note p:last-child{margin-bottom:0}
+.note.info{background:rgba(56,189,248,.07);border-color:rgba(56,189,248,.28)}
+.note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.30)}
+.note.crit{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.32)}
+.note.good{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.28)}
+
+/* ---------- PILL ---------- */
+.pill{
+  display:inline-block;font-family:var(--mono);font-size:11px;font-weight:600;
+  border-radius:6px;padding:2px 8px;margin-right:6px;
+}
+.p-p0{background:rgba(248,113,113,.14);color:#fca5a5;border:1px solid rgba(248,113,113,.3)}
+.p-p1{background:rgba(251,191,36,.13);color:#fcd34d;border:1px solid rgba(251,191,36,.3)}
+.p-p2{background:rgba(132,150,180,.14);color:#a9b8d0;border:1px solid rgba(132,150,180,.3)}
+.p-rec{background:rgba(52,211,153,.14);color:#6ee7b7;border:1px solid rgba(52,211,153,.3)}
+.p-a{background:rgba(56,189,248,.14);color:#7dd3fc;border:1px solid rgba(56,189,248,.3)}
+.p-b{background:rgba(251,191,36,.13);color:#fcd34d;border:1px solid rgba(251,191,36,.3)}
+
+/* ---------- Q LIST ---------- */
+.qgroup{margin:20px 0}
+.qhead{
+  display:flex;align-items:center;gap:10px;margin-bottom:12px;
+  font-size:14px;font-weight:700;color:var(--text);
+}
+.qhead .dot{width:8px;height:8px;border-radius:50%;flex:none}
+.q{display:flex;gap:12px;padding:12px 16px;background:var(--panel);border:1px solid var(--border);
+   border-radius:10px;margin-bottom:8px;align-items:flex-start}
+.q .qn{font-family:var(--mono);font-size:11.5px;color:var(--cyan);flex:none;padding-top:2px;min-width:26px}
+.q .qt{font-size:13.5px;color:var(--text2)}
+.q .qt b{color:var(--text);display:block;font-weight:650;margin-bottom:2px;font-size:14px}
+.q .imp{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:5px;display:block}
+
+/* ---------- RISK ---------- */
+.risk{border-left:3px solid var(--amber);background:var(--panel);border-radius:0 12px 12px 0;
+      padding:16px 20px;margin-bottom:12px;border-top:1px solid var(--border);
+      border-right:1px solid var(--border);border-bottom:1px solid var(--border)}
+.risk.hi{border-left-color:var(--red)}
+.risk.lo{border-left-color:var(--green)}
+.risk .rt{font-weight:700;color:var(--text);font-size:14.5px;margin-bottom:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.risk p{margin:0;font-size:13.5px}
+
+footer{
+  margin-top:70px;padding-top:26px;border-top:1px solid var(--border);
+  color:var(--muted);font-size:13px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;
+}
+@media(max-width:680px){
+  .wrap{padding:0 16px 70px}
+  nav.toc{margin:0 -16px;padding:10px 16px}
+  .layer{grid-template-columns:1fr;gap:10px}
+  .hero{padding:40px 0 30px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="eyebrow">Architecture Proposal · v0.1 · 待确认</div>
+  <h1>油棕园空地智能检测系统<br><span>Forest Gap Detection</span></h1>
+  <p class="sub">基于 KML 范围与 AI 遥感算法的油棕园空地智能检测桌面应用 —— 可行性判断、系统架构与实施方案</p>
+  <div class="meta-row">
+    <span class="chip">Tauri v2 · Rust · React</span>
+    <span class="chip">Windows 桌面优先</span>
+    <span class="chip">输入 ~3GB 正射影像 + KML</span>
+    <span class="chip">输出 GeoJSON + 补种坐标图盘</span>
+    <span class="chip">零代码起步</span>
+  </div>
+
+  <div class="verdict">
+    <div class="badge">✅ 可实现</div>
+    <p>本项目属于<strong>成熟技术组合的工程化落地</strong>，不存在原理性障碍。已有的开源资产（DeepForest / SAM2 / GDAL / Tauri-GDAL 模板）足以支撑从零起步。<strong>真正的难点不在 Tauri，而在三处</strong>：3GB 影像的内存与吞吐、空地判定标准的产品化定义、以及 AI 模型与数据来源。本方案对三者都给出了可执行路径。</p>
+  </div>
+</header>
+
+<div class="note crit" style="margin-top:28px">
+  <span class="ic">🔄</span>
+  <div>
+    <p><strong>需求已更新（v0.2 · 2026-10-12）—— 本文档部分内容已被取代</strong></p>
+    <p>用户澄清后需求发生<strong>收敛（做减法）</strong>：① 检测目标从三类（<code>idle</code>/<code>hole</code>/<code>gap</code>）<strong>收敛为单一类别「空地」</strong>；② <strong>KML 从刚需降级为可选</strong>（无 KML 时整幅影像视为一个地块）；③ 完全不涉及时间维度。</p>
+    <p>因此本文档<strong>第 2 节的三类空地定义</strong>与<strong>第 10 节中关于 KML / 分类的问题</strong>已过时，请以 <code>docs/PRD.md</code> 附录 A（需求变更 v0.2）为准。<strong>其余章节（系统架构、技术选型、任务分解）依然有效</strong>，且因需求收敛，T02–T05 的工作量均有所减少。</p>
+    <p>零基础读者请直接阅读 <code>docs/project-explained-simply.html</code>。</p>
+  </div>
+</div>
+
+<!-- ============ NAV ============ -->
+<nav class="toc">
+  <a href="#verdict">可行性结论</a>
+  <a href="#baseline">需求基线</a>
+  <a href="#arch">系统架构</a>
+  <a href="#choices">技术选型</a>
+  <a href="#fork">双路线兜底</a>
+  <a href="#ai">AI 模型与数据</a>
+  <a href="#files">文件结构</a>
+  <a href="#tasks">任务分解</a>
+  <a href="#risk">风险与缓解</a>
+  <a href="#questions">待确认问题</a>
+  <a href="#next">下一步</a>
+</nav>
+
+<!-- ============ 1. 可行性结论 ============ -->
+<section id="verdict">
+  <h2><span class="num">01</span>可行性结论</h2>
+  <p class="lede">先回答你最关心的问题：能不能做、难在哪、有没有现成轮子。</p>
+
+  <h3><span class="tag">1.1</span>三条"已经有现成轮子"的证据</h3>
+  <div class="grid g3">
+    <div class="card">
+      <div class="kpi"><span class="v">GDAL</span><span class="u">+ Tauri 模板</span></div>
+      <p><strong>桌面端承载地理数据可行</strong>。已有开源模板 <code>earthal-labs/tauri-gdal-template</code>，把 GDAL 捆绑进 Tauri 应用构建自包含桌面 GIS 程序。你不需要从零解决"Tauri 怎么读 tif"。</p>
+    </div>
+    <div class="card">
+      <div class="kpi"><span class="v">0.83</span><span class="u">Dice 系数</span></div>
+      <p><strong>油棕树冠 AI 识别已有学术落地</strong>。ForestSAM（DeepForest + SAM2）在油棕树冠分割上达到 Dice 0.826 / IoU 0.712；YOLO 系检测方案报告 mAP 98.83%、计数准确率 99.45%。</p>
+    </div>
+    <div class="card">
+      <div class="kpi"><span class="v">COG</span><span class="u">分块 + 金字塔</span></div>
+      <p><strong>3GB 影像不必整幅读入</strong>。COG（云优化 GeoTIFF，GDAL 3.1+ 内置驱动）+ 窗口化读取 + 金字塔概览，可实现<strong>常量内存</strong>处理，峰值内存可控在 4GB 以内。</p>
+    </div>
+  </div>
+
+  <h3><span class="tag">1.2</span>真正的三个难点（也是本方案的重点）</h3>
+  <div class="grid g3">
+    <div class="card accent">
+      <h4>① 3GB 影像的内存与吞吐</h4>
+      <p>不能整幅读、不能整幅渲染、分块推理还要解决接缝伪影。<strong>已有解法</strong>：分块 + overlap 羽化融合 + 本地 XYZ 瓦片服务，见 <a href="#arch">第 3 节</a>。</p>
+    </div>
+    <div class="card accent">
+      <h4>② "空地"判定标准的产品化定义</h4>
+      <p>什么叫空地？最小多少平方米才算？三类空地怎么分？<strong>这是产品决策，不是技术问题</strong>，必须由你定义阈值，系统做成全可配。</p>
+    </div>
+    <div class="card accent">
+      <h4>③ AI 模型与数据来源</h4>
+      <p>你有没有模型、有没有标注、有没有 GPU？<strong>已给出三条路线</strong>，并推荐「零标注冷启动出 v1 → 少量标注微调迭代」，见 <a href="#ai">第 6 节</a>。</p>
+    </div>
+  </div>
+
+  <div class="note crit">
+    <span class="ic">⚠️</span>
+    <div>
+      <p><strong>必须提前告知的一个产品级限制（本次研究的新发现）</strong></p>
+      <p>从单期 RGB 正射影像上，<strong>"林间空隙"与"枯死缺株"可以用几何特征区分</strong>（面积、形状、是否落在株行距网格的空位）；但<strong>"长期闲置"与"枯死"之间的语义区分，单期 RGB 影像不足</strong>。</p>
+      <p>原因：「长期闲置」与「近期枯死」本质是<strong>时间维度</strong>的差异，单张快照无法表达。文献中油棕枯死（Ganoderma 基腐病）的早期识别普遍需要<strong>多光谱（红边/近红外）+ 热红外 + 冠层结构（DSM）</strong>或多期影像联合建模。</p>
+      <p><strong>务实建议</strong>：v1 只承诺几何分类，UI 上标注为"候选类别，需人工确认"；数据模型里保留 <code>class</code> 字段并增加 <code>class_confidence</code> 与 <code>class_method</code>，等你能提供多期或多光谱数据时再升级为真正的语义三分类。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. 需求基线 ============ -->
+<section id="baseline">
+  <h2><span class="num">02</span>需求基线（请确认）</h2>
+  <p class="lede">我从你仓库的 README 里读出了三条会改变架构前提的信息。如果与你的真实意图不符，请纠正——这三点会直接改动数据模型。</p>
+
+  <div class="grid g2">
+    <div class="card">
+      <h4>修正一 · 业务域是油棕种植园，不是普通森林</h4>
+      <p>README 原文：<em>"利用 AI 深度学习算法自动识别正射影像中的油棕树冠，精准锁定长期闲置、枯死缺株及光照充足的林间空地"</em>。</p>
+      <p>所以"空地"实际有<strong>三类</strong>，判定标准与检测难度完全不同（见下方卡片）。这决定了检测链路必须是"树冠识别 → 求补集 → 分类"三步，而不是简单的二值分割。</p>
+    </div>
+    <div class="card">
+      <h4>修正二 · KML 边界是刚需，不是可选项</h4>
+      <p>README 开头即写明"基于 KML 范围"。KML 的作用有两层：① 圈定作业范围，避免处理影像里的非园区区域；② <strong>按园区 / 分区 / 地块归属切分</strong>，让每个空地 polygon 能挂到具体地块上。</p>
+      <p>这意味着输出 JSON 必须是<strong>嵌套结构</strong>（blocks → gaps），而非一个扁平数组。</p>
+    </div>
+    <div class="card">
+      <h4>修正三 · 输出不止"一个 JSON"</h4>
+      <p>README 结尾："生成全园数字化<strong>补种坐标图盘</strong>"。所以除 JSON 外，隐含需求是<strong>可下发给种植队的补种点位清单</strong>（CSV / KML），以及可供人工复核的可视化界面。</p>
+    </div>
+    <div class="card">
+      <h4>修正四 · 坐标系问题必须处理</h4>
+      <p>KML 天然是 WGS84 经纬度（EPSG:4326），而无人机正射影像通常是投影坐标系（如 UTM 48N / EPSG:32648，单位是米）。</p>
+      <p>架构约定：<strong>面积、质心、距离一律在投影系（米）下计算</strong>；经纬度下算面积会得到错误结果。</p>
+    </div>
+  </div>
+
+  <h3><span class="tag">2.1</span>空地检测的核心链（架构师固化的处理链）</h3>
+  <div class="flow" style="margin-bottom:6px">
+    <div class="step"><div class="snum">01</div><div class="stitle">树冠 mask</div><div class="sdesc">AI 分割出油棕树冠区域</div></div>
+    <div class="arrow">›</div>
+    <div class="step" style="border-color:var(--cyan)"><div class="snum">02</div><div class="stitle">取补集</div><div class="sdesc"><strong>空地 = 树冠掩膜的补集</strong><br>这是全链路的逻辑枢纽</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">03</div><div class="stitle">Polygonize</div><div class="sdesc">栅格转矢量</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">04</div><div class="stitle">简化</div><div class="sdesc">Douglas-Peucker<br>+ 拓扑修复</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">05</div><div class="stitle">面积过滤</div><div class="sdesc">剔除噪声碎片</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">06</div><div class="stitle">打标分类</div><div class="sdesc">判 idle / hole / gap<br><strong>标记为候选类别</strong></div></div>
+  </div>
+  <p style="font-size:13px;color:var(--muted);margin-bottom:26px">「空地 = 无树冠区域」这个反推关系是本项目的工程支点——它让树冠分割精度直接转化为空地检测精度，整条链路因此闭环。</p>
+
+  <h3><span class="tag">2.2</span>三类空地的业务定义 <span style="font-size:12px;color:var(--amber);font-weight:600">（v0.2 已取消 —— 现为单类「空地」，以下仅作历史记录）</span></h3>
+  <div class="grid g3">
+    <div class="card" style="border-left:3px solid #f472b6">
+      <h4>A 类 · 长期闲置 <code>idle</code></h4>
+      <p><strong>特征</strong>：大面积连续无树冠，形状相对规整（≈ 矩形/地块形状）。</p>
+      <p><strong>判定</strong>：面积 ≥ 2000㎡ + 连通 + 长宽比接近 1 + 不呈成排分布。<span class="pill p-p2">默认值可配</span></p>
+      <p><strong>风险</strong>：单期影像无法与"新开垦/未种植"区分。</p>
+    </div>
+    <div class="card" style="border-left:3px solid #f87171">
+      <h4>B 类 · 枯死缺株孔洞 <code>hole</code></h4>
+      <p><strong>特征</strong>：小面积零散、<strong>成排缺失</strong>，面积≈单株或数株树冠。</p>
+      <p><strong>判定</strong>：面积 ≤ 200㎡ + 落在株行距网格的空位上 + 靠近树冠边界。<span class="pill p-p2">默认值可配</span></p>
+      <p><strong>风险</strong>：单期影像只能判"缺株"，判不出"为什么缺"。</p>
+    </div>
+    <div class="card" style="border-left:3px solid #fbbf24">
+      <h4>C 类 · 林间空隙 <code>gap</code></h4>
+      <p><strong>特征</strong>：树冠之间的自然间隙，中小面积、形状不规则。</p>
+      <p><strong>判定</strong>：面积 ≤ 200㎡ + 零散 + 形态不规则。<span class="pill p-p2">默认值可配</span></p>
+      <p><strong>风险</strong>：与 B 类边界模糊，需靠株行距网格约束区分。</p>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <span class="ic">📌</span>
+    <div>
+      <p><strong>关于三分类的定位：v1 输出的是"候选类别"，不是"结论"。</strong>由于单期 RGB 无法可靠区分"长期闲置"与"枯死"（见 <a href="#verdict">1.2 节</a>），三分类在 v1 阶段由<strong>几何规则引擎</strong>给出初判，UI 上标注为待人工确认，并在数据模型中通过 <code>class_confidence</code> 与 <code>class_method</code> 字段留出升级空间——将来你提供多期或多光谱数据时，无需改动数据契约即可把 <code>class_method</code> 从 <code>geometry_rule</code> 升级为 <code>spectral</code> / <code>model</code>。</p>
+    </div>
+  </div>
+
+  <h3><span class="tag">2.3</span>输出 JSON 结构（草案，请确认）</h3>
+  <p>建议整体采用 <strong>GeoJSON 兼容</strong>结构，以最大化 GIS 系统兼容性（可直接拖进 QGIS / ArcGIS 查看）。</p>
+<pre><code>{
+  <span class="s">"schema_version"</span>: <span class="s">"0.1"</span>,
+  <span class="s">"crs"</span>: <span class="s">"EPSG:32648"</span>,
+  <span class="s">"source_image"</span>: <span class="s">"block_A_ortho.tif"</span>,
+  <span class="s">"kml_source"</span>: <span class="s">"estate_boundary.kml"</span>,
+  <span class="s">"model"</span>: { <span class="s">"name"</span>: <span class="s">"palm_canopy_seg"</span>, <span class="s">"version"</span>: <span class="s">"0.1.0"</span> },
+  <span class="s">"blocks"</span>: [{
+    <span class="s">"block_id"</span>: <span class="s">"A1"</span>,
+    <span class="s">"gaps"</span>: [{
+      <span class="s">"gap_id"</span>: <span class="s">"A1-0001"</span>,
+      <span class="s">"class"</span>: <span class="s">"hole"</span>,                       <span class="c">// idle | hole | gap</span>
+      <span class="s">"class_confidence"</span>: 0.78,             <span class="c">// 分类置信度</span>
+      <span class="s">"class_method"</span>: <span class="s">"geometry_rule"</span>,      <span class="c">// geometry_rule | spectral | model</span>
+      <span class="s">"geometry"</span>: { <span class="s">"type"</span>: <span class="s">"Polygon"</span>, <span class="s">"coordinates"</span>: [[[x,y],[x,y],[x,y]]] },
+      <span class="s">"area_sqm"</span>: 123.4,
+      <span class="s">"centroid"</span>: [x, y],
+      <span class="s">"confidence"</span>: 0.92,                  <span class="c">// 检测置信度</span>
+      <span class="s">"estimated_replant_points"</span>: 3,
+      <span class="s">"replant_points"</span>: [[x,y],[x,y],[x,y]]
+    }]
+  }],
+  <span class="s">"summary"</span>: {
+    <span class="s">"total_gap_count"</span>: 128, <span class="s">"total_area_sqm"</span>: 45678.9,
+    <span class="s">"by_class"</span>: { <span class="s">"idle"</span>: 12, <span class="s">"hole"</span>: 96, <span class="s">"gap"</span>: 20 }
+  }
+}</code></pre>
+</section>
+
+<!-- ============ 3. 系统架构 ============ -->
+<section id="arch">
+  <h2><span class="num">03</span>系统架构</h2>
+  <p class="lede">四层架构：Tauri 前端负责交互与渲染，Rust 后端负责地理处理与调度，AI 推理独立成进程，GDAL 作为地理能力底座。</p>
+
+  <h3><span class="tag">3.1</span>分层架构</h3>
+  <div class="layers">
+    <div class="layer l1">
+      <div class="lname">前端 UI 层<br>React + TS</div>
+      <div class="lbody">
+        <span class="mod"><b>MapLibre GL</b> 影像画布（WebGL）</span>
+        <span class="mod"><b>GapLayer</b> polygon 矢量叠加</span>
+        <span class="mod"><b>TopToolbar</b> 导入/检测/导出</span>
+        <span class="mod"><b>LeftPanel</b> 任务列表 + 图层控制</span>
+        <span class="mod"><b>PropertyPanel</b> 图斑属性</span>
+        <span class="mod"><b>StatusBar</b> 进度 + 日志</span>
+      </div>
+    </div>
+    <div class="layer l2">
+      <div class="lname">IPC 通信层<br>Tauri Commands</div>
+      <div class="lbody">
+        <span class="mod">import_tif / import_kml</span>
+        <span class="mod">start / pause / resume_detection</span>
+        <span class="mod">list_gaps / delete_gap / edit_gap</span>
+        <span class="mod">export_json / export_csv</span>
+        <span class="mod">事件 <b>job://progress</b> · <b>job://state</b> · <b>job://log</b></span>
+      </div>
+    </div>
+    <div class="layer l3">
+      <div class="lname">Rust 后端<br>业务与地理内核</div>
+      <div class="lbody">
+        <span class="mod"><b>JobManager</b> 任务编排</span>
+        <span class="mod"><b>TileScheduler</b> 分块规划</span>
+        <span class="mod"><b>RasterReader</b> 窗口化读栅格</span>
+        <span class="mod"><b>KmlProcessor</b> 解析 + CRS 转换</span>
+        <span class="mod"><b>Vectorizer</b> 栅格→矢量</span>
+        <span class="mod"><b>Exporter</b> JSON/CSV/KML</span>
+        <span class="mod"><b>TileService</b> 本地 XYZ 瓦片</span>
+        <span class="mod"><b>ModelRegistry</b> 模型管理</span>
+      </div>
+    </div>
+    <div class="layer l4">
+      <div class="lname">AI 推理层<br>可替换引擎</div>
+      <div class="lbody">
+        <span class="mod"><b>InferenceEngine</b>（trait 接口）</span>
+        <span class="mod">PythonSidecarEngine · 推荐</span>
+        <span class="mod">OrtEngine · 可选降级</span>
+        <span class="mod"><b>MaskPostProcessor</b> 拼接/羽化/分类</span>
+      </div>
+    </div>
+    <div class="layer" style="border-left:3px solid var(--muted)">
+      <div class="lname">能力底座</div>
+      <div class="lbody">
+        <span class="mod">GDAL / OGR — 栅格与矢量 IO、投影转换、polygonize</span>
+        <span class="mod">PROJ — CRS 转换</span>
+        <span class="mod">ONNX Runtime — 推理执行</span>
+      </div>
+    </div>
+  </div>
+
+  <h3><span class="tag">3.2</span>端到端数据流管线</h3>
+  <div class="flow">
+    <div class="step"><div class="snum">STEP 01</div><div class="stitle">导入</div><div class="sdesc">TIF 建金字塔 + 转 COG<br>KML 解析出地块</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 02</div><div class="stitle">裁剪</div><div class="sdesc">按地块范围栅格化掩膜<br>只处理边界内区域</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 03</div><div class="stitle">分块</div><div class="sdesc">1024px 瓦片<br>带 128px overlap</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 04</div><div class="stitle">AI 推理</div><div class="sdesc">树冠检测 → 分割<br>得树冠 mask</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 05</div><div class="stitle">拼接</div><div class="sdesc">重叠区羽化融合<br>消除接缝伪影</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 06</div><div class="stitle">求补集</div><div class="sdesc">无树冠区域<br>= 空地候选</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 07</div><div class="stitle">分类</div><div class="sdesc">按面积/形态/株行距<br>判 idle / hole / gap</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 08</div><div class="stitle">矢量化</div><div class="sdesc">polygonize → 简化<br>→ 拓扑修复 → 过滤</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">STEP 09</div><div class="stitle">复核导出</div><div class="sdesc">人工编辑后<br>导出 GeoJSON / CSV</div></div>
+  </div>
+
+  <div class="note info">
+    <span class="ic">💡</span>
+    <div>
+      <p><strong>为什么 STEP 05「拼接」是个专门步骤？</strong> 分块推理最典型的坑是接缝：同一块空地横跨两个瓦片时，可能被切成两块、或者边界错位。解法是分块时留 128px 重叠区，推理后在重叠区做<strong>羽化加权融合</strong>（feather blending）再统一二值化。不做这一步，输出的 polygon 会出现大量碎片。</p>
+    </div>
+  </div>
+
+  <h3><span class="tag">3.3</span>检测主流程时序</h3>
+  <p>以下是核心调用链（<code>→</code> 表示调用，<code>⇢</code> 表示返回），对应架构师产出的完整时序图。</p>
+<pre><code><span class="c">── 阶段一：导入 ──</span>
+用户 → UI : 选择 TIF + KML
+UI → RasterReader : open() → metadata() → build_overviews() → to_cog()
+RasterReader ⇢ UI : RasterMeta(crs, size, bands)
+UI → KmlProcessor : parse() → transform_crs(4326 → 影像CRS)
+KmlProcessor ⇢ UI : Vec&lt;Block&gt;（含 bbox）
+
+<span class="c">── 阶段二：检测 ──</span>
+UI → JobManager : create_job(cfg) → start()
+JobManager → TileService : start(raster)        <span class="c">// 起本地瓦片服务供前端渲染</span>
+JobManager → InferenceEngine : load(ModelRegistry.load())
+
+  <span class="k">for</span> 每个 Block:
+    JobManager → KmlProcessor : rasterize_mask(block)   <span class="c">// 圈定范围</span>
+    <span class="k">for</span> 每个 Tile:
+      JobManager → TileScheduler : next_tile() ⇢ Tile(bbox, overlap)
+      JobManager → RasterReader : read_window(bbox) ⇢ NdArray
+      JobManager → InferenceEngine : infer(tile) ⇢ mask_tile
+      JobManager → MaskPostProcessor : stitch() → feather_blend()
+      JobManager ⇢ UI : emit <span class="s">"job://progress"</span>
+    MaskPostProcessor : binarize() → classify_gaps(rules)
+    Vectorizer : polygonize() → simplify() → validate() → filter_min_area()
+    JobManager : checkpoint(job_id, block_id)        <span class="c">// 断点续跑</span>
+
+JobManager ⇢ UI : DetectionResult + Summary
+
+<span class="c">── 阶段三：导出 ──</span>
+UI → Exporter : to_geojson(result, out) ⇢ 文件路径</code></pre>
+</section>
+
+<!-- ============ 4. 技术选型 ============ -->
+<section id="choices">
+  <h2><span class="num">04</span>三大技术选型决策</h2>
+  <p class="lede">三个最容易走弯路的地方。每张表都给出推荐结论与理由，你可以直接当决策卡用。</p>
+
+  <h3><span class="tag">决策一</span>AI 推理跑在哪？Python sidecar vs 纯 Rust</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>维度</th><th>Python sidecar</th><th>纯 Rust (ort)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>安装包体积</strong></td><td class="no">大，含 PyTorch+CUDA 通常 1.5–3GB</td><td class="ok">小，ORT CPU 版几十 MB；GPU 版约 200MB 级</td></tr>
+        <tr><td><strong>GPU 支持成熟度</strong></td><td class="ok">极成熟（CUDA / TensorRT / PyTorch）</td><td class="mid">可用但较窄，EP 配置踩坑多</td></tr>
+        <tr><td><strong>算法生态</strong></td><td class="ok">最全（DeepForest / SAM2 / 训练 / shapely / geopandas）</td><td class="no">有限，多数需自己重写</td></tr>
+        <tr><td><strong>开发效率</strong></td><td class="ok">高，现成代码直接跑</td><td class="no">低，预处理/后处理/模型转换需重写</td></tr>
+        <tr><td><strong>跨平台打包</strong></td><td class="no">难（CUDA / dll 依赖地狱）</td><td class="ok">易（单二进制）</td></tr>
+        <tr><td><strong>调试成本</strong></td><td class="ok">低</td><td class="no">高（编译 + 绑定层）</td></tr>
+        <tr><td><strong>冷启动速度</strong></td><td class="mid">较慢</td><td class="ok">快</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note good">
+    <span class="ic">✅</span>
+    <div>
+      <p><span class="pill p-rec">推荐</span><strong>Python sidecar 作为默认推理后端，纯 Rust <code>ort</code> 作为可选轻量降级后端。</strong></p>
+      <p>理由：算法落地强依赖学术成果（DeepForest / ForestSAM），Python 生态不可替代。关键设计是用 <code>InferenceEngine</code> trait 把"跑在哪"与"跑什么"解耦——Rust 只负责调度与地理处理，推理进程可随时替换。</p>
+      <p><strong>更进一步建议</strong>：Python 侧优先用 <strong>ONNX Runtime</strong> 跑推理（比 PyTorch 更轻更快），PyTorch 只用于训练/导出。模型以 ONNX 格式分发，避免把整个 PyTorch+CUDA 打进安装包——这是包体膨胀的根因。</p>
+    </div>
+  </div>
+
+  <h3><span class="tag">决策二</span>3GB 影像怎么渲染？</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>维度</th><th>WebGL 瓦片服务</th><th>Canvas 直接绘制</th><th>桌面 GIS 嵌入</th></tr></thead>
+      <tbody>
+        <tr><td><strong>3GB 渲染可行性</strong></td><td class="ok">可行（按需加载瓦片）</td><td class="no">不可行（必爆内存）</td><td class="ok">可行</td></tr>
+        <tr><td><strong>交互体验</strong></td><td class="ok">好（GPU 加速）</td><td class="no">差（卡顿）</td><td class="ok">好</td></tr>
+        <tr><td><strong>实现成本</strong></td><td class="mid">中</td><td class="ok">低（但不可用）</td><td class="no">高</td></tr>
+        <tr><td><strong>打包分发</strong></td><td class="ok">轻（纯 Web）</td><td class="ok">轻</td><td class="no">重（原生依赖巨大）</td></tr>
+        <tr><td><strong>与 Tauri 契合度</strong></td><td class="ok">高（前端本就是 WebView）</td><td class="ok">高</td><td class="no">低</td></tr>
+        <tr><td><strong>多图层/样式灵活度</strong></td><td class="ok">高</td><td class="no">低</td><td class="ok">高</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note good">
+    <span class="ic">✅</span>
+    <div>
+      <p><span class="pill p-rec">推荐</span><strong>后端本地 XYZ 瓦片服务 + 前端 WebGL 渲染（MapLibre GL）。</strong></p>
+      <p>Tauri 前端本身就是 WebView，MapLibre GL 是最自然的选择；Rust 后端用 GDAL 生成 XYZ 瓦片解决 3GB 渲染问题（只监听 <code>127.0.0.1</code>）；polygon 作为独立矢量图层，承担选中/删除/编辑交互。</p>
+      <p>Canvas 方案在 3GB 下直接出局；桌面 GIS 组件嵌入与 Tauri 架构冲突且分发成本过高。</p>
+    </div>
+  </div>
+
+  <h3><span class="tag">决策三</span>AI 模型从哪来？</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>维度</th><th>开源预训练迁移 / 微调</th><th>完全自研训练</th></tr></thead>
+      <tbody>
+        <tr><td><strong>所需标注数据量</strong></td><td class="ok">中（50–200 张切片）</td><td class="no">大（数千张 + 高质量标注）</td></tr>
+        <tr><td><strong>GPU 条件</strong></td><td class="ok">单卡消费级（8GB 可训）</td><td class="no">需较强算力</td></tr>
+        <tr><td><strong>周期</strong></td><td class="ok">短（数天–数周）</td><td class="no">长（数月+）</td></tr>
+        <tr><td><strong>精度预期</strong></td><td class="ok">高（Dice 0.8+ 有公开实证）</td><td class="mid">不确定</td></tr>
+        <tr><td><strong>风险</strong></td><td class="ok">低</td><td class="no">高</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note good">
+    <span class="ic">✅</span>
+    <div>
+      <p><span class="pill p-rec">推荐</span><strong>开源预训练迁移 / 微调为默认路线，完全自研仅作长期演进选项。</strong></p>
+      <p>油棕树冠检测已有成熟的学术落地与公开权重，从零训练不划算。正确节奏是：<strong>先跑通端到端闭环</strong>，再用你自己园区的真实数据做领域微调迭代。详细路线见 <a href="#ai">第 6 节</a>。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5. 双路线兜底 ============ -->
+<section id="fork">
+  <h2><span class="num">05</span>双路线兜底设计</h2>
+  <p class="lede">你目前还不知道"有没有模型、有没有标注数据、有没有 GPU、是否必须离线"。架构师为这四种未知做了 α/β 双路线设计——<strong>无论答案是什么，架构都不需要重做</strong>。</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>未知项</th><th>路线 α（乐观）</th><th>路线 β（保守）</th></tr></thead>
+      <tbody>
+        <tr><td><strong>是否已有模型</strong></td><td>有 / 可下载 → 直接使用</td><td>无 → 内置默认权重 + 支持导入或联网下载</td></tr>
+        <tr><td><strong>是否有标注数据</strong></td><td>有 → 直接微调</td><td>无 → 预训练零样本冷启动，后续补标注</td></tr>
+        <tr><td><strong>是否有 GPU</strong></td><td>有 → CUDA 推理</td><td>无 → CPU 推理（ort），降低分块并发</td></tr>
+        <tr><td><strong>是否必须纯离线</strong></td><td>可联网 → 允许下载模型 / 云端推理</td><td>纯离线 → 权重随安装包内置，全本地运行</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note info">
+    <span class="ic">🎯</span>
+    <div>
+      <p><strong>关键工程含义：α / β 的差异严格收敛到 3 处，其余模块完全不变。</strong></p>
+      <p>1. <code>InferenceEngine</code> 实现选择 —— α 用 <code>PythonSidecarEngine</code>(CUDA)，β 用 <code>OrtEngine</code>(CPU)<br>
+         2. <code>ModelRegistry</code> 后端 —— α 本地目录 + 可选云端下载源，β 仅内置默认权重<br>
+         3. <code>ModelConfig</code> 的 device / provider 字段 —— α <code>cuda</code>，β <code>cpu</code></p>
+      <p><strong>完全不受影响的部分</strong>：RasterReader · TileScheduler · MaskPostProcessor · Vectorizer · KmlProcessor · JobManager · Exporter · TileService · <strong>前端全部 UI</strong>。</p>
+      <p>这意味着：<strong>你可以在这些问题澄清之前就冻结架构、并行开始开发</strong>。切换 α/β 只需改一行配置 + 部署对应引擎，不动任何地理处理、任务编排或前端代码。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6. AI 模型与数据 ============ -->
+<section id="ai">
+  <h2><span class="num">06</span>AI 模型与数据路线</h2>
+  <p class="lede">这是全项目最大的不确定点，专项研究给出了明确答案：<strong>不需要从零自研</strong>，且主力开源资产均为宽松许可证、可商用。</p>
+
+  <div class="note good">
+    <span class="ic">💡</span>
+    <div>
+      <p><strong>推荐路线（一句话）</strong></p>
+      <p>DeepForest（MIT 许可，可直接用的树冠检测权重）+ SAM2（Apache 2.0）做树冠实例分割 → <strong>树冠掩膜的补集 = 空地候选</strong> → 面积/形态/上下文规则分类 → 栅格转矢量输出 GeoJSON。</p>
+      <p><strong>为什么这条路成立</strong>：① 已有端到端、无需标注的公开范式被验证（Shi et al. 2026, Remote Sensing：DeepForest + SAM + 无监督聚类的 annotation-free 树冠提取框架）；② 油棕树冠是检测问题里难度最低的一类（树冠规整、株行距规律、亚分米分辨率）；③ "空地 = 无树冠区域"的反推逻辑，让树冠分割精度直接转化为空地检测精度，工程上闭环。</p>
+    </div>
+  </div>
+
+  <h3><span class="tag">6.1</span>可复用的开源方案盘点（精选）</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>方案</th><th>用途</th><th>公开精度</th><th>许可证</th><th>需重训？</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>DeepForest</strong><br><span style="font-size:11.5px;color:var(--muted)">weecology</span></td>
+          <td>单木树冠检测（RGB 正射 → bbox）</td>
+          <td>生态遥感事实标准，被大量引用</td>
+          <td class="ok">MIT ✅ 可商用</td>
+          <td class="ok">可直接用预训练权重</td>
+        </tr>
+        <tr>
+          <td><strong>ForestSAM</strong><br><span style="font-size:11.5px;color:var(--muted)">jpsuarezq</span></td>
+          <td>油棕树冠实例分割（DeepForest 出框 + SAM2 出 mask）</td>
+          <td class="ok">Dice 0.826 / IoU 0.712</td>
+          <td class="mid">需查仓库</td>
+          <td class="mid">需复现</td>
+        </tr>
+        <tr>
+          <td><strong>canopy-gap-detection</strong><br><span style="font-size:11.5px;color:var(--muted)">FloFranz</span></td>
+          <td>林冠空隙分割（RGBI + nDSM）</td>
+          <td>IoU 0.67–0.77 / F1 0.56–0.74</td>
+          <td class="ok">CC-BY-4.0 ✅</td>
+          <td class="ok">提供已训练模型</td>
+        </tr>
+        <tr>
+          <td><strong>PalmAI QGIS 插件</strong><br><span style="font-size:11.5px;color:var(--muted)">Anovvy</span></td>
+          <td>油棕计数 + <strong>健康三分类</strong>（健康/黄化/死亡）</td>
+          <td>未公开具体指标</td>
+          <td class="ok">MIT ✅</td>
+          <td class="mid">需自训权重</td>
+        </tr>
+        <tr>
+          <td><strong>OAM-TCD</strong><br><span style="font-size:11.5px;color:var(--muted)">Restor + ETH</span></td>
+          <td>树冠实例分割<strong>数据集</strong>（5072 张 / 28 万单木实例）</td>
+          <td>跨数据集泛化已验证</td>
+          <td class="ok">数据 CC-BY-4.0 / 模型 Apache 2.0 ✅</td>
+          <td class="ok">作微调数据源</td>
+        </tr>
+        <tr>
+          <td><strong>YOLO 系油棕检测</strong><br><span style="font-size:11.5px;color:var(--muted)">多论文 + Roboflow</span></td>
+          <td>油棕检测 / 计数</td>
+          <td class="ok">mAP@0.5 0.995 / F1 0.989</td>
+          <td class="mid">视仓库</td>
+          <td class="mid">需训练（数据集公开）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:13px;color:var(--muted)">完整 10 项盘点、来源链接与许可证速查见 <code>docs/model-strategy.md</code>。<strong>许可证结论</strong>：主力方案（DeepForest=MIT、SAM2=Apache 2.0、OAM-TCD=CC-BY-4.0/Apache 2.0、PalmAI=MIT、ONNX Runtime=MIT）<strong>组合无商用障碍</strong>，仅需保留署名 / NOTICE。</p>
+
+  <h3><span class="tag">6.2</span>三条模型获取路线</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>维度</th><th>路线 A · 迁移微调</th><th>路线 B · 零标注冷启动</th><th>路线 C · 完全自研</th></tr></thead>
+      <tbody>
+        <tr><td><strong>前置条件</strong></td><td>少量标注 + 1 块 GPU</td><td class="ok">无（仅需影像）</td><td class="no">大量标注 + GPU 集群 + 团队</td></tr>
+        <tr><td><strong>冷启动速度</strong></td><td>中（数天–数周）</td><td class="ok">快（数天）</td><td class="no">慢（数月+）</td></tr>
+        <tr><td><strong>精度预期</strong></td><td class="ok">高（Dice 0.8+）</td><td class="mid">中（0.7–0.8 量级）</td><td class="mid">高但风险大</td></tr>
+        <tr><td><strong>成本</strong></td><td>低</td><td class="ok">极低</td><td class="no">高</td></tr>
+        <tr><td><strong>主要风险</strong></td><td>跨园区域偏移</td><td>树冠粘连漏检、误检</td><td class="no">周期与不确定性</td></tr>
+        <tr><td><strong>结论</strong></td><td><span class="pill p-rec">第二阶段</span></td><td><span class="pill p-rec">第一阶段 v1</span></td><td><span class="pill p-p2">暂不考虑</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>路线 B（v1 冷启动）的具体组合</h4>
+  <ol>
+    <li>DeepForest 零样本检测 → 树冠 bbox</li>
+    <li>SAM2 以 bbox 为提示 → 树冠精确 mask</li>
+    <li>取掩膜<strong>补集</strong> = 候选空地</li>
+    <li>用树冠中心点<strong>拟合株行距网格</strong> → 识别"应种未种"的空位</li>
+    <li>缺口识别（成排缺失 / 连续大片缺失）</li>
+    <li>面积、形态过滤 + 三类规则判定</li>
+    <li>矢量化 → GeoJSON</li>
+  </ol>
+  <p><strong>综合建议：B（v1 交付可演示版本并采集真实园区数据）→ A（用真实数据微调迭代）。</strong></p>
+
+  <h3><span class="tag">6.3</span>三类空地的判定可行性</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>类别</th><th>影像 / 几何依据</th><th>单期 RGB 可行性</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>A 类 <code>idle</code></strong><br>长期闲置</td>
+          <td>大块连续无树冠；需与"新开垦 / 未种植 / 其他地物"做语义区分</td>
+          <td class="no">❌ 不足</td>
+        </tr>
+        <tr>
+          <td><strong>B 类 <code>hole</code></strong><br>枯死缺株</td>
+          <td>株行距网格上的离散缺位，面积小、形状≈单株树冠</td>
+          <td class="mid">⚠️ 几何可判；语义"枯死"需光谱/多期</td>
+        </tr>
+        <tr>
+          <td><strong>C 类 <code>gap</code></strong><br>林间空隙</td>
+          <td>树冠 mask 的自然间隙，中小面积、形状不规则</td>
+          <td class="ok">✅ 可判（纯几何）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note warn">
+    <span class="ic">📌</span>
+    <div>
+      <p><strong>需要补充的数据（如果要做真正的语义三分类）</strong></p>
+      <ul style="margin-bottom:0">
+        <li><strong>多期正射影像</strong> —— 区分"长期闲置"与"近期枯死"（时间维度问题）</li>
+        <li><strong>多光谱（含红边 / 近红外）</strong> —— 枯死早期识别（Ganoderma 基腐病）</li>
+        <li><strong>DSM / DTM 或 CHM</strong> —— 树高与冠层结构特征</li>
+        <li><strong>热红外</strong> —— 热胁迫检测</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3><span class="tag">6.4</span>精度验收基线建议</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>指标</th><th>v1 起步（零标注）</th><th>v2 目标（微调后）</th><th>依据</th></tr></thead>
+      <tbody>
+        <tr><td>树冠分割 Dice</td><td>≥ 0.70</td><td class="ok">≥ 0.80</td><td>ForestSAM 0.826</td></tr>
+        <tr><td>树冠分割 IoU</td><td>≥ 0.60</td><td class="ok">≥ 0.70</td><td>ForestSAM 0.712</td></tr>
+        <tr><td><strong>空地 Precision</strong></td><td>≥ 0.80</td><td class="ok">≥ 0.90</td><td>误报空地业务代价高</td></tr>
+        <tr><td><strong>空地 Recall</strong></td><td>≥ 0.75</td><td class="ok">≥ 0.85</td><td>漏检 = 漏补种</td></tr>
+        <tr><td><strong>空地 F1</strong></td><td>≥ 0.77</td><td class="ok">≥ 0.87</td><td>canopy-gap 0.56–0.74</td></tr>
+        <tr><td>树冠计数误差</td><td>≤ 10%</td><td class="ok">≤ 5%</td><td>油棕 YOLO 计数 98.5%–99.45%</td></tr>
+        <tr><td>空地面积误差</td><td>≤ 20%</td><td class="ok">≤ 10%</td><td>推断</td></tr>
+        <tr><td>polygon 合法性</td><td class="ok">100%</td><td class="ok">100%</td><td>无自相交 / 闭合 / CRS 正确</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:13px;color:var(--muted)">建议：主验收用「<strong>空地 F1 + 面积误差</strong>」而非单纯树冠指标；必须建独立验证集（不同地块 / 不同时相）；<strong>分类精度单列</strong>并标注为"候选类别"，不纳入 v1 硬性验收。</p>
+</section>
+
+<!-- ============ 7. 文件结构 ============ -->
+<section id="files">
+  <h2><span class="num">07</span>项目文件结构</h2>
+  <p class="lede">规划中的完整文件树（当前尚未创建任何代码）。</p>
+<pre><code>forest_gap_detection/
+├─ package.json · vite.config.ts · tsconfig*.json
+├─ tailwind.config.ts · postcss.config.js · index.html
+├─ <span class="k">src/</span>                            <span class="c"># 前端 React + TS + MapLibre GL</span>
+│  ├─ main.tsx · App.tsx · styles/global.css
+│  ├─ types/{models,ipc,geojson}.ts
+│  ├─ store/{useJobStore,useLayerStore}.ts
+│  ├─ api/{tauriClient,events}.ts
+│  ├─ components/TopToolbar.tsx
+│  │   ├─ LeftPanel/{JobList,LayerControl}.tsx
+│  │   ├─ MapCanvas/{MapView,GapLayer,tileUrl}.tsx
+│  │   ├─ RightPanel/{PropertyPanel,GapAttributes}.tsx
+│  │   └─ StatusBar/{ProgressBar,LogConsole}.tsx
+│  └─ hooks/{useDetectionProgress,useTauriEvent}.ts
+├─ <span class="k">src-tauri/</span>                       <span class="c"># Rust 后端 Tauri v2</span>
+│  ├─ Cargo.toml · tauri.conf.json · build.rs · capabilities/
+│  ├─ binaries/infer_sidecar(.exe)
+│  └─ src/
+│     ├─ main.rs · lib.rs
+│     ├─ commands/{import,detect,review,export,config}.rs
+│     ├─ geo/{raster_reader,tile_scheduler,kml_processor,vectorizer,crs}.rs
+│     ├─ ai/{inference_engine,sidecar_engine,ort_engine,mask_postprocessor,model_registry}.rs
+│     ├─ domain/{gap,block,result,job,model_config}.rs
+│     ├─ services/{job_manager,exporter,tile_service}.rs
+│     └─ infra/{config,error,logging}.rs
+├─ <span class="k">sidecar/</span>                         <span class="c"># Python 推理服务</span>
+│  ├─ pyproject.toml · requirements.txt · infer_server.py · build_sidecar.py
+│  ├─ models/{palm_canopy_seg.onnx,model_card.json}
+│  └─ src/{engine,preprocess,postprocess,classifier}.py
+├─ scripts/{build_sidecar.ps1,fetch_models.py}
+└─ docs/{PRD.md,system_design.md,model-strategy.md,*.mermaid}</code></pre>
+
+  <h3><span class="tag">7.1</span>依赖清单</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h4>Rust crates</h4>
+      <p><code>tauri@2</code> · <code>tauri-plugin-{dialog,fs,shell}@2</code> · <code>gdal@0.17</code> · <code>proj@0.27</code> · <code>geo@0.28</code> · <code>geojson@0.24</code> · <code>ort@2.0</code> · <code>ndarray@0.16</code> · <code>image</code> / <code>imageproc</code> · <code>axum@0.7</code> + <code>tower-http</code> · <code>tokio@1</code> · <code>rayon@1</code> · <code>quick-xml@0.36</code> · <code>serde</code>/<code>serde_json</code> · <code>anyhow</code>/<code>thiserror</code> · <code>tracing</code> · <code>chrono</code> · <code>uuid</code></p>
+    </div>
+    <div class="card">
+      <h4>npm 包</h4>
+      <p><code>react@18</code> / <code>react-dom@18</code> · <code>@tauri-apps/api@2</code> · <code>@tauri-apps/plugin-{dialog,fs}@2</code> · <code>maplibre-gl@4</code> · <code>deck.gl@9</code>（可选） · <code>zustand@4.5</code> · <code>tailwindcss@3.4</code> · <code>typescript@5.4</code> · <code>vite@5.2</code> · <code>@vitejs/plugin-react@4</code></p>
+    </div>
+    <div class="card">
+      <h4>Python 包</h4>
+      <p><code>torch</code> / <code>torchvision</code>（训练+导出） · <code>onnxruntime</code> / <code>onnxruntime-gpu</code>（推理） · <code>numpy</code> · <code>opencv-python-headless</code> · <code>rasterio</code> / GDAL · <code>shapely</code> · <code>fastapi</code>/<code>uvicorn</code>（可选） · <code>pyinstaller</code>（打包）</p>
+    </div>
+    <div class="card">
+      <h4>外部二进制</h4>
+      <p>GDAL CLI（<code>gdal_translate</code> / <code>gdalwarp</code> / <code>gdaladdo</code>，随包捆绑） · Python Runtime（PyInstaller 产物） · ONNX Runtime（CUDA 版可选）</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 8. 任务分解 ============ -->
+<section id="tasks">
+  <h2><span class="num">08</span>任务分解与实施顺序</h2>
+  <p class="lede">5 个任务，按依赖顺序排列。这是你确认后工程师会按此执行的路线图。</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>任务名称</th><th>主要内容</th><th>依赖</th><th>优先级</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>T01</strong></td>
+          <td><strong>项目基础设施</strong></td>
+          <td>脚手架 + 打包配置 + 日志/错误/配置基础层。含 <code>package.json</code>、<code>vite.config.ts</code>、<code>tsconfig</code>、<code>tailwind</code>、<code>index.html</code>、<code>src/main.tsx</code>、<code>src/App.tsx</code>、<code>src-tauri/{Cargo.toml, tauri.conf.json, build.rs, capabilities}</code>、<code>src-tauri/src/{main.rs, lib.rs, infra/*}</code></td>
+          <td>—</td>
+          <td><span class="pill p-p0">P0</span></td>
+        </tr>
+        <tr>
+          <td><strong>T02</strong></td>
+          <td><strong>领域模型 + 地理处理内核</strong></td>
+          <td>数据模型与地理能力。<code>domain/*</code>、<code>geo/{raster_reader, tile_scheduler, kml_processor, vectorizer, crs}.rs</code>、<code>src/types/{models, geojson}.ts</code></td>
+          <td>T01</td>
+          <td><span class="pill p-p0">P0</span></td>
+        </tr>
+        <tr>
+          <td><strong>T03</strong></td>
+          <td><strong>AI 推理层</strong></td>
+          <td>双引擎 + 后处理 + sidecar。<code>src-tauri/src/ai/*</code>、<code>sidecar/*</code>（含 <code>infer_server.py</code>、<code>build_sidecar.py</code>、<code>models/model_card.json</code>）、<code>scripts/*</code></td>
+          <td>T01, T02</td>
+          <td><span class="pill p-p0">P0</span></td>
+        </tr>
+        <tr>
+          <td><strong>T04</strong></td>
+          <td><strong>任务编排 + 导出 + 瓦片 + IPC</strong></td>
+          <td>闭环编排。<code>services/{job_manager, exporter, tile_service}.rs</code>、<code>commands/*</code></td>
+          <td>T02, T03</td>
+          <td><span class="pill p-p0">P0</span></td>
+        </tr>
+        <tr>
+          <td><strong>T05</strong></td>
+          <td><strong>前端 UI 集成 + 复核编辑</strong></td>
+          <td>可视化闭环。<code>components/**</code>、<code>store/*</code>、<code>api/*</code>、<code>hooks/*</code>、<code>types/ipc.ts</code></td>
+          <td>T01, T04</td>
+          <td><span class="pill p-p0">P0</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>依赖关系图</h4>
+  <div class="flow" style="padding-top:12px">
+    <div class="step" style="border-color:var(--cyan)"><div class="snum">T01</div><div class="stitle">项目基础设施</div><div class="sdesc">全部任务的起点</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">T02</div><div class="stitle">地理内核</div><div class="sdesc">数据模型 + GDAL 能力</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">T03</div><div class="stitle">AI 推理层</div><div class="sdesc">依赖 T01 + T02</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">T04</div><div class="stitle">编排 + 导出 + IPC</div><div class="sdesc">依赖 T02 + T03</div></div>
+    <div class="arrow">›</div>
+    <div class="step"><div class="snum">T05</div><div class="stitle">前端 UI 集成</div><div class="sdesc">依赖 T01 + T04</div></div>
+  </div>
+  <p style="margin-top:12px"><strong>关键路径</strong>：T01 → T02 → T03 → T04 → T05。<strong>并行机会</strong>：T03 在接口冻结后可独立推进；T05 在命令契约冻结后可与 T04 并行。</p>
+
+  <h3><span class="tag">8.1</span>跨文件共享约定</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h4>数据与坐标约定</h4>
+      <ul style="margin-bottom:0">
+        <li>JSON <code>schema_version</code> 固定 <code>"0.1"</code>，字段命名统一 <code>snake_case</code></li>
+        <li><strong>面积 / 质心 / 距离一律在影像投影系（米）下计算</strong>；禁止在经纬度下算面积</li>
+        <li>KML 默认 EPSG:4326 导入时转换；导出 GeoJSON 默认 4326 并保留 <code>crs</code> 字段</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>接口与错误约定</h4>
+      <ul style="margin-bottom:0">
+        <li>命令统一返回 <code>{code, data, message}</code>，<code>code=0</code> 成功</li>
+        <li>错误码分段：E1xxx IO / E2xxx CRS / E3xxx 推理 / E4xxx 矢量化 / E5xxx 导出 / E9xxx 内部</li>
+        <li>日志：控制台 <code>[ISO8601][LEVEL][module] msg</code>；文件 JSON Lines；落盘 <code>%LOCALAPPDATA%/forest_gap_detection/logs/</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>可配置项（默认值）</h4>
+      <ul style="margin-bottom:0">
+        <li><code>processing.max_memory_mb</code> = 4096</li>
+        <li><code>processing.tile_size</code> = 1024 · <code>overlap</code> = 128</li>
+        <li><code>processing.concurrency</code> = CPU 核数 / 2</li>
+        <li><code>output.min_gap_area_sqm</code> = 50 · <code>output_crs</code> = EPSG:4326</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>三类判定阈值（全部可配，禁止硬编码）</h4>
+      <ul style="margin-bottom:0">
+        <li><strong>A <code>idle</code></strong>：面积 ≥ 2000㎡ + 连通 + 长宽比≈1 + 非成排</li>
+        <li><strong>B <code>hole</code></strong>：面积 ≤ 200㎡ + 成排/簇状 + 靠近树冠边界</li>
+        <li><strong>C <code>gap</code></strong>：面积 ≤ 200㎡ + 零散 + 形态不规则</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 9. 风险 ============ -->
+<section id="risk">
+  <h2><span class="num">09</span>风险与缓解</h2>
+  <p class="lede">按严重度排序。前两条必须在你确认开发前有答案。</p>
+
+  <div class="risk hi">
+    <div class="rt"><span class="pill p-p0">高</span>单期 RGB 无法区分"长期闲置"与"枯死"</div>
+    <p>产品语义无法从单期影像闭环。<strong>缓解</strong>：v1 降级为几何分类 + 人工复核确认；数据模型预留 <code>class_confidence</code> / <code>class_method</code>；确认你能否提供多期或多光谱数据。</p>
+  </div>
+
+  <div class="risk hi">
+    <div class="rt"><span class="pill p-p0">高</span>空地判定阈值未定义，无法验收</div>
+    <p>"多少平方米算空地""三类边界在哪"是产品决策。阈值不明则无法判定检测结果对错。<strong>缓解</strong>：所有阈值做成可配置 + UI 可调；先给一套默认值跑通闭环，再用真实数据校准。</p>
+  </div>
+
+  <div class="risk">
+    <div class="rt"><span class="pill p-p1">中</span>跨园区 / 跨区域域偏移</div>
+    <p>在一个园区训练的模型，换个园区（品种、株龄、光照、土壤不同）精度会下降。<strong>缓解</strong>：采用域自适应方案（MADAN / UniTree 类）；把"模型可替换 + 支持本地微调"作为一等公民需求。</p>
+  </div>
+
+  <div class="risk">
+    <div class="rt"><span class="pill p-p1">中</span>树冠粘连导致漏检</div>
+    <p>树冠相互遮挡或茂密连片时，实例分割会把多株并成一株，进而漏判空地。<strong>缓解</strong>：株行距网格约束 + 形态学后处理 + 面积/长宽比过滤；必要时引入 DSM 高度信息辅助分株。</p>
+  </div>
+
+  <div class="risk">
+    <div class="rt"><span class="pill p-p1">中</span>Python sidecar 安装包体积膨胀</div>
+    <p>PyTorch + CUDA 打进安装包会让体积到 GB 级，影响分发体验。<strong>缓解</strong>：模型以 ONNX 分发；推理用 ONNX Runtime 而非 PyTorch；PyTorch 仅在训练环境使用；CPU 版与 GPU 版分包提供。</p>
+  </div>
+
+  <div class="risk lo">
+    <div class="rt"><span class="pill p-p2">低</span>分块推理接缝伪影</div>
+    <p>相邻瓦片边界处空地裂块或漏检。<strong>缓解</strong>：128px overlap + 羽化加权融合（已在架构中作为独立步骤 STEP 05）。</p>
+  </div>
+
+  <div class="risk lo">
+    <div class="rt"><span class="pill p-p2">低</span>polygon 合法性（自相交 / 碎片）</div>
+    <p>栅格转矢量天然产生锯齿与碎片。<strong>缓解</strong>：Douglas-Peucker 简化 + 拓扑修复（<code>geo</code> 库）+ 最小面积过滤 + 合法性校验，保证 100% 输出合法 GeoJSON。</p>
+  </div>
+</section>
+
+<!-- ============ 10. 待确认问题 ============ -->
+<section id="questions">
+  <h2><span class="num">10</span>待你拍板的问题</h2>
+  <p class="lede">共 14 项，按对架构/产品的影响程度排序。<strong>前 6 项是启动开发前最好有答案的</strong>；其余可以在开发过程中逐步明确（架构已用 α/β 双路线兜住）。</p>
+
+  <div class="qgroup">
+    <div class="qhead"><span class="dot" style="background:var(--red)"></span>最高优先级 · 决定产品能承诺什么</div>
+    <div class="q"><span class="qn">Q01</span><span class="qt"><b>是否有历史 / 多期影像？</b>决定"长期闲置"与"枯死"能否真正区分。若只有单期 RGB，建议 v1 明确降级为几何分类 + 人工确认。<span class="imp">影响：产品承诺范围 · 分类模型设计</span></span></div>
+    <div class="q"><span class="qn">Q02</span><span class="qt"><b>影像波段是什么？</b>单 RGB 还是含近红外 / 红边多光谱？是否附带 DSM / DTM？决定能否复用 canopy-gap-detection，以及枯死识别的精度上限。<span class="imp">影响：模型选型 · 检测链路</span></span></div>
+    <div class="q"><span class="qn">Q03</span><span class="qt"><b>是否已有训练好的模型 / 权重？</b>有则直接接入；无则走零标注冷启动出 v1。<span class="imp">影响：T03 实现方式 · 交付周期</span></span></div>
+    <div class="q"><span class="qn">Q04</span><span class="qt"><b>是否有标注数据？规模与形式（bbox 还是 polygon）？</b>50–200 张切片级 polygon 标注即可微调出可用模型。<span class="imp">影响：能否走路线 A 微调</span></span></div>
+    <div class="q"><span class="qn">Q05</span><span class="qt"><b>训练 / 推理的 GPU 条件？</b>推理可 CPU 跑（慢但可行）；训练 / 微调建议 ≥8GB 显存的 NVIDIA GPU。<span class="imp">影响：推理引擎 α/β 选择 · 性能预期</span></span></div>
+    <div class="q"><span class="qn">Q06</span><span class="qt"><b>空地最小面积阈值 & 三类判定量化标准由谁定？</b>这是产品决策，必须由你给出（或授权我们用默认值试跑后校准）。<span class="imp">影响：验收标准 · 检测结果正确性</span></span></div>
+  </div>
+
+  <div class="qgroup">
+    <div class="qhead"><span class="dot" style="background:var(--amber)"></span>高优先级 · 影响交付形态</div>
+    <div class="q"><span class="qn">Q07</span><span class="qt"><b>株行距规格是多少？</b>（如 9m×9m）用于生成补种点位、判定"应种未种"空位。<span class="imp">影响：B 类判定 · 补种点布点算法</span></span></div>
+    <div class="q"><span class="qn">Q08</span><span class="qt"><b>是否必须纯离线？</b>涉密 / 数据安全要求下不能联网，还是允许下载模型或云端推理？<span class="imp">影响：ModelRegistry 后端 · 部署形态</span></span></div>
+    <div class="q"><span class="qn">Q09</span><span class="qt"><b>精度验收指标与验收方？</b>建议基线见 <a href="#ai">6.4 节</a>（v1：空地 F1 ≥ 0.77、面积误差 ≤ 20%）。谁来验收？<span class="imp">影响：测试标准 · 交付定义</span></span></div>
+    <div class="q"><span class="qn">Q10</span><span class="qt"><b>是否需与 GIS 系统对接？</b>（ArcGIS / QGIS / 自有平台）除 JSON 外是否必须 Shapefile / KML？<span class="imp">影响：Exporter 模块</span></span></div>
+  </div>
+
+  <div class="qgroup">
+    <div class="qhead"><span class="dot" style="background:var(--cyan)"></span>中优先级 · 影响工程细节</div>
+    <div class="q"><span class="qn">Q11</span><span class="qt"><b>园区常用坐标系 / 投影（EPSG 代码）？</b>KML（WGS84）与影像 CRS 的转换关系是否已明确？<span class="imp">影响：CRS 处理 · 面积计算正确性</span></span></div>
+    <div class="q"><span class="qn">Q12</span><span class="qt"><b>3GB 全流程可接受的耗时上限？</b>是否必须 GPU 加速？<span class="imp">影响：并发策略 · 硬件门槛</span></span></div>
+    <div class="q"><span class="qn">Q13</span><span class="qt"><b>TIF 的具体规格？</b>波段数（RGB / 多光谱）、位深、是否含地理坐标、单文件还是分幅？<span class="imp">影响：RasterReader · 预处理</span></span></div>
+    <div class="q"><span class="qn">Q14</span><span class="qt"><b>KML 的结构？</b>单文件单地块还是多地块？园区 → 分区 → 地块的层级如何组织？<span class="imp">影响：Block 模型 · 地块归属逻辑</span></span></div>
+  </div>
+
+  <div class="qgroup">
+    <div class="qhead"><span class="dot" style="background:var(--muted)"></span>低优先级 · 可后续补充</div>
+    <div class="q"><span class="qn">Q15</span><span class="qt"><b>单机还是多机 / 团队协作？</b>是否需多人共享结果、集中存储、权限管理？<span class="imp">影响：是否需服务端架构</span></span></div>
+    <div class="q"><span class="qn">Q16</span><span class="qt"><b>平台范围？</b>仅 Windows，还是必须支持 macOS / Linux？（当前按 Windows 优先设计，架构已预留）<span class="imp">影响：打包与分发策略</span></span></div>
+    <div class="q"><span class="qn">Q17</span><span class="qt"><b>油棕品种 / 株龄 / 种植密度范围？</b>以及影像空间分辨率（cm/px）？<span class="imp">影响：树冠先验 · 域偏移评估</span></span></div>
+  </div>
+</section>
+
+<!-- ============ 11. 下一步 ============ -->
+<section id="next">
+  <h2><span class="num">11</span>下一步</h2>
+  <p class="lede">你的确认是这个项目的下一个闸口。建议按以下顺序推进。</p>
+
+  <div class="grid g2">
+    <div class="card accent">
+      <h4>① 确认本方案的架构方向</h4>
+      <p>重点看三件事是否认可：<strong>Python sidecar 推理</strong>、<strong>WebGL 瓦片渲染</strong>、<strong>开源模型迁移优先</strong>。这三点决定了整个工程骨架。</p>
+    </div>
+    <div class="card accent">
+      <h4>② 回答 Q01–Q06</h4>
+      <p>这六个问题决定产品能承诺什么。尤其 <strong>Q01（有无多期影像）</strong> 和 <strong>Q06（空地阈值）</strong>——前者决定要不要降低分类承诺，后者决定结果能不能验收。</p>
+    </div>
+    <div class="card accent">
+      <h4>③ 确认需求基线修正</h4>
+      <p>第 2 节的四条修正（油棕园区 / KML 刚需 / 补种图盘 / 坐标系）如果与你的意图有出入，现在纠正成本最低。</p>
+    </div>
+    <div class="card accent">
+      <h4>④ 授权启动开发</h4>
+      <p>确认后我会启动完整开发 SOP：工程师按 T01→T05 批量实现，QA 工程师编写测试并验证。<strong>由于架构已做 α/β 兜底，未回答的问题不会阻塞 T01、T02 的开工。</strong></p>
+    </div>
+  </div>
+
+  <div class="note info" style="margin-top:24px">
+    <span class="ic">📎</span>
+    <div>
+      <p><strong>本次产出的配套文档</strong></p>
+      <ul style="margin-bottom:0">
+        <li><code>docs/PRD.md</code> —— 产品需求文档（含完整需求池 P0/P1/P2 与用户故事）</li>
+        <li><code>docs/system_design.md</code> —— 完整系统架构设计（含类图、时序图、依赖清单、共享约定）</li>
+        <li><code>docs/model-strategy.md</code> —— AI 模型与数据路线研究报告（含 10 项开源方案盘点与 25 条来源链接）</li>
+        <li><code>docs/class-diagram.mermaid</code> · <code>docs/sequence-diagram.mermaid</code> —— 可导入 Mermaid 渲染的图表源文件</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Forest Gap Detection · 可行性分析与系统架构方案 v0.1</span>
+  <span>由软件开发团队（产品经理 / 架构师 / 专项研究）协作产出 · 2026-10-12</span>
+</footer>
+
+</div>
+</body>
+</html>

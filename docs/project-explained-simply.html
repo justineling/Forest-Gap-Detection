@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>这个项目到底在做什么？—— 零基础读懂油棕园空地检测</title>
+<style>
+:root{
+  --bg:#0a0f1c; --bg2:#0e1526; --panel:#121b2f; --panel2:#16203a;
+  --border:#22304d; --border2:#2d3f63;
+  --text:#e8eefb; --text2:#b7c4dc; --muted:#8496b4;
+  --cyan:#38bdf8; --violet:#a78bfa; --green:#34d399;
+  --amber:#fbbf24; --red:#f87171; --pink:#f472b6;
+  --mono:"JetBrains Mono","Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg); color:var(--text); font-size:16px; line-height:1.85;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC","Hiragino Sans GB",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(900px 500px at 10% -5%, rgba(56,189,248,.10), transparent 60%),
+    radial-gradient(800px 500px at 90% 0%, rgba(167,139,250,.10), transparent 60%);
+}
+.wrap{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:0 26px 100px}
+
+/* HERO */
+.hero{padding:60px 0 36px;border-bottom:1px solid var(--border)}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;font-size:13px;
+  color:var(--cyan);background:rgba(56,189,248,.08);
+  border:1px solid rgba(56,189,248,.25);border-radius:999px;padding:5px 14px;margin-bottom:20px;
+}
+.hero h1{font-size:clamp(27px,4vw,42px);line-height:1.28;font-weight:800;letter-spacing:-.02em}
+.hero h1 span{
+  background:linear-gradient(100deg,var(--cyan),var(--violet) 60%,var(--pink));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
+.hero .sub{margin-top:16px;color:var(--text2);font-size:17px;max-width:800px}
+.reading-tip{
+  margin-top:28px;background:linear-gradient(120deg,rgba(52,211,153,.10),rgba(56,189,248,.05));
+  border:1px solid rgba(52,211,153,.3);border-radius:14px;padding:18px 22px;font-size:15px;color:var(--text2);
+}
+.reading-tip b{color:var(--text)}
+
+/* NAV */
+nav.toc{
+  position:sticky;top:0;z-index:50;margin:0 -26px;padding:12px 26px;
+  background:rgba(10,15,28,.9);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--border);display:flex;gap:6px;overflow-x:auto;
+}
+nav.toc a{color:var(--muted);text-decoration:none;font-size:13.5px;white-space:nowrap;
+  padding:6px 12px;border-radius:8px;border:1px solid transparent;transition:.15s}
+nav.toc a:hover{color:var(--text);background:var(--panel);border-color:var(--border)}
+
+/* SECTION */
+section{padding:54px 0 6px;scroll-margin-top:64px}
+h2{font-size:25px;font-weight:750;display:flex;align-items:center;gap:13px;margin-bottom:10px;letter-spacing:-.01em}
+h2 .num{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--cyan);
+  background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.28);border-radius:8px;padding:3px 10px;flex:none}
+h2 + .lede{color:var(--muted);font-size:15px;margin-bottom:26px;max-width:880px}
+h3{font-size:19px;font-weight:700;margin:34px 0 14px}
+h4{font-size:16px;font-weight:700;margin:20px 0 8px;color:var(--text2)}
+p{color:var(--text2);margin-bottom:12px}
+p strong,li strong{color:var(--text);font-weight:650}
+ul,ol{margin:0 0 14px 24px;color:var(--text2)}
+li{margin-bottom:7px}
+a{color:var(--cyan)}
+
+/* BIG PLAIN FLOW */
+.plain-flow{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0}
+.pf{
+  flex:1 1 150px;min-width:150px;background:var(--panel);border:1px solid var(--border);
+  border-radius:14px;padding:16px 16px;position:relative;
+}
+.pf .n{font-family:var(--mono);font-size:11px;color:var(--cyan);letter-spacing:.1em}
+.pf .t{font-size:15px;font-weight:700;color:var(--text);margin:5px 0 5px}
+.pf .d{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+/* CARDS */
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 22px}
+.card h4{margin-top:0}
+.card p:last-child{margin-bottom:0}
+
+/* TERM CARD */
+.term{
+  background:var(--panel);border:1px solid var(--border);border-radius:16px;
+  padding:0;overflow:hidden;margin-bottom:18px;
+}
+.term > .head{
+  padding:16px 22px;background:linear-gradient(100deg,var(--panel2),var(--panel));
+  border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+}
+.term .tname{font-size:18px;font-weight:750;color:var(--text)}
+.term .ten{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.term > .body{padding:18px 22px}
+.trow{display:grid;grid-template-columns:104px 1fr;gap:14px;padding:9px 0;border-bottom:1px dashed rgba(45,63,99,.6)}
+.trow:last-child{border-bottom:none}
+.trow .lbl{font-size:13px;font-weight:700;color:var(--muted);padding-top:1px}
+.trow .val{font-size:15px;color:var(--text2)}
+.trow .val b{color:var(--text)}
+.analogy{
+  background:rgba(167,139,250,.09);border-left:3px solid var(--violet);
+  border-radius:0 10px 10px 0;padding:10px 16px;font-size:15px;color:#ddd6fe;
+}
+.warnrow{
+  background:rgba(251,191,36,.07);border-left:3px solid var(--amber);
+  border-radius:0 10px 10px 0;padding:10px 16px;font-size:14.5px;color:#fde68a;
+}
+
+/* CALLOUT */
+.note{border-radius:12px;padding:16px 20px;margin:16px 0;border:1px solid;display:flex;gap:14px;align-items:flex-start}
+.note .ic{font-size:19px;flex:none;line-height:1.6}
+.note p:last-child{margin-bottom:0}
+.note.info{background:rgba(56,189,248,.07);border-color:rgba(56,189,248,.28)}
+.note.warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.3)}
+.note.crit{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.32)}
+.note.good{background:rgba(52,211,153,.07);border-color:rgba(52,211,153,.28)}
+
+/* TABLE */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;margin:16px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:14.5px;min-width:560px}
+th{background:var(--panel2);color:var(--text);font-weight:700;text-align:left;padding:12px 14px;border-bottom:1px solid var(--border2)}
+td{padding:11px 14px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:rgba(56,189,248,.035)}
+td.ok{color:var(--green)}td.no{color:var(--red)}td.mid{color:var(--amber)}
+td strong{color:var(--text)}
+
+/* PILL */
+.pill{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;padding:3px 9px;margin-right:6px}
+.p-g{background:rgba(52,211,153,.14);color:#6ee7b7;border:1px solid rgba(52,211,153,.3)}
+.p-y{background:rgba(251,191,36,.13);color:#fcd34d;border:1px solid rgba(251,191,36,.3)}
+.p-r{background:rgba(248,113,113,.14);color:#fca5a5;border:1px solid rgba(248,113,113,.3)}
+
+/* ILLUSTRATION */
+figure{margin:22px 0;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px}
+figure svg{width:100%;height:auto;display:block}
+figcaption{margin-top:12px;font-size:13.5px;color:var(--muted);text-align:center}
+
+footer{margin-top:70px;padding-top:26px;border-top:1px solid var(--border);
+  color:var(--muted);font-size:13.5px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between}
+@media(max-width:680px){
+  .wrap{padding:0 16px 70px}
+  nav.toc{margin:0 -16px;padding:10px 16px}
+  .trow{grid-template-columns:1fr;gap:2px}
+  .trow .lbl{color:var(--cyan)}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ===== HERO ===== -->
+<header class="hero">
+  <div class="eyebrow">零基础阅读版 · 不需要任何 GIS / AI 背景</div>
+  <h1>这个项目到底在做什么？<br><span>用大白话讲清油棕园空地检测</span></h1>
+  <p class="sub">这份文档写给完全不熟悉地理信息和人工智能的同事。全文<strong>不会用没解释过的专业词去解释另一个专业词</strong>，每个术语都配了生活类比。</p>
+  <div class="reading-tip">
+    <b>建议阅读方式</b>：先看第 1 节「5 分钟速览」建立整体印象 → 再看第 2 节的项目流程 → 遇到不懂的词，直接翻到第 4 节的术语卡片查。最后第 6 节是速查表，可以打印出来贴在工位上。
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#quick">5 分钟速览</a>
+  <a href="#why">要解决什么问题</a>
+  <a href="#flow">整个流程</a>
+  <a href="#terms">术语科普（30 个）</a>
+  <a href="#hard">最难的那个问题</a>
+  <a href="#cheat">速查表</a>
+</nav>
+
+<!-- ===== 1. 速览 ===== -->
+<section id="quick">
+  <h2><span class="num">01</span>5 分钟速览</h2>
+  <p class="lede">如果你只有 5 分钟，读完这一节就够了。</p>
+
+  <div class="note good">
+    <span class="ic">🎯</span>
+    <div>
+      <p style="font-size:17px;line-height:1.9"><strong>一句话说清楚：</strong></p>
+      <p style="font-size:17px;line-height:1.9">给电脑看一张从天上拍下来的超大「田地照片」，让它自动圈出「哪里没种树」，然后把圈出来的位置写成一份电脑能读的清单。</p>
+    </div>
+  </div>
+
+  <p>再具体一点，整个事情是这样的：</p>
+
+  <ol style="font-size:16px;line-height:2">
+    <li>无人机在天上飞一圈，拍了很多张照片，软件把这些照片<strong>拼成一张完整的大图</strong>。这张图不只是好看——它自带「哪一块对应现实世界的哪个位置」的坐标信息，所以图上量出来的距离，就等于真实地面的距离。</li>
+    <li>我们把这张大图交给一个<strong>「认树的电脑程序」</strong>（就是大家说的 AI）。它见过很多树的照片，所以能把图里的树一块块认出来。</li>
+    <li><strong>认出来的树占的地方，反过来说就是「没有树的地方」</strong>——也就是我们要找的<strong>空地</strong>。这一步是整个项目最关键的思路捷径。</li>
+    <li>程序把这些空地的<strong>外轮廓一圈一圈描出来</strong>，再算出每块空地<strong>多大、中心在哪</strong>。</li>
+    <li>最后写成一份<strong>清单文件</strong>，种植队拿着它就能去现场把空地补种上。</li>
+  </ol>
+
+  <div class="note warn">
+    <span class="ic">📌</span>
+    <div>
+      <p><strong>这一版只做一件事：找空地。</strong>不区分「这是长期荒废还是刚枯死」，也不管「是林间自然空隙还是缺株」——<strong>只要没树，就算空地</strong>。这个范围是后来特意收窄的，因为收窄之后项目难度大幅下降（原因见第 5 节）。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 2. 要解决什么问题 ===== -->
+<section id="why">
+  <h2><span class="num">02</span>要解决的是什么问题</h2>
+  <p class="lede">先搞懂业务，再看技术，不然容易一头雾水。</p>
+
+  <div class="grid g3">
+    <div class="card">
+      <h4>🏝️ 场景：油棕种植园</h4>
+      <p>油棕是经济作物，种下去要管几十年。园区里难免有些地方<strong>没种上、种死了、或者一直空着</strong>。</p>
+      <p>这些空地不补种，就是在浪费土地产能。</p>
+    </div>
+    <div class="card">
+      <h4>😩 现在的痛点</h4>
+      <p>几万亩的园区，靠人拿着图纸走一圈去找空地，<strong>又慢又容易漏</strong>。而且走一遍要好几天，走完发现漏了几块，又得再走一遍。</p>
+    </div>
+    <div class="card">
+      <h4>✅ 我们想做的</h4>
+      <p>无人机飞一次，几小时拍完。软件自动分析，<strong>半小时内给出全园空地的清单和位置</strong>，种植队拿着清单直接去补种。</p>
+    </div>
+  </div>
+
+  <h3>为什么要用无人机照片，而不是人走一遍？</h3>
+  <p>因为无人机一次飞行就能覆盖几百上千亩，而且拍出来的图<strong>尺度统一、位置精确</strong>——图上量出来的 100 平方米，就是地上真实的 100 平方米。人眼走一圈，既没有这个精度，也没法批量处理。</p>
+
+  <h3>「空地」具体指什么？</h3>
+  <p>业务上，空地就是<strong>「本该有油棕树、但现在没有树冠的地方」</strong>。它可能是：</p>
+  <ul>
+    <li>整片一直没种的区域（一大块空的）</li>
+    <li>某一排树里缺了几棵（一小块一小块，成排分布）</li>
+    <li>树与树之间天然的缝隙</li>
+  </ul>
+  <p>在<strong>这一版里，这三种我们统统叫「空地」，不区分</strong>。原因见第 5 节——因为其中两种在单张照片上根本区分不了。</p>
+</section>
+
+<!-- ===== 3. 流程 ===== -->
+<section id="flow">
+  <h2><span class="num">03</span>整个流程长什么样</h2>
+  <p class="lede">下面这条链子，就是软件内部实际在做的事。先用大白话走一遍，后面再看术语就不慌了。</p>
+
+  <div class="plain-flow">
+    <div class="pf"><div class="n">STEP 1</div><div class="t">导入大图</div><div class="d">把几 GB 的航拍大图读进来（不能一次全读，会卡死）</div></div>
+    <div class="pf"><div class="n">STEP 2</div><div class="t">确定范围</div><div class="d">如果有地块边界文件，就只处理边界内；没有就整张图都算</div></div>
+    <div class="pf"><div class="n">STEP 3</div><div class="t">切成小块</div><div class="d">大图切成一小块一小块，喂给 AI（它一次吃不下整张）</div></div>
+    <div class="pf"><div class="n">STEP 4</div><div class="t">AI 认树</div><div class="d">AI 逐块认出「哪里是树冠」</div></div>
+    <div class="pf"><div class="n">STEP 5</div><div class="t">拼回整图</div><div class="d">把小块结果拼回去，接缝处要抹匀（不然会有裂缝）</div></div>
+    <div class="pf"><div class="n">STEP 6</div><div class="t">取补集</div><div class="d">把树占的地方去掉，剩下的就是空地 ★ 核心一步</div></div>
+    <div class="pf"><div class="n">STEP 7</div><div class="t">描轮廓</div><div class="d">把空地的一圈边界描成多边形，并去掉锯齿</div></div>
+    <div class="pf"><div class="n">STEP 8</div><div class="t">算数据</div><div class="d">算出每块空地多大、中心在哪、大概能补几棵</div></div>
+    <div class="pf"><div class="n">STEP 9</div><div class="t">人工复核</div><div class="d">在界面上看结果，删掉误判的，然后导出</div></div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 680 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="从大图到空地清单的流程示意">
+      <defs>
+        <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#38bdf8" stop-opacity=".25"/>
+          <stop offset="100%" stop-color="#a78bfa" stop-opacity=".2"/>
+        </linearGradient>
+      </defs>
+      <!-- Panel 1: 大图 -->
+      <rect x="8" y="30" width="150" height="110" rx="8" fill="#16203a" stroke="#2d3f63"/>
+      <circle cx="45" cy="65" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="72" cy="60" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="99" cy="65" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="126" cy="60" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="45" cy="95" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="72" cy="90" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="126" cy="90" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="45" cy="122" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="72" cy="118" r="9" fill="#34d399" opacity=".85"/>
+      <circle cx="99" cy="122" r="9" fill="#34d399" opacity=".85"/>
+      <text x="83" y="22" fill="#e8eefb" font-size="12.5" text-anchor="middle" font-family="sans-serif">① 航拍大图（有树也有空地）</text>
+      <text x="83" y="160" fill="#8496b4" font-size="11" text-anchor="middle" font-family="sans-serif">绿色圆点 = 树冠</text>
+
+      <path d="M166 85 L196 85" stroke="#2d3f63" stroke-width="2" marker-end="url(#ar)"/>
+      <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L7,3 z" fill="#38bdf8"/></marker></defs>
+
+      <!-- Panel 2: 掩膜 -->
+      <rect x="204" y="30" width="150" height="110" rx="8" fill="#0a0f1c" stroke="#2d3f63"/>
+      <circle cx="241" cy="65" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="268" cy="60" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="295" cy="65" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="322" cy="60" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="241" cy="95" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="268" cy="90" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="322" cy="90" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="241" cy="122" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="268" cy="118" r="9" fill="#ffffff" opacity=".9"/>
+      <circle cx="295" cy="122" r="9" fill="#ffffff" opacity=".9"/>
+      <text x="279" y="22" fill="#e8eefb" font-size="12.5" text-anchor="middle" font-family="sans-serif">② AI 认出的「树冠掩膜」</text>
+      <text x="279" y="160" fill="#8496b4" font-size="11" text-anchor="middle" font-family="sans-serif">白 = 树冠，黑 = 没树</text>
+
+      <path d="M362 85 L392 85" stroke="#2d3f63" stroke-width="2" marker-end="url(#ar)"/>
+
+      <!-- Panel 3: 补集 -->
+      <rect x="400" y="30" width="150" height="110" rx="8" fill="#f8fafc" stroke="#2d3f63"/>
+      <circle cx="437" cy="65" r="9" fill="#1e293b"/>
+      <circle cx="464" cy="60" r="9" fill="#1e293b"/>
+      <circle cx="491" cy="65" r="9" fill="#1e293b"/>
+      <circle cx="518" cy="60" r="9" fill="#1e293b"/>
+      <circle cx="437" cy="95" r="9" fill="#1e293b"/>
+      <circle cx="464" cy="90" r="9" fill="#1e293b"/>
+      <circle cx="518" cy="90" r="9" fill="#1e293b"/>
+      <circle cx="437" cy="122" r="9" fill="#1e293b"/>
+      <circle cx="464" cy="118" r="9" fill="#1e293b"/>
+      <circle cx="491" cy="122" r="9" fill="#1e293b"/>
+      <rect x="484" y="104" width="60" height="30" rx="6" fill="none" stroke="#f472b6" stroke-width="2" stroke-dasharray="4 3"/>
+      <text x="475" y="22" fill="#e8eefb" font-size="12.5" text-anchor="middle" font-family="sans-serif">③ 取补集 → 空地</text>
+      <text x="475" y="160" fill="#f472b6" font-size="11" text-anchor="middle" font-family="sans-serif">白 = 空地（要找的目标）</text>
+
+      <!-- Panel 4 -->
+      <path d="M558 85 L588 85" stroke="#2d3f63" stroke-width="2" marker-end="url(#ar)"/>
+      <rect x="596" y="30" width="76" height="110" rx="8" fill="url(#g1)" stroke="#38bdf8" stroke-opacity=".5"/>
+      <path d="M614 62 L648 62 L648 82 L632 98 L614 98 Z" fill="none" stroke="#f472b6" stroke-width="2"/>
+      <text x="634" y="118" fill="#e8eefb" font-size="11" text-anchor="middle" font-family="sans-serif">多边形</text>
+      <text x="634" y="22" fill="#e8eefb" font-size="12.5" text-anchor="middle" font-family="sans-serif">④ 输出清单</text>
+      <text x="634" y="160" fill="#8496b4" font-size="11" text-anchor="middle" font-family="sans-serif">面积/位置</text>
+    </svg>
+    <figcaption>核心思路一句话：<strong>把树涂黑，剩下没涂黑的地方就是空地。</strong>我们不需要单独训练 AI 去「找空地」。</figcaption>
+  </figure>
+</section>
+
+<!-- ===== 4. 术语 ===== -->
+<section id="terms">
+  <h2><span class="num">04</span>术语科普 · 30 个词条</h2>
+  <p class="lede">每个词条统一四段式：<strong>一句话人话解释 → 生活类比 → 在这个项目里干什么 → 不懂会怎样</strong>。按由易到难分成四组，可以按需跳读。</p>
+
+  <h3>第一组 · 先认识「这张图」</h3>
+
+  <div class="term">
+    <div class="head"><span class="tname">TIF / TIFF</span><span class="ten">一种图片文件格式</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">TIF（也叫 TIFF）就是一种<strong>图片文件格式</strong>，和我们熟悉的 JPG、PNG 是同一类东西。它最大的特点是<strong>画质不压缩、能装下很大的图</strong>。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">JPG 像「微信里发出去的压缩照片」，看着清楚但细节被压掉了；TIF 像「摄影师交给印刷厂的原片」，一点细节都不丢，所以文件特别大。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">无人机航拍拼出来的那张大图，就是以 TIF 格式保存的。因为它不压画质、又能装下超大尺寸，正好适合放这种好几个 G 的田地大图。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为 TIF 是某种「特殊的高科技数据」。其实它本质上就是一张图片——把它当成「超大号的高清照片」理解就够了。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">GeoTIFF</span><span class="ten">带地理坐标的 TIF</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">GeoTIFF 就是<strong>普通 TIF 图片 + 一份「地理坐标说明书」</strong>。它在文件里额外记了一笔：「这张图左上角对应现实世界的经纬度是多少、一个像素代表地面多少米」。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">普通照片像你手机相册里的自拍，只知道「这是一个人」；GeoTIFF 像地图 App 的截图，它知道「这个点在城市的哪条街上」。同样是一张图，后者多了位置信息。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val"><strong>非常关键。</strong>因为我们要把空地的位置换算成真实世界的坐标（好让种植队能找到地方），所以这张图<strong>必须</strong>知道自己在现实世界的位置。这要求输入的是 GeoTIFF，而不是普通 TIFF。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">如果拿到的只是普通 TIF（没有坐标信息），程序就算圈出了空地，也<strong>算不出它在真实世界的哪里、面积多大</strong>，整条链路会断掉。所以一开始就要确认「你给的 TIF 到底是不是带坐标的 GeoTIFF」。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">正射影像</span><span class="ten">Orthophoto / DOM</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">「影像」和「照片」在技术上是一回事，但<strong>正射影像</strong>特指经过<strong>几何矫正</strong>的航拍图——它把因为相机角度、地形高低造成的「歪斜」都拉直了，所以图上每个点都对应地面的<strong>正上方</strong>视角，可以直接当尺子量。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">普通航拍照片像你<strong>斜着拍</strong>一张桌子，桌腿看起来会往里倒、近的地方大远的地方小；正射影像像你<strong>从正上方垂直俯拍</strong>，四条边都是直的、长度可以直接量。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">我们量空地面积、算位置，前提是「图上的距离和真实地面的距离成正比」。只有正射影像满足这个前提，所以输入必须是正射影像，而不是随手拍的斜照片。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为「影像」是个玄乎的词。其实它就是说：<strong>这是一张矫正过的、能当尺子用的俯拍大图</strong>。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">像素与地面分辨率</span><span class="ten">Pixel / cm per pixel</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">图片是由无数个小方格拼成的，每个小方格叫一个<strong>像素</strong>。<strong>地面分辨率</strong>就是「图上 1 个像素，对应现实中地面上多少厘米」。数字越小，图越清晰。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">想象你用乐高积木拼一幅画。如果每块积木代表 1 厘米，你能拼出很精细的图案；如果每块代表 10 厘米，图案就粗糙得多。这里的「每块积木代表多少厘米」，就是分辨率。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">它决定了<strong>我们能看到多小的空地</strong>。如果分辨率是 10cm/px，小于 10 厘米的东西在图上根本占不满一个像素，看不见。要找小块的缺株空地，就需要分辨率足够高（比如 5cm/px 或更高）。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会困惑「为什么现场明明有一小块空地，软件却找不出来」——很可能是那块空地比一个像素还小，图里根本没有它。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">波段</span><span class="ten">Band</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">一张图可以只记录「亮度」，也可以记录好几种不同颜色的光。<strong>每种被记录的光叫一个「波段」</strong>。普通彩色图有红、绿、蓝 3 个波段（就是 RGB）；多光谱图会额外记录人眼看不见的光（比如近红外）。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">普通彩色图像<strong>用三支画笔（红绿蓝）画的画</strong>；多光谱图像<strong>戴上一副能看见紫外线和红外线的特殊眼镜</strong>后看到的画——多出来的这些「看不见的颜色」，反而更能帮我们判断植物健不健康。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">如果影像是普通 RGB（3 个波段），AI 主要靠<strong>形状和颜色</strong>认树；如果是多光谱（含近红外），AI 还能靠「植物对近红外的特殊反应」更准确地认树。<strong>有近红外会更容易区分树和空地。</strong></div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会不明白「多花那么多钱拍多光谱到底值不值」。简单说：<strong>多光谱能让「认树」更准，但不是必须。</strong></div></div></div>
+    </div>
+  </div>
+
+  <h3>第二组 · 地理这件事</h3>
+
+  <div class="term">
+    <div class="head"><span class="tname">栅格 vs 矢量</span><span class="ten">Raster vs Vector</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">电脑画地图只有两种办法。<strong>栅格</strong>是用无数小方格（像素）拼出来，像照片；<strong>矢量</strong>是用点、线、面（数学形状）画出来，像简笔画。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy"><strong>栅格</strong>像<strong>十字绣</strong>：整幅画由一格一格的小方块组成，放大看全是小格子。<br><strong>矢量</strong>像<strong>用钢笔画的线条</strong>：不管你放大多少倍，线条都光滑清晰，因为它用数学公式描述，不是格子。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">AI 认树、认空地的过程是在<strong>栅格</strong>上做的（它看的是一个个像素）；但我们最终要交给种植队的，是一圈圈清晰的<strong>矢量</strong>轮廓（多边形），因为矢量才能精确表示边界、算面积、导入地图软件。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会不理解「为什么 AI 认完了还要再转一次」。因为<strong>机器看得懂格子，人要的是线条</strong>，中间需要一步「翻译」。</div></div></div>
+    </div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="栅格与矢量的对比示意">
+      <!-- 左：栅格 -->
+      <text x="150" y="20" fill="#e8eefb" font-size="14" text-anchor="middle" font-weight="600" font-family="sans-serif">栅格 = 小方格拼的（像十字绣）</text>
+      <g transform="translate(30,36)">
+        <!-- 7x5 grid, cell 34 -->
+        <g fill="#16203a" stroke="#2d3f63" stroke-width="1">
+          <rect x="0" y="0" width="34" height="34"/><rect x="34" y="0" width="34" height="34"/><rect x="68" y="0" width="34" height="34"/><rect x="102" y="0" width="34" height="34"/><rect x="136" y="0" width="34" height="34"/><rect x="170" y="0" width="34" height="34"/><rect x="204" y="0" width="34" height="34"/>
+          <rect x="0" y="34" width="34" height="34"/><rect x="34" y="34" width="34" height="34"/><rect x="68" y="34" width="34" height="34"/><rect x="102" y="34" width="34" height="34"/><rect x="136" y="34" width="34" height="34"/><rect x="170" y="34" width="34" height="34"/><rect x="204" y="34" width="34" height="34"/>
+          <rect x="0" y="68" width="34" height="34"/><rect x="34" y="68" width="34" height="34"/><rect x="68" y="68" width="34" height="34"/><rect x="102" y="68" width="34" height="34"/><rect x="136" y="68" width="34" height="34"/><rect x="170" y="68" width="34" height="34"/><rect x="204" y="68" width="34" height="34"/>
+          <rect x="0" y="102" width="34" height="34"/><rect x="34" y="102" width="34" height="34"/><rect x="68" y="102" width="34" height="34"/><rect x="102" y="102" width="34" height="34"/><rect x="136" y="102" width="34" height="34"/><rect x="170" y="102" width="34" height="34"/><rect x="204" y="102" width="34" height="34"/>
+          <rect x="0" y="136" width="34" height="34"/><rect x="34" y="136" width="34" height="34"/><rect x="68" y="136" width="34" height="34"/><rect x="102" y="136" width="34" height="34"/><rect x="136" y="136" width="34" height="34"/><rect x="170" y="136" width="34" height="34"/><rect x="204" y="136" width="34" height="34"/>
+        </g>
+        <!-- 填充的格子构成一个团块 -->
+        <g fill="#38bdf8" opacity=".75">
+          <rect x="68" y="0" width="34" height="34"/><rect x="102" y="0" width="34" height="34"/><rect x="136" y="0" width="34" height="34"/>
+          <rect x="34" y="34" width="34" height="34"/><rect x="68" y="34" width="34" height="34"/><rect x="102" y="34" width="34" height="34"/><rect x="136" y="34" width="34" height="34"/><rect x="170" y="34" width="34" height="34"/>
+          <rect x="0" y="68" width="34" height="34"/><rect x="34" y="68" width="34" height="34"/><rect x="68" y="68" width="34" height="34"/><rect x="102" y="68" width="34" height="34"/><rect x="136" y="68" width="34" height="34"/><rect x="170" y="68" width="34" height="34"/><rect x="204" y="68" width="34" height="34"/>
+          <rect x="34" y="102" width="34" height="34"/><rect x="68" y="102" width="34" height="34"/><rect x="102" y="102" width="34" height="34"/><rect x="136" y="102" width="34" height="34"/><rect x="170" y="102" width="34" height="34"/>
+          <rect x="68" y="136" width="34" height="34"/><rect x="102" y="136" width="34" height="34"/><rect x="136" y="136" width="34" height="34"/>
+        </g>
+      </g>
+      <text x="150" y="222" fill="#8496b4" font-size="11.5" text-anchor="middle" font-family="sans-serif">放大后全是小格子，边界是锯齿</text>
+
+      <!-- 分隔 -->
+      <line x1="290" y1="30" x2="290" y2="215" stroke="#22304d" stroke-width="1" stroke-dasharray="5 5"/>
+
+      <!-- 右：矢量 -->
+      <text x="490" y="20" fill="#e8eefb" font-size="14" text-anchor="middle" font-weight="600" font-family="sans-serif">矢量 = 一圈点连成的线（像钢笔）</text>
+      <path d="M395 105 L430 60 L480 45 L530 60 L560 105 L530 150 L480 165 L430 150 Z"
+            fill="rgba(167,139,250,.18)" stroke="#a78bfa" stroke-width="2.5" stroke-linejoin="round"/>
+      <g fill="#f472b6">
+        <circle cx="395" cy="105" r="4.5"/><circle cx="430" cy="60" r="4.5"/><circle cx="480" cy="45" r="4.5"/>
+        <circle cx="530" cy="60" r="4.5"/><circle cx="560" cy="105" r="4.5"/><circle cx="530" cy="150" r="4.5"/>
+        <circle cx="480" cy="165" r="4.5"/><circle cx="430" cy="150" r="4.5"/>
+      </g>
+      <text x="478" y="200" fill="#8496b4" font-size="11.5" text-anchor="middle" font-family="sans-serif">粉点 = 顶点；不管放大多少倍都平滑</text>
+      <text x="478" y="222" fill="#8496b4" font-size="11.5" text-anchor="middle" font-family="sans-serif">能精确算面积、能导入地图软件</text>
+    </svg>
+    <figcaption>AI 在<strong>栅格</strong>上认树，交付给种植队的是<strong>矢量</strong>轮廓。中间那一步叫「矢量化」。</figcaption>
+  </figure>
+
+  <div class="term">
+    <div class="head"><span class="tname">坐标系 / 投影 / CRS</span><span class="ten">EPSG:4326、EPSG:32648 …</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>坐标系</strong>是一套「给地球上每个点编地址」的规则。<strong>CRS</strong> 是它的英文缩写。<strong>投影</strong>是把「圆球一样的地球」摊平到平面上的方法——就像把橘子皮摊平。EPSG 后面那串数字是这套规则的编号，方便电脑识别。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">地球是圆的，想画在平面纸上就得「剥皮摊平」，一摊平就必然有变形——<strong>投影就是选择「怎么摊」</strong>。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">这是<strong>最容易踩坑的地方</strong>。经纬度用的是「度」，而「1 度」在不同地方代表的实际距离不一样（赤道和两极差很多）。所以<strong>算面积、算长度时，必须先转换成用「米」作单位的投影坐标</strong>，否则算出来的面积是错的。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你可能直接拿经纬度去算面积，得到一个<strong>看着像模像样、其实完全错误</strong>的数字。记住一句话：<strong>要算面积，先换成「米」。</strong></div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">经纬度 vs 投影坐标</span><span class="ten">度 与 米</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>经纬度</strong>用「度」表示位置（比如东经 100.5°、北纬 3.2°），是球面坐标；<strong>投影坐标</strong>用「米」表示位置（比如离某个原点向东 5000 米、向北 3000 米），是平面坐标。<strong>WGS84</strong> 是目前全球最通用的经纬度标准。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">经纬度像<strong>地球仪上的坐标</strong>，说「你在北纬几度、东经几度」；投影坐标像<strong>一张平面地图上的方格纸坐标</strong>。前者适合「定位在哪」，后者适合「量距离和面积」。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">地块边界文件（KML）里存的是<strong>经纬度</strong>，而无人机影像常用的是<strong>投影坐标（米）</strong>。两者要一起用，就必须做<strong>坐标转换</strong>，把「度」换算成影像能认的「米」。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会把边界文件直接盖到影像上，发现<strong>位置对不上、错了几十米甚至更多</strong>。这就是「度」和「米」没换算导致的。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">KML</span><span class="ten">Google Earth 用的边界文件</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">KML 是一种<strong>描述地理边界的文件格式</strong>，本质是个文本文件，里面记着「这块地的一圈边界点在哪里」。双击就能在地球上高亮出那块地。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">KML 像<strong>地图 App 里你画的「区域围栏」</strong>——你圈出一块范围，保存下来就是一份边界。它描述的是<strong>范围</strong>，不是<strong>照片</strong>。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">它是<strong>可选的</strong>。有 KML，程序就知道「只处理这块边界以内的区域」，还能把整片地<strong>按地块拆开分别统计</strong>；<strong>没有 KML</strong>，程序就把<strong>整张大图当成一整块地</strong>来处理。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会误以为「没有 KML 就做不了」。其实<strong>没有 KML 也能跑</strong>。另外要记住：<strong>KML 和 TIF 不是「二选一」——一个是「范围」，一个是「数据」，是配合关系。</strong></div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">Polygon</span><span class="ten">多边形</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">多边形就是用<strong>一圈首尾相连的点</strong>围出来的一个封闭区域。三角形是 3 个点围成的，五边形是 5 个点——点越多，形状越贴近真实边界。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>在地图上用手指沿着一个小区的围墙画一圈</strong>，回到起点闭合，就圈出了一块区域。这一圈点连起来就是一个多边形。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">这是我们<strong>最终要交付的核心成果</strong>。AI 找到一块空地后，会沿着它的边缘描一圈点形成多边形，代表「这块空地就是这一圈范围」。每块空地 = 一个多边形。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会不知道「输出 polygon」到底输出的是什么。其实它就是<strong>一块空地的轮廓</strong>，是结果最直观的表达方式。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">GeoJSON</span><span class="ten">用文本描述地理图形</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">GeoJSON 是一种<strong>用纯文本（字母数字符号）描述地理图形</strong>的格式。它把多边形、点、线这些形状，写成电脑和人都能读的一串文字。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>用文字描述一个图形</strong>——「从一个点出发，走到下一个点，再走到下一个点，最后回到起点」，把这些点的坐标写下来，就是一个 GeoJSON。它是「图形的文字版说明书」。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">我们最终导出的 JSON 文件，采用的是 <strong>GeoJSON 标准</strong>。这样导出来的结果，<strong>既是我们软件能读的清单，也能直接拖进 QGIS、ArcGIS 这些专业地图软件打开</strong>，兼容性最好。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为「JSON」只是个普通配置文件。其实这里的 JSON 遵循 GeoJSON 标准，<strong>天生就是给地图软件用的</strong>。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">面积与质心</span><span class="ten">area_sqm / centroid</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>面积</strong>就是这块空地有多大（单位是平方米）；<strong>质心</strong>就是这块空地的「重心」位置，可以理解为「如果把这块空地剪下来，用一根手指能把它顶平衡的那个点」。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">面积像你<strong>量一块地毯有多大</strong>；质心像<strong>这块地毯的中心点</strong>，贴标签、写编号时用它代表「这块地在哪」最方便。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">每块空地都会算出<strong>面积</strong>（好判断值不值得补种）和<strong>质心</strong>（好在地图上放标记、方便查找）。这两个是清单里最实用的两个数字。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会不明白「为什么还要算个质心」。因为<strong>一块空地形状可能很不规则，光靠面积说不清它在哪</strong>，有了质心就等于给这块地贴了一个「定位图钉」。</div></div></div>
+    </div>
+  </div>
+
+  <h3>第三组 · AI 怎么认树</h3>
+
+  <div class="term">
+    <div class="head"><span class="tname">树冠掩膜</span><span class="ten">Canopy Mask</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>「掩膜」就是一张覆盖层</strong>，它像一张透明的塑料片盖在图上，把「我们关心的区域」涂成一种颜色、把「不关心的区域」留空。<strong>树冠掩膜</strong>就是把「是树的地方」标出来、其余留空的那张覆盖层。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>用一张镂空的纸盖在图上</strong>，纸上只有树的位置是挖空的、能透出下面的图，其他地方都实心挡住。这张「镂空纸」就是掩膜。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">AI 认树的结果，第一步就是产出一张<strong>树冠掩膜</strong>——图上每个点都标好了「这里是树」或「这里不是树」。它是后面所有计算的<strong>基础底图</strong>。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会被「掩膜」这个词吓到。其实它就是<strong>一张「标出树在哪」的黑白图</strong>，黑的地方是树，白的地方不是。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">补集</span><span class="ten">Complement ★ 全项目最关键的思路</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>补集就是「剩下的那部分」</strong>。如果把整张图分成「树」和「非树」两半，那么「树」的补集就是「非树」——也就是我们要找的<strong>空地</strong>。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">想象<strong>一张白纸，你把所有有树的地方涂成黑色</strong>。涂完之后，<strong>纸上没被涂黑的白色部分，就全是空地</strong>。我们不需要单独去「找空地」，只要把树涂黑，剩下的白色就是答案。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">这是<strong>最核心的一个思路捷径</strong>。我们不用训练 AI 同时学会「认树」和「认空地」两件事——<strong>只要学会认树，把树占的地方去掉，剩下的自然就是空地</strong>。这让 AI 要学的东西少了一半，项目难度大大降低。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为「找空地」和「找树」是两件独立的大工程。其实<strong>它们是一体两面</strong>：认准了树，空地就自动出来了。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">AI 推理 / 模型 / 权重</span><span class="ten">Inference / Model / Weights</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>模型</strong>是那个「会认树的电脑程序」；<strong>权重</strong>是模型脑子里记住的「认树经验」（一堆数字，决定它怎么判断）；<strong>推理</strong>就是「让模型实际去认一张图」这个动作。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy"><strong>模型</strong>像一位<strong>经验丰富的老师傅</strong>；<strong>权重</strong>像他脑子里「见过成千上万棵树之后形成的经验」；<strong>推理</strong>像他<strong>看一张新照片、判断「这里有没有树」</strong>的过程。经验越足，判断越准。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">整个 AI 环节就是「把大图喂给模型 → 模型做推理 → 吐出树冠掩膜」。我们要交付的软件，本质是<strong>把这个推理过程包装成傻瓜式操作</strong>。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为「AI」是个神秘黑盒。其实它就是个<strong>「见过很多树、专门用来认树」的程序</strong>，「权重」就是它的经验值。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">语义分割 vs 目标检测</span><span class="ten">Segmentation vs Detection</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">这是 AI 看图的两大流派。<strong>目标检测</strong>是「在目标外面画一个方框」，只知道「这里有个东西」；<strong>语义分割</strong>是「把每个像素都归好类」，能精确描出目标的<strong>真实轮廓</strong>。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy"><strong>目标检测</strong>像在照片里给每个人<strong>画一个矩形框</strong>——你知道框里有个人，但框里还有别的背景。<br><strong>语义分割</strong>像<strong>把照片里每个人的轮廓用贴纸剪出来</strong>——精确到每一根头发丝，背景一点都不带。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">我们<strong>必须用语义分割</strong>。因为空地形状往往是不规则的一圈，画方框根本没法用来算面积、描边界。只有语义分割能给出精确轮廓，才能转成我们要的多边形。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会选错技术路线，做出来的结果是一堆方框，<strong>没法用</strong>。记住：<strong>我们要精确轮廓，所以是「分割」不是「检测」。</strong></div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">训练 / 微调 / 标注</span><span class="ten">Training / Fine-tuning / Annotation</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>训练</strong>是从零开始教 AI；<strong>微调</strong>是「在已经会一点的 AI 基础上，用你的数据再教一教」；<strong>标注</strong>是人工在图上「手动圈出正确答案」，做成 AI 学习的教材。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy"><strong>标注</strong>像老师<strong>给练习题写好标准答案</strong>；<br><strong>训练</strong>像<strong>从零开始教一个学生</strong>，让他做大量带答案的题、慢慢学会；<br><strong>微调</strong>像<strong>这个学生已经学过基础，再给他补几节「油棕园专项课」</strong>。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">决定项目走哪条路。<strong>如果有标注好的油棕图数据</strong>，就做微调，效果最好；<strong>如果没有</strong>，可能要先做标注工具、攒够数据再训练。这是<strong>项目成本和周期的大头</strong>，所以一直反复问「有没有标注数据、有没有 GPU」。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会低估「教会 AI」的工作量。<strong>AI 不是装好就会用，它需要「教材」（标注）和「上课」（训练）</strong>，这两步往往比写软件还费时间。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">GPU 加速</span><span class="ten">显卡为什么算得快</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">电脑里有两个「大脑」：<strong>CPU</strong> 擅长做复杂但少量的任务；<strong>GPU</strong>（显卡）擅长做简单但海量的任务。AI 计算正好是「海量简单计算」，所以 <strong>GPU 快得多</strong>。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">CPU 像<strong>一位大学教授</strong>，能解很难的题，但一次只能解一道；GPU 像<strong>一千名小学生</strong>，只会做简单加减法，但一千个人同时做，总速度反而碾压教授。AI 就是「海量的简单加减法」。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">处理 3GB 大图、跑 AI 推理<strong>非常吃算力</strong>。<strong>有 GPU 能把几十分钟的活压到几分钟。</strong>所以一直要问「你的电脑有没有独立显卡」。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会觉得「为什么别人跑得快我跑得慢」。答案往往就是<strong>人家有 GPU，你只有 CPU</strong>。</div></div></div>
+    </div>
+  </div>
+
+  <h3>第四组 · 工程上怎么做</h3>
+
+  <div class="term">
+    <div class="head"><span class="tname">GDAL</span><span class="ten">地理数据的万能工具箱</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">GDAL 是一个<strong>专门处理地理数据的软件工具库</strong>，能读写几乎所有的地图／影像格式（TIF、GeoTIFF、Shapefile、KML……），还能做坐标转换、裁剪、切图。它是 GIS 界的「瑞士军刀」。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>文件转换器 + 图像处理软件 + 坐标计算器三合一</strong>，只不过它是给程序员用的、不带界面的工具箱。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">它是<strong>幕后主力</strong>。读大图、切块、转坐标、把 AI 结果转成矢量轮廓……这些活儿底层大多靠 GDAL 完成。我们的软件是「前台」，GDAL 是「后台干活的老师傅」。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你可能会想着「自己写代码读 TIF、自己算坐标」，结果发现全是坑。<strong>凡是地理数据处理，优先想 GDAL 有没有现成功能。</strong></div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">COG</span><span class="ten">云优化 GeoTIFF</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">COG 是一种<strong>特别优化过的 GeoTIFF</strong>。它在保存时做了两件聪明事：把大图<strong>切成一块块小方块</strong>存放，并<strong>自带好几层缩略图</strong>。这样看图时不用整张加载，想看哪块读哪块。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像一本<strong>超厚的字典，按部首分好了索引，还配了目录页</strong>。你想查一个字，不用从第一页翻到最后。普通大图像一本没有目录、没有分册的字典，查一个字得翻半天。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">面对 3GB 的大图，<strong>直接整张打开会让电脑卡死</strong>。COG 让我们能「只读需要的那一小块」，是<strong>大图能流畅处理的关键</strong>。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会不理解「为什么要把原图再转一道格式」。因为<strong>转成 COG 之后，软件才能秒开大图的局部</strong>。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">影像金字塔</span><span class="ten">Overviews</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>影像金字塔</strong>是同一张图的<strong>好几层缩略版本</strong>：最底层是原始高清图，往上一层是它的一半大小，再往上是四分之一……像一座「由大到小叠起来的金字塔」。看图时按需要选层。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>地图 App 的缩放</strong>——你放大到街道级别才看细节，缩小到城市级别只看轮廓。如果每次都加载全城高清细节，手机早卡死了。金字塔就是<strong>提前把各缩放级别都准备好</strong>。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">当你在软件里<strong>缩小看整片园区</strong>时，程序用的是金字塔顶层的小图，加载极快；当你<strong>放大看某块空地细节</strong>时，才加载底层高清图。这样<strong>既能看全局，又不卡顿</strong>。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会困惑「为什么看图有时候清晰有时候模糊」。那不是 bug，是程序<strong>在根据你的缩放级别自动挑合适的层</strong>。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">瓦片</span><span class="ten">Tile / XYZ</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>瓦片</strong>是把整张大地图<strong>切成许多固定大小的小方块</strong>，每个小方块叫一个瓦片。地图 App 只加载你当前屏幕看到的那几块，看不到的就不加载。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>拼图</strong>。你不需要一次把整幅拼图全铺在桌上，只把眼前看到的那几块摆出来就行。地图 App 就是<strong>按需一块块拼给你看</strong>，所以能秒开。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">软件中间那张地图画布，就是用<strong>瓦片</strong>方式渲染影像的。这保证了哪怕底图有好几个 G，<strong>你在界面上拖来拖去依然流畅</strong>。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为「把 3GB 图塞进界面里显示」是做不到的。<strong>用瓦片就能做到</strong>——因为同一时刻其实只显示了其中很小的一部分。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">分块推理与重叠羽化</span><span class="ten">Tiling &amp; Overlap Blending</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">因为大图太大、AI 一次吃不下，所以要<strong>切成小块分别喂给 AI</strong>。但如果两块正好在空地的中间切开，接缝处就会算错。解决办法是让相邻小块<strong>在边缘处互相重叠一点</strong>，最后把重叠部分<strong>平滑地融合</strong>。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>给一面大墙刷漆，一次刷不到底</strong>。你会一小块一小块刷，但<strong>相邻两块的边缘要来回多刷几遍、把颜色抹匀</strong>，不然接缝处会出现明显的色差线。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">这是<strong>保证大图结果不出现「格子状裂缝」的关键工艺</strong>。没有它，你会看到结果图上一道道整齐的方格边界，其实是切块留下的接缝。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会奇怪「为什么结果里有一格格整齐的边线」。那就是<strong>没做好重叠融合</strong>导致的切块接缝。</div></div></div>
+    </div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分块推理与重叠羽化示意">
+      <text x="340" y="18" fill="#e8eefb" font-size="13.5" text-anchor="middle" font-weight="600" font-family="sans-serif">大图切成小块，边缘互相重叠</text>
+      <!-- tiles -->
+      <g>
+        <rect x="60" y="34" width="180" height="80" rx="6" fill="#16203a" stroke="#2d3f63"/>
+        <rect x="230" y="34" width="180" height="80" rx="6" fill="#16203a" stroke="#2d3f63"/>
+        <rect x="400" y="34" width="180" height="80" rx="6" fill="#16203a" stroke="#2d3f63"/>
+        <rect x="200" y="34" width="60" height="80" fill="rgba(56,189,248,.16)" stroke="none"/>
+        <rect x="370" y="34" width="60" height="80" fill="rgba(56,189,248,.16)" stroke="none"/>
+        <text x="150" y="80" fill="#8496b4" font-size="12" text-anchor="middle" font-family="sans-serif">块 1</text>
+        <text x="320" y="80" fill="#8496b4" font-size="12" text-anchor="middle" font-family="sans-serif">块 2</text>
+        <text x="490" y="80" fill="#8496b4" font-size="12" text-anchor="middle" font-family="sans-serif">块 3</text>
+        <text x="230" y="132" fill="#38bdf8" font-size="11" text-anchor="middle" font-family="sans-serif">重叠区</text>
+        <text x="400" y="132" fill="#38bdf8" font-size="11" text-anchor="middle" font-family="sans-serif">重叠区</text>
+      </g>
+
+      <!-- 坏结果 -->
+      <text x="180" y="172" fill="#f87171" font-size="12.5" text-anchor="middle" font-family="sans-serif">✗ 不重叠：空地正好被切开 → 裂成两块</text>
+      <rect x="80" y="186" width="200" height="46" rx="6" fill="#0e1526" stroke="#2d3f63"/>
+      <path d="M100 209 L130 194 L160 209 L190 194 L215 209" fill="none" stroke="#f472b6" stroke-width="2.5"/>
+      <line x1="180" y1="186" x2="180" y2="232" stroke="#f87171" stroke-width="2" stroke-dasharray="4 3"/>
+      <path d="M180 200 L184 206" stroke="#f87171" stroke-width="2"/>
+      <path d="M180 218 L184 224" stroke="#f87171" stroke-width="2"/>
+
+      <!-- 好结果 -->
+      <text x="500" y="172" fill="#34d399" font-size="12.5" text-anchor="middle" font-family="sans-serif">✓ 重叠羽化：接缝抹匀 → 一块完整空地</text>
+      <rect x="400" y="186" width="200" height="46" rx="6" fill="#0e1526" stroke="#2d3f63"/>
+      <path d="M420 209 L450 194 L480 209 L510 194 L535 209" fill="none" stroke="#f472b6" stroke-width="2.5"/>
+      <text x="500" y="248" fill="#8496b4" font-size="11" text-anchor="middle" font-family="sans-serif">重叠区被平滑加权融合</text>
+    </svg>
+    <figcaption>不做重叠融合，结果图上会出现整齐的方格裂缝——这是分块推理最典型的坑。</figcaption>
+  </figure>
+
+  <div class="term">
+    <div class="head"><span class="tname">矢量化 / Polygonize</span><span class="ten">从「色块」到「线圈」</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>矢量化</strong>就是把「一堆挨在一起的小格子」<strong>转成「一圈清晰的线条」</strong>。专门干这个活的步骤叫 <strong>Polygonize</strong>——把色块的边界描成一圈圈多边形。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>把一张像素风的马赛克图，自动描成一张线条简笔画</strong>。原本是无数小方格拼的色块，转换后变成一根根光滑的轮廓线。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">AI 给出的树冠掩膜是<strong>栅格</strong>（一堆格子），没法直接用。<strong>矢量化</strong>这一步把它变成一圈圈多边形，才能算面积、导地图、交给种植队。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会不理解「AI 都认出来了，为什么还要转一次」。因为<strong>AI 的成果是格子，交付要的是线条</strong>，中间必须走这一步。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">多边形简化</span><span class="ten">Douglas-Peucker</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">矢量化出来的多边形，边界往往是<strong>一级一级的锯齿</strong>，点特别多、文件特别大。<strong>Douglas-Peucker</strong> 是一种算法，能在<strong>尽量不改变形状</strong>的前提下，<strong>删掉多余的、可有可无的点</strong>，让边线变平滑、变简洁。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>画一条曲线时，其实不需要密密麻麻点上几百个点</strong>，只挑几个关键的拐点，用平滑的线连起来就够了，看起来一模一样，但省事得多。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">让输出的多边形<strong>又准又轻</strong>——既保留空地的真实形状，又不产生一个点巨多的「锯齿怪物」文件。<strong>这是让结果「好看又好用」的收尾工艺。</strong></div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会得到一堆<strong>边缘像狗啃一样、文件还特别大</strong>的多边形，导入地图软件时又慢又难看。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">ONNX / ONNX Runtime</span><span class="ten">模型的通用包装格式</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>ONNX</strong> 是一种<strong>通用的 AI 模型文件格式</strong>，它能把用不同工具训练出来的模型<strong>统一打包成一个标准盒子</strong>；<strong>ONNX Runtime</strong> 是<strong>专门用来运行这种盒子的引擎</strong>，速度快、跨平台。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">ONNX 像 <strong>USB-C 接口</strong>——不管你手机、电脑是哪个牌子，只要用这个标准接口就能互相连接。ONNX Runtime 像<strong>那个能读 USB-C 的设备</strong>。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">我们用训练工具把模型训练好之后，<strong>导出成 ONNX 格式</strong>，再让软件用 ONNX Runtime 去运行。这样软件<strong>不依赖庞大的训练环境</strong>，启动快、体积小、还能用 GPU 加速。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为「训练用什么，软件就得装什么」。<strong>有了 ONNX 这层包装，软件运行环境和训练环境就能解耦</strong>，交付轻松很多。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">Sidecar</span><span class="ten">伴随进程</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">我们的桌面软件主体是用一种语言写的，但 AI 那部分生态最好的是另一种语言。<strong>Sidecar</strong> 就是<strong>在主程序旁边再跑一个小程序</strong>，主程序需要做 AI 计算时，就把活儿交给这个「小助手」，算完再把结果拿回来。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像一家餐厅，<strong>前厅服务员（主程序）</strong>负责接待客人、点菜；但做菜得交给<strong>后厨厨师（小助手）</strong>。前厅不会炒菜，后厨不会迎客，<strong>分工合作，各干各擅长的</strong>。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">主程序负责界面、地图、文件管理；AI 推理交给旁边的 Python 小助手。<strong>这样既享受了 Python 的 AI 生态，又保持了主程序轻快。</strong></div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会奇怪「为什么还要装个 Python」。因为<strong>主程序不擅长做 AI，交给专业的 Python 助手最省事</strong>。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">Tauri / WebView</span><span class="ten">桌面应用的外壳原理</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>Tauri</strong> 是做一个<strong>桌面应用</strong>的工具。它的巧思是：<strong>界面部分直接复用系统自带的浏览器内核（WebView）来显示网页</strong>，核心逻辑则用一种高效的语言（Rust）写。这样软件<strong>体积小、启动快、又安全</strong>。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>装修房子时直接用开发商已经盖好的框架（系统浏览器）</strong>，你只负责把内部装修（界面）和管线（逻辑）做好，不用从打地基开始。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">我们的软件就是<strong>用 Tauri 做的 Windows 桌面程序</strong>。用户双击就能打开，界面像网页一样好做，但本质是个正经桌面软件。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会以为「桌面软件就得用某种老古董技术」。<strong>Tauri 让桌面开发变得像做网页一样轻松</strong>，同时还很轻量。</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">株行距网格</span><span class="ten">Planting Grid</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val">油棕不是随便乱种的，而是<strong>按固定间距、排成整齐的行列</strong>（比如每隔 9 米种一棵，行与行之间也隔 9 米）。这个「整齐的网格规律」就是<strong>株行距网格</strong>。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>教室里课桌的排列</strong>——一排排、一列列，间距一致。如果有人没来上课（缺株），那个空位在整齐的网格里会显得<strong>特别突兀</strong>；而如果只是走廊空地（林间空隙），它不符合课桌网格的规律。</div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">这是<strong>将来「可选增强」（区分林间空隙 vs 枯死缺株）的关键线索</strong>。因为<strong>「缺株」往往正好落在网格本该有点的位置上</strong>，而「林间空隙」不落在网格点上。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会想不通「都是空地，凭什么能分出两类」。答案就是：<strong>种植有规律，缺株会露馅。</strong>（注意：这一版<strong>暂不启用</strong>，只做单类空地。）</div></div></div>
+    </div>
+  </div>
+
+  <div class="term">
+    <div class="head"><span class="tname">最小面积阈值</span><span class="ten">Min Area Threshold</span></div>
+    <div class="body">
+      <div class="trow"><div class="lbl">人话解释</div><div class="val"><strong>最小面积阈值</strong>是一道「门槛」——<strong>小于某个面积（比如 50 平方米）的空地，直接忽略不报</strong>。这样可以把一堆没意义的碎小噪声过滤掉。</div></div>
+      <div class="trow"><div class="lbl">生活类比</div><div class="val"><div class="analogy">像<strong>筛沙子</strong>——你会用有一定孔径的筛子，太小的沙粒（噪声）直接漏掉，只留下够大的石块（真正的空地）。<strong>不然连一颗灰尘都算「空地」，结果就没法看了。</strong></div></div></div>
+      <div class="trow"><div class="lbl">本项目里</div><div class="val">AI 的结果里难免有些<strong>零星的误判小点</strong>。设置一个最小面积，<strong>比门槛小的直接扔掉</strong>，清单才干净可用。门槛定多少需要业务方拍板（太大会漏掉真空地，太小会留一堆噪声）。</div></div>
+      <div class="trow"><div class="lbl">不懂会怎样</div><div class="val"><div class="warnrow">你会得到一份<strong>塞满几百个「针尖大小空地」的清单</strong>，根本没法用。<strong>阈值就是用来「去噪」的。</strong></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 5. 最难的问题 ===== -->
+<section id="hard">
+  <h2><span class="num">05</span>最难的那个问题：能不能区分「林间空隙」和「枯死缺株」？</h2>
+  <p class="lede">这个问题被反复讨论过，答案值得单独讲清楚。用大白话，不用公式。</p>
+
+  <h3>先给结论</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>要判断的事</th><th>能做到吗</th><th>可信度</th></tr></thead>
+      <tbody>
+        <tr><td><strong>哪里是树、哪里是空地</strong></td><td class="ok">能，这是项目的核心，技术成熟</td><td class="ok">高</td></tr>
+        <tr><td><strong>这块空地是「死了」还是「本来就没种」</strong></td><td class="no">不能。单张照片里根本没有这个信息</td><td class="no">低</td></tr>
+        <tr><td><strong>这块空地是「株位空缺」还是「林间空隙」</strong></td><td class="mid">可以，但要换个定义、靠种植规律来判</td><td class="mid">中</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>为什么「是不是枯死」判断不了？</h3>
+  <p>因为「枯死」是一个<strong>和时间有关</strong>的概念——它意味着「这棵树<strong>曾经活着</strong>，后来死了」。而一张照片只能告诉你<strong>拍照那一瞬间</strong>的状态：这里<strong>现在没有树</strong>。</p>
+  <div class="note crit">
+    <span class="ic">🔍</span>
+    <div>
+      <p>想象两个场景：</p>
+      <p><strong>场景 A</strong>：这里本来有一棵油棕，去年病死了，现在地上只剩个空位。<br>
+         <strong>场景 B</strong>：这块地当初就没种上，一直是空的。</p>
+      <p>在照片上，这两个场景<strong>长得一模一样</strong>——都是「没有树冠的一块地」。照片里没有「这棵树以前在不在」的信息。</p>
+      <p>所以任何声称「用单张照片就能判断枯死」的说法，都是不诚实的。<strong>这是物理上的观测极限，不是算法不够好。</strong></p>
+    </div>
+  </div>
+
+  <h3>那怎么办？把问题「换个问法」</h3>
+  <p>关键洞察在这里：<strong>我们其实不需要知道「为什么空」，只需要知道「空在哪」。</strong></p>
+  <p>油棕是<strong>人工成排种植</strong>的，株行距有规律。所以整片地上其实铺着一张看不见的「网格」：</p>
+  <ul>
+    <li>空缺<strong>正好落在网格节点上</strong> → 说明那里「本该有一棵树却没有」→ 叫它 <strong>「株位空缺」</strong></li>
+    <li>空缺<strong>不在网格上</strong>、夹在行与行之间、形状随意 → 叫它 <strong>「林间空隙」</strong></li>
+  </ul>
+  <div class="note good">
+    <span class="ic">💡</span>
+    <div>
+      <p><strong>这个「换个问法」的妙处</strong>：我们把一个<strong>无法解决的病理问题</strong>（这棵树是不是病死的），转化成了一个<strong>能解决的几何问题</strong>（这个空位在不在网格上）。</p>
+      <p>而且对业务来说没有损失——因为<strong>不管是病死的还是从没种活，处理方式都是「补种一棵」</strong>，两者本来就是同一件事。</p>
+    </div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="株行距网格与两类空地的区分">
+      <text x="340" y="18" fill="#e8eefb" font-size="13.5" text-anchor="middle" font-weight="600" font-family="sans-serif">整齐的圆点 = 油棕树；虚线 = 看不见的种植网格</text>
+      <!-- grid dots 9x5 -->
+      <g>
+        <!-- row 1 -->
+        <g fill="#34d399"><circle cx="70" cy="60" r="8"/><circle cx="140" cy="60" r="8"/><circle cx="210" cy="60" r="8"/><circle cx="280" cy="60" r="8"/><circle cx="350" cy="60" r="8"/><circle cx="420" cy="60" r="8"/><circle cx="490" cy="60" r="8"/><circle cx="560" cy="60" r="8"/><circle cx="630" cy="60" r="8"/></g>
+        <!-- row 2: 中间缺两棵 (280,490 缺) -->
+        <g fill="#34d399"><circle cx="70" cy="110" r="8"/><circle cx="140" cy="110" r="8"/><circle cx="210" cy="110" r="8"/><circle cx="350" cy="110" r="8"/><circle cx="420" cy="110" r="8"/><circle cx="560" cy="110" r="8"/><circle cx="630" cy="110" r="8"/></g>
+        <!-- row 3 -->
+        <g fill="#34d399"><circle cx="70" cy="160" r="8"/><circle cx="140" cy="160" r="8"/><circle cx="210" cy="160" r="8"/><circle cx="280" cy="160" r="8"/><circle cx="350" cy="160" r="8"/><circle cx="420" cy="160" r="8"/><circle cx="490" cy="160" r="8"/><circle cx="560" cy="160" r="8"/><circle cx="630" cy="160" r="8"/></g>
+      </g>
+      <!-- 株位空缺 标记：网格节点上的空位 -->
+      <g fill="none" stroke="#f87171" stroke-width="2" stroke-dasharray="4 3">
+        <circle cx="280" cy="110" r="14"/>
+        <circle cx="490" cy="110" r="14"/>
+      </g>
+      <text x="385" y="205" fill="#f87171" font-size="12.5" text-anchor="middle" font-family="sans-serif">↑ 红圈：正好在网格节点上的空位 =「株位空缺」（该有树却没有）</text>
+
+      <!-- 林间空隙：不在网格上的一小片 -->
+      <path d="M240 75 L262 88 L252 108 L228 96 Z" fill="rgba(251,191,36,.2)" stroke="#fbbf24" stroke-width="2" stroke-dasharray="4 3"/>
+      <text x="150" y="240" fill="#fbbf24" font-size="12.5" text-anchor="middle" font-family="sans-serif">黄圈：夹在行与行之间、形状随意 =「林间空隙」</text>
+      <line x1="246" y1="112" x2="228" y2="228" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3 3" opacity=".6"/>
+
+      <!-- 网格辅助虚线 -->
+      <g stroke="#22304d" stroke-width="1" stroke-dasharray="3 5" opacity=".7">
+        <line x1="40" y1="60" x2="660" y2="60"/>
+        <line x1="40" y1="110" x2="660" y2="110"/>
+        <line x1="40" y1="160" x2="660" y2="160"/>
+      </g>
+    </svg>
+    <figcaption>同样都是「没有树」，但<strong>在不在网格上</strong>能区分开。这就是「株位空缺」和「林间空隙」的判据。</figcaption>
+  </figure>
+
+  <h3>这个方法什么时候会失效？</h3>
+  <p>必须诚实说明——它不是万能的：</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>失效场景</th><th>为什么</th><th>怎么办</th></tr></thead>
+      <tbody>
+        <tr><td>种植本来就不规则、补种混乱、有间作</td><td>网格假设不成立，算不出规律</td><td>退回「只报空地」，不分类</td></tr>
+        <tr><td>缺株率太高（超过 30%~40%）</td><td>活着的树太少，推不出网格</td><td>系统给出「置信度低」，提示不启用分类</td></tr>
+        <tr><td>行随地形弯曲、间距不等</td><td>刚性的网格套不上</td><td>用可变形的网格（后续版本）</td></tr>
+        <tr><td>地块边界、道路、沟渠</td><td>容易被误当成空地</td><td>用边界文件把这些区域先剔除</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>所以产品上怎么定位？</h3>
+  <div class="grid g3">
+    <div class="card" style="border-left:3px solid var(--green)">
+      <h4>✅ 可以承诺</h4>
+      <p>输出空地多边形、面积、质心、补种点估算。<strong>这是核心需求，技术成熟。</strong></p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--amber)">
+      <h4>⚠️ 只能给候选</h4>
+      <p>区分「株位空缺 / 林间空隙」。依赖种植规律，<strong>输出要标注「候选，需人工复核」</strong>，并附带一个置信度。</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--red)">
+      <h4>❌ 不能承诺</h4>
+      <p>判断「是否枯死」（病理意义上的）。<strong>单张照片做不到，别让任何方案承诺它。</strong></p>
+    </div>
+  </div>
+
+  <div class="note info">
+    <span class="ic">🧭</span>
+    <div>
+      <p><strong>给产品决策的建议</strong>：第一版<strong>只做单类「空地」</strong>，马上就能用、零额外风险。等看到真实地块的数据、确认了种植规律性，再把「株位空缺 / 林间空隙」二分类作为可选功能打开。<strong>因为数据结构里已经预留了字段，将来打开它不需要改动任何已有代码。</strong></p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== 6. 速查表 ===== -->
+<section id="cheat">
+  <h2><span class="num">06</span>术语速查表</h2>
+  <p class="lede">一页纸版本。建议打印出来放在工位上，遇到不懂的词扫一眼。</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th style="width:230px">术语</th><th>一句话解释</th></tr></thead>
+      <tbody>
+        <tr><td><strong>TIF / TIFF</strong></td><td>一种不压画质、能存超大图的图片格式</td></tr>
+        <tr><td><strong>GeoTIFF</strong></td><td>带地理坐标的 TIF，知道自己在现实世界的哪个位置</td></tr>
+        <tr><td><strong>正射影像 / DOM</strong></td><td>拉直矫正过、能当尺子量的俯拍大图</td></tr>
+        <tr><td><strong>像素 / 地面分辨率</strong></td><td>图上一个小方格；1 像素代表地面多少厘米</td></tr>
+        <tr><td><strong>栅格 vs 矢量</strong></td><td>十字绣（格子拼） vs 用笔画的线条（数学形状）</td></tr>
+        <tr><td><strong>波段 / Band</strong></td><td>一张图记录几种颜色的光；RGB 是 3 个波段</td></tr>
+        <tr><td><strong>坐标系 / 投影 / CRS</strong></td><td>给地球上的点编地址的规则；投影是把地球摊平的方法</td></tr>
+        <tr><td><strong>经纬度 vs 投影坐标</strong></td><td>用「度」定位 vs 用「米」量距离，<strong>算面积必须用米</strong></td></tr>
+        <tr><td><strong>KML</strong></td><td>描述地理边界的文件，Google Earth 用的那种</td></tr>
+        <tr><td><strong>Polygon</strong></td><td>用一圈点围出的封闭区域，代表一块地</td></tr>
+        <tr><td><strong>GeoJSON</strong></td><td>用文本描述地理图形的格式，地图软件通用</td></tr>
+        <tr><td><strong>面积 / 质心</strong></td><td>这块地多大；这块地的「重心」位置</td></tr>
+        <tr><td><strong>树冠掩膜</strong></td><td>一张「标出哪里是树」的覆盖图</td></tr>
+        <tr><td><strong>补集</strong></td><td><strong>把树涂黑，剩下的白的就是空地</strong></td></tr>
+        <tr><td><strong>AI 推理 / 模型 / 权重</strong></td><td>让认树程序看图判断；程序本身；它记住的经验</td></tr>
+        <tr><td><strong>语义分割 vs 目标检测</strong></td><td>精确描出轮廓 vs 只画个方框</td></tr>
+        <tr><td><strong>训练 / 微调 / 标注</strong></td><td>从零教 AI / 补课 / 给练习题写标准答案</td></tr>
+        <tr><td><strong>GDAL</strong></td><td>处理地理数据的万能工具箱</td></tr>
+        <tr><td><strong>COG</strong></td><td>切块 + 带缩略图的 GeoTIFF，能秒开局部</td></tr>
+        <tr><td><strong>影像金字塔</strong></td><td>同一张图的多层缩略版，按缩放级别选层</td></tr>
+        <tr><td><strong>瓦片 / Tile</strong></td><td>把大地图切成小方块按需加载</td></tr>
+        <tr><td><strong>分块推理 / 重叠羽化</strong></td><td>大图切块给 AI；接缝处重叠融合避免裂缝</td></tr>
+        <tr><td><strong>矢量化 / Polygonize</strong></td><td>把像素色块描成清晰的轮廓线</td></tr>
+        <tr><td><strong>多边形简化</strong></td><td>删掉多余的点，让锯齿边变平滑</td></tr>
+        <tr><td><strong>ONNX / ONNX Runtime</strong></td><td>模型的通用包装格式 / 运行它的引擎</td></tr>
+        <tr><td><strong>Sidecar</strong></td><td>主程序旁边跑一个 Python 小助手干 AI 的活</td></tr>
+        <tr><td><strong>GPU 加速</strong></td><td>显卡擅长海量简单计算，跑 AI 比 CPU 快得多</td></tr>
+        <tr><td><strong>Tauri / WebView</strong></td><td>用系统浏览器做界面的桌面应用外壳</td></tr>
+        <tr><td><strong>株行距网格</strong></td><td>油棕成排种植的规律，用来区分缺株与林间空隙</td></tr>
+        <tr><td><strong>最小面积阈值</strong></td><td>太小的空地当噪声丢掉，门槛由业务方定</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <span>油棕园空地智能检测 · 零基础阅读版</span>
+  <span>配套文档：PRD 附录 A（需求变更 v0.2） · 完整术语表 · 可行性论证</span>
+</footer>
+
+</div>
+</body>
+</html>

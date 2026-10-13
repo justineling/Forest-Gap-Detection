@@ -1,0 +1,275 @@
+%% ============================================================
+%% Forest Gap Detection — 类图 v0.2（需求收敛后）
+%% 变化摘要：
+%%   1. GapClass 从三分类收敛为单类 GAP（VACANCY/CANOPY_GAP 为 v2 预留）
+%%   2. MaskPostProcessor.classify_gaps 简化为委托分类策略（接口保留）
+%%   3. ClassRules 精简为 min_area_sqm（网格字段为 v2 预留）
+%%   4. KmlProcessor 新增 single_block_from_raster（KML 可选化）
+%%   5. JobConfig 新增 use_kml；DetectionResult 新增 used_kml
+%%   6. v2 预留：GridEstimator / GridModel / GridNode / GapClassifier 策略
+%% ============================================================
+classDiagram
+    direction LR
+
+    %% ============ 枚举 ============
+    class GapClass {
+        <<enumeration>>
+        GAP  "空地(v1 唯一取值)"
+        VACANCY  "株位空缺(v2 预留)"
+        CANOPY_GAP  "林间空隙(v2 预留)"
+    }
+    class JobState {
+        <<enumeration>>
+        PENDING
+        PREPROCESSING
+        RUNNING
+        PAUSED
+        DONE
+        FAILED
+    }
+
+    %% ============ 数据模型 ============
+    class GapPolygon {
+        +String gap_id
+        +String block_id
+        +GapClass class
+        +String class_label
+        +f64 class_confidence
+        +String class_method
+        +Polygon geometry
+        +f64 area_sqm
+        +Vec_f64 centroid
+        +f64 confidence
+        +u32 estimated_replant_points
+        +Vec_Vec_f64 replant_points
+        +validate() Result
+        +to_geojson_feature() Feature
+    }
+    class Block {
+        +String block_id
+        +String block_name
+        +MultiPolygon kml_geometry
+        +BBox bbox
+        +Vec_GapPolygon gaps
+        +area_sqm() f64
+        +gap_count() usize
+    }
+    class Summary {
+        +u32 total_gap_count
+        +f64 total_area_sqm
+        +HashMap by_class
+        +recompute(blocks) Summary
+    }
+    class DetectionResult {
+        +String schema_version
+        +String crs
+        +String source_image
+        +String kml_source
+        +bool used_kml
+        +String generated_at
+        +ModelConfig model
+        +Vec_Block blocks
+        +Summary summary
+        +to_json() String
+        +find_gap(gap_id) Option
+    }
+    class TaskJob {
+        +String job_id
+        +String source_image
+        +String kml_source
+        +JobState state
+        +f32 progress
+        +JobConfig config
+        +String created_at
+        +DetectionResult result
+        +is_resumable() bool
+    }
+    class ModelConfig {
+        +String name
+        +String version
+        +String model_type
+        +String path
+        +String device
+        +String provider
+        +u32 input_size
+        +String normalization
+        +HashMap class_mapping
+        +f32 conf_threshold
+        +is_gpu() bool
+    }
+    class JobConfig {
+        +u32 tile_size
+        +u32 overlap
+        +u32 max_memory_mb
+        +bool use_kml
+        +f64 min_gap_area_sqm
+        +ClassRules class_rules
+        +String output_crs
+    }
+    class ClassRules {
+        +f64 min_area_sqm
+        +f64 grid_node_radius_m
+        +f64 row_align_threshold
+        +String grid_pattern
+    }
+
+    %% ============ v2 预留：株行距网格估计 ============
+    class GridModel {
+        +f64 row_direction_deg
+        +f64 along_row_spacing_m
+        +f64 between_row_spacing_m
+        +String pattern
+        +Point origin
+        +f64 fit_confidence
+        +Vec_GridNode nodes
+    }
+    class GridNode {
+        +Point position
+        +bool has_canopy
+        +f64 canopy_coverage
+        +f64 vacancy_confidence
+    }
+    class GridEstimator {
+        +estimate(canopy_mask, block) GridModel
+        +extract_centroids(mask) Vec_Point
+        +estimate_row_direction(points) f64
+        +estimate_spacing(points, dir) Spacing
+        +fit_lattice(points, dir, spacing) GridModel
+        +find_vacancies(mask, grid, radius) Vec_Point
+    }
+
+    %% ============ v2 预留：分类策略 ============
+    class GapClassifier {
+        <<interface>>
+        +classify(mask, block, context) NdArray_u8
+        +name() String
+    }
+    class BinaryClassifier {
+        +f64 min_area_sqm
+        +classify(mask, block, context) NdArray_u8
+    }
+    class GridBasedClassifier {
+        +GridEstimator estimator
+        +GridModel grid
+        +classify(mask, block, context) NdArray_u8
+    }
+
+    %% ============ 服务类 ============
+    class RasterReader {
+        +String path
+        +RasterMeta meta
+        +open(path) RasterReader
+        +metadata() RasterMeta
+        +read_window(bbox, out_size) NdArray
+        +build_overviews(levels) void
+        +to_cog(out_path) void
+        +reproject(dst_crs) void
+    }
+    class TileScheduler {
+        +u32 tile_size
+        +u32 overlap
+        +plan(blocks, meta) Vec_Tile
+        +next_tile() Option_Tile
+        +tiles_for_block(block_id) Vec_Tile
+    }
+    class KmlProcessor {
+        +parse(kml_path) Vec_Block
+        +transform_crs(geom, src, dst) Geometry
+        +rasterize_mask(block, shape) NdArray_u8
+        +blocks_bbox(blocks) BBox
+        +single_block_from_raster(meta) Block
+    }
+    class InferenceEngine {
+        <<interface>>
+        +load(config) void
+        +infer(tile) NdArray_f32
+        +warmup() void
+        +name() String
+    }
+    class PythonSidecarEngine {
+        +Command sidecar
+        +load(config) void
+        +infer(tile) NdArray_f32
+        +health_check() bool
+    }
+    class OrtEngine {
+        +Session session
+        +load(config) void
+        +infer(tile) NdArray_f32
+    }
+    class MaskPostProcessor {
+        +stitch(tiles, feather_px) NdArray_f32
+        +feather_blend(a, b, overlap) NdArray_f32
+        +binarize(mask, thr) NdArray_u8
+        +filter_min_area(mask, min_area_px) NdArray_u8
+        +classify_gaps(mask, classifier) NdArray_u8
+    }
+    class Vectorizer {
+        +polygonize(mask) Vec_Polygon
+        +simplify(poly, tol) Polygon
+        +validate(poly) bool
+        +filter_min_area(polys, min_sqm, crs) Vec_Polygon
+    }
+    class ModelRegistry {
+        +list_models() Vec_ModelInfo
+        +load(name) ModelConfig
+        +import_model(path) ModelConfig
+        +default_model() ModelConfig
+    }
+    class JobManager {
+        +HashMap jobs
+        +create_job(cfg) TaskJob
+        +start(job_id) void
+        +pause(job_id) void
+        +resume(job_id) void
+        +checkpoint(job_id, block_id) void
+        +load_result(job_id) DetectionResult
+    }
+    class Exporter {
+        +to_geojson(result, out) String
+        +to_csv(result, out) String
+        +to_kml(result, out) String
+    }
+    class TileService {
+        +String base_url
+        +start(raster) void
+        +tile_url(z, x, y) String
+        +stop() void
+    }
+
+    %% ============ 关系 ============
+    DetectionResult "1" *-- "1" Summary : contains
+    DetectionResult "1" *-- "0..*" Block : contains
+    DetectionResult "1" o-- "1" ModelConfig : produced_by
+    Block "1" *-- "0..*" GapPolygon : contains
+    GapPolygon ..> GapClass : typed_by
+    TaskJob "1" o-- "1" DetectionResult : produces
+    TaskJob "1" *-- "1" JobConfig : configured_by
+    JobConfig "1" *-- "1" ClassRules : uses
+    ModelConfig ..> ModelRegistry : resolved_from
+
+    KmlProcessor ..> Block : produces
+    RasterReader ..> TileScheduler : feeds
+    TileScheduler ..> InferenceEngine : schedules
+    InferenceEngine <|.. PythonSidecarEngine : implements
+    InferenceEngine <|.. OrtEngine : implements
+    InferenceEngine ..> ModelRegistry : loads_model
+    MaskPostProcessor ..> InferenceEngine : consumes_output
+    MaskPostProcessor ..> GapClassifier : delegates_classify
+    MaskPostProcessor ..> Vectorizer : feeds
+    Vectorizer ..> GapPolygon : produces
+    JobManager ..> RasterReader : orchestrates
+    JobManager ..> TileScheduler : orchestrates
+    JobManager ..> InferenceEngine : orchestrates
+    JobManager ..> MaskPostProcessor : orchestrates
+    JobManager ..> Vectorizer : orchestrates
+    JobManager ..> KmlProcessor : orchestrates
+    JobManager ..> Exporter : delegates
+    TileService ..> RasterReader : reads
+
+    %% v2 预留关系
+    GapClassifier <|.. BinaryClassifier : implements
+    GapClassifier <|.. GridBasedClassifier : implements
+    GridBasedClassifier ..> GridEstimator : uses
+    GridEstimator ..> GridModel : produces
+    GridModel "1" *-- "0..*" GridNode : contains

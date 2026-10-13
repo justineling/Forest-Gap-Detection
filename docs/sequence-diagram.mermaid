@@ -1,0 +1,124 @@
+%% ============================================================
+%% Forest Gap Detection — 时序图 v0.2（需求收敛后）
+%% 变化摘要：
+%%   1. 导入阶段新增 alt 有 KML / else 无 KML 分支
+%%   2. 检测阶段 classify_gaps 简化为单类（BinaryClassifier）
+%%   3. Summary 变为单键 by_class = {gap: N}
+%% ============================================================
+
+%% ================= 主流程：导入 TIF (+可选 KML) → 检测 → 矢量化 → 导出 JSON =================
+sequenceDiagram
+    autonumber
+    actor User as 用户
+    participant UI as MapView / TopToolbar
+    participant Cmd as commands(import/detect/export)
+    participant RR as RasterReader
+    participant KM as KmlProcessor
+    participant JM as JobManager
+    participant TS as TileScheduler
+    participant IE as InferenceEngine
+    participant MP as MaskPostProcessor
+    participant VZ as Vectorizer
+    participant TSvc as TileService
+    participant EX as Exporter
+
+    Note over User,EX: —— 阶段一：导入 ——
+    User->>UI: 选择 TIF（可选再选 KML）
+    UI->>Cmd: invoke import_tif(path)
+    Cmd->>RR: open(path)
+    RR->>RR: metadata() / build_overviews() / to_cog()
+    RR-->>Cmd: RasterMeta(crs, size, bands)
+    Cmd-->>UI: ImportResult(影像元数据)
+
+    alt 有 KML（use_kml = true）
+        UI->>Cmd: invoke import_kml(path)
+        Cmd->>KM: parse(kml_path)
+        KM->>KM: transform_crs(EPSG:4326 -> raster.crs)
+        KM-->>Cmd: Vec<Block>(含 bbox)
+        Cmd-->>UI: ImportResult(地块列表 N 个)
+    else 无 KML（use_kml = false）
+        Cmd->>KM: single_block_from_raster(meta)
+        KM-->>Cmd: Block(覆盖全图，单块)
+        Cmd-->>UI: ImportResult(1 个全图 block)
+    end
+
+    Note over User,EX: —— 阶段二：开始检测（单类空地） ——
+    User->>UI: 点击"开始检测"
+    UI->>Cmd: invoke start_detection(job_config)
+    Cmd->>JM: create_job(cfg)
+    JM->>TSvc: start(raster)
+    JM->>IE: load(ModelRegistry.load())
+    IE-->>JM: ready
+
+    loop 遍历每个 Block
+        JM->>KM: rasterize_mask(block, shape)
+        KM-->>JM: block_mask
+
+        loop 遍历每个 Tile
+            JM->>TS: next_tile()
+            TS-->>JM: Tile(bbox, overlap)
+            JM->>RR: read_window(bbox, out_size)
+            RR-->>JM: NdArray(tile)
+            JM->>IE: infer(tile)
+            IE-->>JM: mask_tile
+            JM->>MP: stitch(mask_tile, feather_px)
+            MP->>MP: feather_blend()
+            JM-->>UI: emit "job://progress"
+        end
+
+        JM->>MP: binarize(mask, thr)
+        MP->>MP: filter_min_area(mask, min_area_px)
+        JM->>MP: classify_gaps(mask, BinaryClassifier)
+        MP-->>JM: mask_final（单类空地）
+        JM->>VZ: polygonize(mask_final)
+        VZ->>VZ: simplify() / validate() / filter_min_area()
+        VZ-->>JM: Vec<GapPolygon>(class = "gap")
+        JM->>JM: checkpoint(job_id, block_id)
+        JM-->>UI: emit "job://state"(block 完成)
+    end
+
+    JM->>JM: 汇总 DetectionResult + Summary(by_class = {gap: N})
+    JM-->>Cmd: DetectionResult
+    Cmd-->>UI: 检测完成
+
+    Note over User,EX: —— 阶段三：导出 ——
+    User->>UI: 点击"导出 JSON"
+    UI->>Cmd: invoke export_json(result)
+    Cmd->>EX: to_geojson(result, out)
+    EX-->>Cmd: 文件路径
+    Cmd-->>UI: 导出成功
+
+%% ================= 复核流程：人工复核编辑 polygon → 重新导出 =================
+sequenceDiagram
+    autonumber
+    actor User as 用户
+    participant UI as MapView / GapLayer / PropertyPanel
+    participant Cmd as commands(review/export)
+    participant JM as JobManager
+    participant EX as Exporter
+
+    User->>UI: 在画布上选中某个 polygon
+    UI->>Cmd: invoke list_gaps(block_id)
+    Cmd->>JM: load_result(job_id)
+    JM-->>Cmd: Vec<GapPolygon>
+    Cmd-->>UI: 属性面板显示(面积/质心/置信度)
+
+    alt 删除误检
+        User->>UI: 删除选中 polygon
+        UI->>Cmd: invoke delete_gap(job_id, gap_id)
+        Cmd->>JM: update_result(移除 gap)
+        JM-->>Cmd: ok
+        Cmd-->>UI: 刷新图层
+    else 编辑顶点
+        User->>UI: 拖动/新增/合并顶点
+        UI->>Cmd: invoke edit_gap(job_id, new_geometry)
+        Cmd->>JM: update_result(替换 geometry + 重算面积/质心)
+        JM-->>Cmd: ok
+        Cmd-->>UI: 刷新图层
+    end
+
+    User->>UI: 点击"重新导出"
+    UI->>Cmd: invoke export_json(result)
+    Cmd->>EX: to_geojson(updated_result, out)
+    EX-->>Cmd: 文件路径
+    Cmd-->>UI: 导出成功
