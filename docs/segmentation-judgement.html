@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>空地分割判据说明 —— 为什么最终选「混合阈值」</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1d21; --ink2:#4a5158; --ink3:#7a828a;
+    --line:#e3e6ea; --accent:#1f6feb; --warn:#c2410c; --ok:#15803d; --bad:#b91c1c;
+    --code:#f3f4f6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.75 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 28px 96px}
+  h1{font-size:30px;line-height:1.35;margin:0 0 10px;letter-spacing:-.4px}
+  .sub{color:var(--ink3);font-size:15px;margin-bottom:36px}
+  h2{font-size:21px;margin:52px 0 16px;padding-top:22px;border-top:1px solid var(--line)}
+  h3{font-size:17px;margin:30px 0 10px}
+  p{margin:12px 0;color:var(--ink2)}
+  code{background:var(--code);padding:2px 6px;border-radius:4px;
+       font:13.5px/1.5 "Cascadia Code",Consolas,monospace;color:#0f172a}
+  pre{background:#0f172a;color:#e2e8f0;padding:16px 18px;border-radius:8px;
+      overflow-x:auto;font:13.5px/1.7 "Cascadia Code",Consolas,monospace;margin:18px 0}
+  pre code{background:none;color:inherit;padding:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:22px 24px;margin:18px 0}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:22px 0}
+  .kpi div{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px}
+  .kpi b{display:block;font-size:26px;letter-spacing:-.5px;margin-bottom:4px}
+  .kpi span{font-size:13px;color:var(--ink3)}
+  table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14.5px}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left}
+  th{background:#fafbfc;font-weight:600;color:var(--ink)}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12.5px;
+       font-weight:600;letter-spacing:.2px}
+  .t-bad{background:#fee2e2;color:var(--bad)}
+  .t-mid{background:#fef3c7;color:#92400e}
+  .t-ok{background:#dcfce7;color:var(--ok)}
+  .note{border-left:3px solid var(--accent);background:#f0f6ff;
+        padding:14px 18px;border-radius:0 8px 8px 0;margin:20px 0;font-size:14.5px}
+  .danger{border-left-color:var(--bad);background:#fef2f2}
+  .good{border-left-color:var(--ok);background:#f0fdf4}
+  img{max-width:100%;border-radius:9px;border:1px solid var(--line);margin:14px 0}
+  ul,ol{color:var(--ink2);padding-left:22px}
+  li{margin:7px 0}
+  .mono{font-family:"Cascadia Code",Consolas,monospace;font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>空地分割判据说明</h1>
+<div class="sub">
+  为什么最终选「混合阈值」而不是纯分位或纯绝对 —— 附 WGR17.tif 实测证据
+</div>
+
+<div class="note">
+  <b>一句话结论</b><br>
+  单张航拍 RGB 影像里，「什么算空地」不能靠一个固定数值判断。
+  最终采用
+  <code>阈值 = clip(ExG 的 40% 分位, 下限 40, 上限 80)</code>
+  再叠加「高饱和度视为植被」的辅助判据 —— 实测跨航带曝光差异 3 倍时，
+  冠层率仍稳定在 71%~88%。
+</div>
+
+<h2>1. 问题：什么叫「空地」？</h2>
+
+<p>
+  油棕园的「空地」在业务上指 <b>没有油棕树冠覆盖的地面</b>，需要补种。
+  程序拿到的是普通航拍 RGB 影像，没有近红外、没有高度模型，
+  所以只能靠颜色判断「这块地是不是绿的」。
+</p>
+
+<p>
+  用的指标是 <b>超绿指数 ExG</b>：
+</p>
+
+<pre><code>ExG = 2 × 绿 - 红 - 蓝</code></pre>
+
+<p>
+  ExG 高 = 绿色植被；ExG 低 = 裸土、路面、水、阴影。
+  看起来很简单，但「多低算低」这一步出了大问题。
+</p>
+
+<h2>2. 前两版判据都翻车了</h2>
+
+<h3>v1：纯分位阈值（40% 分位）—— <span class="tag t-bad">误报严重</span></h3>
+
+<p>
+  做法：取全图 ExG 的 40% 分位当阈值，高于它的算树冠。
+  隐含假设是「影像里固定有 60% 面积是树冠」。
+</p>
+
+<p>
+  <b>实测翻车</b>：在密植区截取 23 m × 23 m 一块地，那里明明长满草和灌木
+  （肉眼可见是绿的），但因为林下植被比油棕羽叶暗，ExG 偏低，
+  被整片判成了「空地」。
+</p>
+
+<div class="danger note">
+  <b>根因</b>：分位阈值是<b>相对</b>判据 —— 它回答的是
+  「这块地在全图里排第几」，而不是「这块地到底有没有绿」。
+  当一块区域整体偏暗时，它会被迫把一半的像素划成「空地」，
+  不管那些像素实际上是什么。
+</div>
+
+<h3>v2：纯绝对阈值（ExG &gt; 60）—— <span class="tag t-mid">对曝光过敏</span></h3>
+
+<p>
+  改成「ExG 必须大于 60 才算树冠」，判据直接、符合直觉。
+  在曝光正常的区域确实大幅消除了误报。
+</p>
+
+<p>
+  但进一步实测发现 <b>WGR17.tif 各航带的曝光差异极大</b>：
+</p>
+
+<table>
+  <tr><th>位置</th><th>ExG 中位</th><th>纯绝对 &gt;60 判出的冠层率</th></tr>
+  <tr><td>密植区（亮）</td><td class="mono">116.0</td><td>84%</td></tr>
+  <tr><td>东南</td><td class="mono">79.5</td><td>71%</td></tr>
+  <tr><td>中南</td><td class="mono">76.1</td><td>66%</td></tr>
+  <tr><td>中央</td><td class="mono">53.4</td><td>44%</td></tr>
+  <tr><td>中左</td><td class="mono">49.1</td><td>31%</td></tr>
+  <tr><td>中上</td><td class="mono">48.7</td><td>38%</td></tr>
+</table>
+
+<p>
+  ExG 中位从 37 到 116，<b>差了 3 倍</b>。同一个 60 的阈值，
+  在亮航带上判出 84% 冠层，在暗航带上只剩 31%。
+  31% 意味着「七成地面是空的」—— 与影像上满屏油棕的事实完全矛盾。
+</p>
+
+<div class="danger note">
+  <b>根因</b>：绝对阈值是<b>绝对</b>判据，但影像的辐射值不是绝对的。
+  不同航带、不同太阳高度角、不同飞行高度都会整体抬高或压低 ExG。
+  用一个固定数值去卡，必然在某个航带上失效。
+</div>
+
+<h2>3. 最终方案：混合阈值</h2>
+
+<pre><code>阈值 = clip( ExG 的 40% 分位 , 下限 40 , 上限 80 )
+树冠 = (平滑后 ExG &gt; 阈值)  或  (饱和度 &gt; 0.45)</code></pre>
+
+<h3>为什么这样组合</h3>
+
+<ul>
+  <li>
+    <b>用分位自适应局部曝光</b>：分位本身会跟着该区域的亮度走，
+    亮的地方阈值自动抬高，暗的地方自动压低。
+  </li>
+  <li>
+    <b>用 [40, 80] 夹逼，防止走极端</b>：
+    分位算出来的阈值如果低于 40，说明这块地整体太暗
+    （多半是阴影或航带拼接差），此时强制用 40 兜底；
+    如果高于 80，说明这块地过曝，强制收敛到 80。
+    <b>这正是 v1 和 v2 各自失效的两种极端情况。</b>
+  </li>
+  <li>
+    <b>高饱和度兜底判为植被</b>：真实裸土是红褐色、发灰的，
+    饱和度低；而林下杂草虽然 ExG 偏低，饱和度却仍然很高（鲜绿）。
+    所以「饱和度 &gt; 0.45」的像素无论 ExG 多少都算树冠，
+    这能精准打掉「把杂草当空地」这类误报。
+  </li>
+</ul>
+
+<h3>实测效果</h3>
+
+<div class="kpi">
+  <div><b>71% ~ 88%</b><span>四类景观的冠层率（混合判据）</span></div>
+  <div><b>3×</b><span>跨航带曝光差异下仍稳定</span></div>
+  <div><b>60~80%</b><span>成熟油棕园冠层率的行业参考区间</span></div>
+</div>
+
+<table>
+  <tr>
+    <th>判据</th><th>密植区(亮)</th><th>中南(中)</th><th>中央(偏暗)</th><th>跨曝光稳定性</th>
+  </tr>
+  <tr>
+    <td>纯分位 40%</td><td>60%</td><td>60%</td><td>60%</td>
+    <td><span class="tag t-bad">恒定但错</span></td>
+  </tr>
+  <tr>
+    <td>纯绝对 &gt;60</td><td>84%</td><td>66%</td><td>44%</td>
+    <td><span class="tag t-bad">摆动 40 个点</span></td>
+  </tr>
+  <tr>
+    <td><b>混合 clip(40%分位,40,80)</b></td>
+    <td><b>88%</b></td><td><b>79%</b></td><td><b>67%</b></td>
+    <td><span class="tag t-ok">稳定且合理</span></td>
+  </tr>
+</table>
+
+<p class="mono" style="color:var(--ink3);font-size:13px">
+  ※ 「冠层率」指有效数据范围内的比例（已排除影像外接矩形里的 NoData 区域）。
+</p>
+
+<h2>4. 怎么调这三个数字</h2>
+
+<table>
+  <tr><th>参数</th><th>默认</th><th>调大的后果</th><th>调小的后果</th></tr>
+  <tr>
+    <td class="mono">--pct</td><td>40</td>
+    <td>判出的树冠更多 → 空地更少</td>
+    <td>树冠更少 → 空地更多（更容易误报）</td>
+  </tr>
+  <tr>
+    <td class="mono">--exg-lo</td><td>40</td>
+    <td>暗航带被当空地的情况缓解</td>
+    <td>暗航带整片被判成空地</td>
+  </tr>
+  <tr>
+    <td class="mono">--exg-hi</td><td>80</td>
+    <td>亮区域更容易判出空地</td>
+    <td>亮区域漏检空地</td>
+  </tr>
+</table>
+
+<div class="good note">
+  <b>换影像时的标定步骤</b>
+  <ol style="margin:8px 0 0">
+    <li>跑 <code>--grid-only</code> 或直接看日志里的「冠层覆盖率」</li>
+    <li>若全局冠层率落在 <b>60~80%</b>，判据基本可用</li>
+    <li>若明显偏低（&lt; 50%），说明影像整体偏暗 → 调低 <code>--exg-lo</code></li>
+    <li>若明显偏高（&gt; 90%）且人工核对确有遗漏空地 → 调高 <code>--exg-hi</code></li>
+    <li>用 <code>.workbuddy-ai/tmp/make_hybrid_compare.py</code> 生成跨区域对比图人工复核</li>
+  </ol>
+</div>
+
+<h2>5. 工具与复现</h2>
+
+<pre><code># 默认即混合判据
+python scripts/process_image.py --input D:/WGR/WGR17.tif
+
+# 显式指定混合判据的三个数字
+python scripts/process_image.py --input D:/WGR/WGR17.tif \
+    --pct 40 --exg-lo 40 --exg-hi 80
+
+# 关闭饱和度辅助（用于对比实验）
+python scripts/process_image.py --input D:/WGR/WGR17.tif --no-saturation
+
+# 回退到纯绝对阈值（不推荐，仅用于对比）
+python scripts/process_image.py --input D:/WGR/WGR17.tif --exg-threshold 60
+
+# 生成跨区域判据对比图
+python .workbuddy-ai/tmp/make_hybrid_compare.py</code></pre>
+
+<div class="note">
+  <b>参数指纹机制</b>：以上任一参数变化都会改变任务的「参数指纹」，
+  已缓存的瓦片会自动失效重算，不会出现「改了参数却拿到旧结果」的情况。
+  详见 <code>scripts/process_image.py</code> 顶部的说明。
+</div>
+
+<h2>6. 诚实的局限</h2>
+
+<ul>
+  <li>
+    <b>「正常 vs 空地」高可信</b>：几何意义上的「有没有树冠覆盖」
+    可以承诺，跨曝光也稳定。
+  </li>
+  <li>
+    <b>「是否枯死」无法判断</b>：单张影像不含「这棵树曾经活着」的历史信息，
+    这是物理观测的极限。若业务需要，必须有多期影像或近红外/多光谱。
+  </li>
+  <li>
+    <b>稀疏园区的边界模糊</b>：当植株间距本身就很大时，
+    「行间土壤」到底算不算需要补种，是种植管理决策，不是技术判断。
+    这种情况下建议人工复核 <code class="mono">uncertain</code> 类别。
+  </li>
+  <li>
+    <b>换影像必须重新标定</b>：<code>--exg-lo</code> / <code>--exg-hi</code>
+    是基于 WGR17.tif 标定的。换一台相机 / 换一个季节，
+    请按第 4 节的步骤重新确认冠层率。
+  </li>
+</ul>
+
+</div>
+</body>
+</html>
