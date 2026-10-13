@@ -1,0 +1,68 @@
+# =============================================================================
+# Forest Gap Detection — Docker 编排
+# =============================================================================
+# 用法：
+#   GPU 版： docker compose -f docker/docker-compose.yml --profile gpu up -d
+#   CPU 版： docker compose -f docker/docker-compose.yml --profile cpu up -d
+#   跑一次： docker compose -f docker/docker-compose.yml run --rm ai python detect.py --input /data/WGR17.tif
+#
+# 挂载说明（按需修改路径）：
+#   ./models          -> /models    模型权重（DeepForest + SAM2）
+#   D:/WGR            -> /data      原始影像目录（只读）
+#   ./output          -> /output    输出结果目录
+# =============================================================================
+services:
+
+  ai-gpu:
+    profiles: ["gpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: forest-gap-ai:gpu
+    container_name: fgd-ai-gpu
+    restart: unless-stopped
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - FGD_MODEL_DIR=/models
+      - FGD_DATA_DIR=/data
+      - FGD_OUTPUT_DIR=/output
+      - FGD_TILE_SIZE=1024
+      - FGD_TILE_OVERLAP=128
+      - FGD_MIN_GAP_AREA_SQM=30
+    volumes:
+      - ../models:/models:ro
+      - ../output:/output
+      - D:/WGR:/data:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # 仅监听本机，不对外暴露（桌面应用通过 127.0.0.1 调用）
+    ports:
+      - "127.0.0.1:8756:8756"
+
+  ai-cpu:
+    profiles: ["cpu"]
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.cpu
+    image: forest-gap-ai:cpu
+    container_name: fgd-ai-cpu
+    restart: unless-stopped
+    environment:
+      - FGD_MODEL_DIR=/models
+      - FGD_DATA_DIR=/data
+      - FGD_OUTPUT_DIR=/output
+      - FGD_TILE_SIZE=1024
+      - FGD_TILE_OVERLAP=128
+      - FGD_MIN_GAP_AREA_SQM=30
+    volumes:
+      - ../models:/models:ro
+      - ../output:/output
+      - D:/WGR:/data:ro
+    ports:
+      - "127.0.0.1:8756:8756"

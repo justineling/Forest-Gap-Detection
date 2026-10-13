@@ -1,0 +1,42 @@
+# =============================================================================
+# Forest Gap Detection — AI 推理环境（CPU 版）
+# =============================================================================
+# 用途：没有 NVIDIA 显卡时使用；体积约 3~4 GB，比 GPU 版小一半
+# 构建：docker build -f docker/Dockerfile.cpu -t forest-gap-ai:cpu .
+# 注意：CPU 推理速度约为 GPU 的 1/5 ~ 1/10
+# =============================================================================
+FROM python:3.12-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=Asia/Kuala_Lumpur
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gdal-bin libgdal32 \
+        libgl1 libglib2.0-0 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY sidecar/requirements.txt /app/requirements.txt
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    python -m pip install \
+        numpy scipy pandas \
+        rasterio shapely pyproj pyogrio \
+        pillow opencv-python-headless \
+        scikit-image \
+        onnxruntime && \
+    python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+COPY sidecar/ /app/
+
+VOLUME ["/models", "/data", "/output"]
+
+ENV FGD_MODEL_DIR=/models \
+    FGD_DATA_DIR=/data \
+    FGD_OUTPUT_DIR=/output
+
+CMD ["python", "infer_server.py"]
