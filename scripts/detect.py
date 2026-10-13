@@ -39,7 +39,7 @@ os.environ.setdefault("TORCH_HOME", str(_PROJ / ".cache" / "torch"))
 import numpy as np
 import rasterio
 from rasterio.features import shapes as rio_shapes
-from rasterio.windows import Window, transform as win_transform
+from rasterio.windows import Window, transform as win_transform, bounds as win_bounds
 from shapely.geometry import shape, mapping
 from shapely.ops import transform as shp_transform
 from pyproj import Transformer
@@ -146,11 +146,59 @@ def build_canopy_mask(boxes, rgb: np.ndarray, mode: str = "exg", exg_pct: int = 
     return mask
 
 
-def canopy_structural(rgb: np.ndarray, sigma: float = 5.0, pct: float = 40.0,
-                      min_blob_px: int = 2000):
+# 默认分割判据（2026-10-13 修正，第 3 版）
+# 演进过程（详见 docs/threshold-comparison.png 与 docs/segmentation-judgement.md）：
+#   v1 纯分位 40%  → 在密林区把健康林下植被误判成空地（误报）
+#   v2 纯绝对 >60  → 在暗航带上把整片林地判成空地（WGR17 跨航带 ExG 差 3 倍）
+#   v3 混合        → 分位自适应 + [LO,HI] 夹逼，跨曝光稳定（当前）
+DEFAULT_EXG_PCT = 40.0      # 分位基准（自适应局部曝光）
+DEFAULT_EXG_LO = 40.0       # 分位结果的下限：曝光暗的地方兜底
+DEFAULT_EXG_HI = 80.0       # 分位结果的上限：曝光亮的地方收敛
+DEFAULT_EXG_THRESHOLD = None   # 显式绝对阈值（None = 用混合判据）
+DEFAULT_USE_SATURATION = True
+DEFAULT_SAT_LEVEL = 0.45
+
+
+def canopy_structural(rgb: np.ndarray, sigma: float = 5.0, pct: float = DEFAULT_EXG_PCT,
+                      min_blob_px: int = 2000, quiet: bool = False,
+                      exg_threshold: float | None = DEFAULT_EXG_THRESHOLD,
+                      use_saturation: bool = DEFAULT_USE_SATURATION,
+                      sat_level: float = DEFAULT_SAT_LEVEL,
+                      exg_lo: float = DEFAULT_EXG_LO,
+                      exg_hi: float = DEFAULT_EXG_HI):
     """基于冠层结构的分割（无需训练数据）：
-       平滑 ExG（把同一株的羽叶连成一片）→ 分位阈值 → 形态学闭/开 → 填洞 → 去小碎块。
-       适配油棕「冠层连片、株距规则、裸土与冠层色差明显」的特点。"""
+       平滑 ExG（把同一株的羽叶连成一片）→ 阈值 → 形态学闭/开 → 填洞 → 去小碎块。
+       适配油棕「冠层连片、株距规则、裸土与冠层色差明显」的特点。
+
+    阈值判据（本项目最关键的一个可调点）
+    ------------------------------------
+    ★ 默认：混合判据 clip(分位 pct%, exg_lo, exg_hi)
+      用 pct 分位自适应局部曝光，再用 [lo, hi] 夹住，防止走极端。
+
+      为什么不能只用其中一种（WGR17.tif 实测，跨航带 ExG 中位 37~116，差 3 倍）：
+
+      A) 纯分位（exg_threshold=None 且 lo/hi 放宽）
+         隐含假设"影像里固定有 60% 是树冠"。在密植区把健康林下植被
+         （草、灌木，ExG 偏低但确实是植被）整片判成空地：
+         实测 23m×23m 一块密林被全涂红，全园 18% 被标空地 —— 严重误报。
+
+      B) 纯绝对（exg_threshold=60）
+         判据是"这块地到底有没有绿"，在曝光正常的区域更贴近真实。
+         但**对曝光极敏感**：暗航带上整片林地 ExG 都 <60，会被整体判成空地
+         （实测某暗航带冠层只剩 31%，不可能）。
+
+      C) 混合（默认）✓
+         thr = clip(分位 pct, lo, hi)。实测六处景观冠层率 59~72%，
+         跨曝光极稳定，且落在成熟油棕园 60~80% 的合理区间。
+
+    D) 饱和度辅助（默认开启，sat_level=0.45）
+       真实裸土不仅 ExG 低，**饱和度也低**（红褐色、发灰）；
+       而林下杂草虽然 ExG 偏低，饱和度却仍然很高（鲜绿）。
+       取**并集**（任一为真即算植被）进一步抑制把杂草认成空地。
+
+    ⚠️ 判据变更会改变全部输出。切换前务必用
+       `.workbuddy-ai/tmp/make_hybrid_compare.py` 那套跨曝光对比流程复核。
+    """
     from scipy import ndimage as ndi
 
     r = rgb[:, :, 0].astype(np.float32)
@@ -158,8 +206,28 @@ def canopy_structural(rgb: np.ndarray, sigma: float = 5.0, pct: float = 40.0,
     b = rgb[:, :, 2].astype(np.float32)
     exg = 2 * g - r - b
     sm = ndi.gaussian_filter(exg, sigma=sigma)
-    thr = float(np.percentile(sm, pct))
+
+    if exg_threshold is not None:
+        thr = float(exg_threshold)
+        mode = f"绝对 ExG>{thr:.0f}"
+    else:
+        p = float(np.percentile(sm, pct))
+        thr = float(np.clip(p, exg_lo, exg_hi))
+        mode = (f"混合 clip(分位{pct:.0f}%={p:.0f}, {exg_lo:.0f}, {exg_hi:.0f})"
+                if abs(thr - p) > 1e-6 else f"分位 {pct:.0f}%={p:.0f}")
+
     m = sm > thr
+
+    if use_saturation:
+        # 饱和度 = (max-min)/max。真实裸土/裸地被压实土路面饱和度低。
+        vmax = np.maximum(np.maximum(r, g), b)
+        vmin = np.minimum(np.minimum(r, g), b)
+        sat = np.where(vmax > 0, (vmax - vmin) / np.maximum(vmax, 1.0), 0.0)
+        sat_s = ndi.gaussian_filter(sat, sigma=sigma)
+        # 饱和度高的像素即使 ExG 偏低，也几乎一定是绿色植被（如林下杂草）
+        m = m | (sat_s > sat_level)
+        mode += f" + 饱和度>{sat_level:.2f} 视为植被"
+
     m = ndi.binary_closing(m, iterations=3)
     m = ndi.binary_opening(m, iterations=2)
     m = ndi.binary_fill_holes(m)
@@ -167,8 +235,9 @@ def canopy_structural(rgb: np.ndarray, sigma: float = 5.0, pct: float = 40.0,
     if n:
         sizes = ndi.sum(m, lab, range(1, n + 1))
         m = np.isin(lab, np.where(sizes >= min_blob_px)[0] + 1)
-    log(f"结构法分割：sigma={sigma} 分位={pct}% 阈值={thr:.1f} "
-        f"→ 冠层覆盖率 {m.mean()*100:.1f}%（成熟油棕园参考值 60~80%）")
+    if not quiet:
+        log(f"结构法分割：sigma={sigma} {mode} 阈值={thr:.1f} "
+            f"→ 冠层覆盖率 {m.mean()*100:.1f}%（成熟油棕园参考值 60~80%）")
     return m
 
 
@@ -177,17 +246,73 @@ def complement(canopy: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return (~canopy) & valid
 
 
+def separate_gap_units(gap: np.ndarray, min_width_m: float, px_m: float,
+                       min_blob_px: int = 200, quiet: bool = False) -> np.ndarray:
+    """把连成一片的空地切成有意义的独立单元。
+
+    背景：油棕成排种植，树冠之间本来就有窄缝，取补集后会得到一整片连通的
+    「通道网络」而不是一块块独立的空地。这些窄缝属于正常株间间隙，不需要补种。
+
+    做法：形态学开运算。半径 r = min_width_m/2，能抹掉宽度不足 min_width_m 的
+    通道，只留下达到「缺株级别」的孔洞。之后再把剩下的碎块清一遍。
+
+    性能说明（实测 2304² 瓦片）
+    --------------------------
+    用 scipy 的 binary_opening + 圆盘结构元要 11.7 秒 —— 圆盘卷积是 O(r²) 的
+    暴力实现，半径 24 px 时相当于每像素算 1800 次比较，整块就崩了。而这是
+    整个流水线里最慢的一步（占 85%）。
+    改用距离变换实现「按圆盘做开运算」：距离变换是 O(n)，只要 1.95 秒（6× 快）。
+    两者数学上等价 —— 实测差异像素仅占 0.04%，且 99.4% 落在数组边界 40 px 内，
+    而边界本来就会被瓦片重叠机制丢弃。
+    """
+    from scipy import ndimage as ndi
+
+    r = max(1, int(round(min_width_m / 2.0 / px_m)))
+
+    # 按距离变换做圆盘开运算：先腐蚀（保留内部距背景 > r 的像素），再膨胀回来
+    dist_in = ndi.distance_transform_edt(gap)
+    eroded = dist_in > r
+    if not eroded.any():
+        opened = np.zeros_like(gap)
+    else:
+        dist_out = ndi.distance_transform_edt(~eroded)
+        opened = (dist_out <= r) & gap
+
+    lab, n = ndi.label(opened)
+    if n:
+        sizes = ndi.sum(opened, lab, range(1, n + 1))
+        opened = np.isin(lab, np.where(sizes >= min_blob_px)[0] + 1)
+
+    if not quiet:
+        log(f"空地分离：开运算半径 {r}px ({min_width_m/2:.2f} m)，"
+            f"抹掉宽度 < {min_width_m:.1f} m 的株间窄缝")
+        log(f"  分离前 {gap.sum()*px_m*px_m:.0f} m²（连通成片） → "
+            f"分离后 {opened.sum()*px_m*px_m:.0f} m²（{n} 个候选单元）")
+    return opened
+
+
 # ----------------------------------------------------------------------------
 # 4. 矢量化 + 面积计算
 # ----------------------------------------------------------------------------
-def to_polygons(mask: np.ndarray, affine, raster_crs, min_area_sqm: float):
-    """栅格掩膜 → 多边形；面积在 UTM 投影系下计算"""
-    to_utm = Transformer.from_crs(raster_crs, TARGET_CRS, always_xy=True)
+def to_polygons(mask: np.ndarray, affine, raster_crs, min_area_sqm: float,
+                simplify_m: float = 0.3):
+    """栅格掩膜 → 多边形。
 
-    def reproj(x, y, z=None):
+    面积与简化都在 UTM 投影系下做：投影系单位是米，容差才有物理意义，
+    简化后再转回影像原坐标系输出。
+    """
+    to_utm = Transformer.from_crs(raster_crs, TARGET_CRS, always_xy=True)
+    from_utm = Transformer.from_crs(TARGET_CRS, raster_crs, always_xy=True)
+
+    def fwd(x, y, z=None):
         lon, lat = to_utm.transform(x, y)
         return lon, lat
 
+    def bwd(x, y, z=None):
+        lon, lat = from_utm.transform(x, y)
+        return lon, lat
+
+    raw_pts = simplified_pts = 0
     geoms = []
     for geom, val in rio_shapes(mask.astype(np.uint8), mask=mask, transform=affine):
         if int(val) != 1:
@@ -195,12 +320,21 @@ def to_polygons(mask: np.ndarray, affine, raster_crs, min_area_sqm: float):
         g = shape(geom)
         if g.is_empty:
             continue
-        # 在投影系下算面积
-        g_utm = shp_transform(reproj, g)
+        g_utm = shp_transform(fwd, g)
+        n0 = len(g_utm.exterior.coords)
+        if simplify_m > 0:
+            g_utm = g_utm.simplify(simplify_m, preserve_topology=True)
+        n1 = len(g_utm.exterior.coords)
+        raw_pts += n0
+        simplified_pts += n1
         a = g_utm.area
         if a < min_area_sqm:
             continue
-        geoms.append((g, g_utm, a))
+        geoms.append((shp_transform(bwd, g_utm), g_utm, a))
+
+    if raw_pts:
+        log(f"多边形简化：容差 {simplify_m} m，顶点数 {raw_pts} → {simplified_pts}"
+            f"（压缩到 {simplified_pts/raw_pts*100:.1f}%）")
     return geoms
 
 
@@ -248,7 +382,7 @@ def save_png(rgb: np.ndarray, canopy: np.ndarray, gap: np.ndarray, boxes, out: P
            + chunk(b"IEND", b""))
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(png)
-    log(f"可视化已导出：{out}  （品红=空地，绿线=树冠边界）")
+    log(f"可视化已导出：{out}  （品红=检出空地，绿线=树冠边界）")
 
 
 # ----------------------------------------------------------------------------
@@ -268,6 +402,14 @@ def main():
                          "deepforest=DeepForest 预训练模型（实测不适配油棕影像）")
     ap.add_argument("--sigma", type=float, default=5.0, help="结构法高斯平滑半径（像素）")
     ap.add_argument("--pct", type=float, default=40.0, help="结构法植被指数分位阈值（0~100）")
+    ap.add_argument("--min-gap-width-m", type=float, default=1.6,
+                    help="空地的最小宽度（米）。窄于此值的树冠间缝隙视为正常株间间隙，"
+                         "不单独算作空地。默认 1.6 m")
+    ap.add_argument("--no-separate", action="store_true",
+                    help="关闭空地分离（用于对比：会得到连成一片的空地）")
+    ap.add_argument("--simplify-m", type=float, default=0.3,
+                    help="多边形简化容差（米）。栅格转矢量会得到逐像素锯齿边界，"
+                         "必须简化，否则一个多边形能有几千个顶点。默认 0.3 m，设 0 关闭")
     ap.add_argument("--model-dir", default="models/deepforest-tree")
     args = ap.parse_args()
 
@@ -298,10 +440,25 @@ def main():
     gap = complement(canopy, valid)
     log(f"树冠覆盖 {canopy.mean()*100:.1f}%  |  空地候选 {gap.mean()*100:.1f}%")
 
+    # --- 换算地面分辨率（米/像素）。影像可能是地理坐标系，直接从窗口边界投影求得，
+    #     不依赖 CRS 单位是米还是度 ---
+    wb = win_bounds(win, ds.transform)
+    _t = Transformer.from_crs(ds.crs, TARGET_CRS, always_xy=True)
+    _xs, _ys = _t.transform([wb[0], wb[2]], [wb[1], wb[3]])
+    px_m = (abs(_xs[1] - _xs[0]) / win.width + abs(_ys[1] - _ys[0]) / win.height) / 2.0
+    log(f"地面分辨率：{px_m*100:.2f} cm/像素（{px_m*px_m:.4f} m²/像素）")
+
+    # --- 把连成一片的空地切成独立单元 ---
+    if args.no_separate:
+        gap_units = gap
+        log("已关闭空地分离（--no-separate）")
+    else:
+        gap_units = separate_gap_units(gap, args.min_gap_width_m, px_m)
+
     # --- 矢量化（面积在 UTM 49N 下算）---
     affine = win_transform(win, ds.transform)
     log(f"按最小面积 {args.min_area} m² 过滤（面积在 {TARGET_CRS} 下计算）…")
-    geoms = to_polygons(gap, affine, ds.crs, args.min_area)
+    geoms = to_polygons(gap_units, affine, ds.crs, args.min_area, args.simplify_m)
     log(f"得到 {len(geoms)} 个合法空地多边形")
 
     # --- 输出 GeoJSON ---
@@ -355,7 +512,7 @@ def main():
     out_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     log(f"GeoJSON 已导出：{out_json}")
 
-    save_png(rgb, canopy, gap, boxes, Path(args.out_png))
+    save_png(rgb, canopy, gap_units, boxes, Path(args.out_png))
 
     log("-" * 72)
     log(f"方法：{args.method}  |  检出树冠 {0 if boxes is None else len(boxes)} 株  |  "
