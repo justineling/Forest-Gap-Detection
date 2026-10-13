@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>草地与油棕区分方案 —— 全项目最大算法缺陷的修复路线</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1d21; --ink2:#4a5158; --ink3:#7a828a;
+    --line:#e3e6ea; --accent:#1f6feb; --warn:#c2410c; --ok:#15803d; --bad:#b91c1c;
+    --code:#f3f4f6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.75 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:48px 28px 96px}
+  h1{font-size:30px;line-height:1.35;margin:0 0 10px;letter-spacing:-.4px}
+  .sub{color:var(--ink3);font-size:15px;margin-bottom:36px}
+  h2{font-size:21px;margin:52px 0 16px;padding-top:22px;border-top:1px solid var(--line)}
+  h3{font-size:17px;margin:30px 0 10px}
+  p{margin:12px 0;color:var(--ink2)}
+  code{background:var(--code);padding:2px 6px;border-radius:4px;
+       font:13.5px/1.5 "Cascadia Code",Consolas,monospace;color:#0f172a}
+  pre{background:#0f172a;color:#e2e8f0;padding:16px 18px;border-radius:8px;
+      overflow-x:auto;font:13.5px/1.7 "Cascadia Code",Consolas,monospace;margin:18px 0}
+  pre code{background:none;color:inherit;padding:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:22px 24px;margin:18px 0}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:22px 0}
+  .kpi div{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px}
+  .kpi b{display:block;font-size:26px;letter-spacing:-.5px;margin-bottom:4px}
+  .kpi span{font-size:13px;color:var(--ink3)}
+  table{width:100%;border-collapse:collapse;margin:18px 0;font-size:14.5px}
+  th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left}
+  th{background:#fafbfc;font-weight:600;color:var(--ink)}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12.5px;
+       font-weight:600;letter-spacing:.2px}
+  .t-bad{background:#fee2e2;color:var(--bad)}
+  .t-mid{background:#fef3c7;color:#92400e}
+  .t-ok{background:#dcfce7;color:var(--ok)}
+  .note{border-left:3px solid var(--accent);background:#f0f6ff;
+        padding:14px 18px;border-radius:0 8px 8px 0;margin:20px 0;font-size:14.5px}
+  .danger{border-left-color:var(--bad);background:#fef2f2}
+  .good{border-left-color:var(--ok);background:#f0fdf4}
+  img{max-width:100%;border-radius:9px;border:1px solid var(--line);margin:14px 0}
+  ul,ol{color:var(--ink2);padding-left:22px}
+  li{margin:7px 0}
+  .mono{font-family:"Cascadia Code",Consolas,monospace;font-size:13.5px}
+  .flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:18px 0}
+  .flow div{background:var(--card);border:1px solid var(--line);border-radius:9px;
+            padding:14px 16px;font-size:14px}
+  .flow b{display:block;margin-bottom:6px;color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>草地与油棕区分方案</h1>
+<div class="sub">
+  全项目最大算法缺陷的修复路线 —— 为什么「更绿」不等于「更像树」，以及三种可行的拆解思路<br>
+  文档性质：<b>决策稿</b>（未改任何代码）　·　2026-10-13
+</div>
+
+<div class="note danger">
+  <b>一句话结论</b><br>
+  油棕园里「可种植的土地」不只有褐色裸土，也有<b>绿色草皮</b>。而当前判据是
+  <code>树冠 = (平滑 ExG &gt; 阈值) 或 (饱和度 &gt; 0.45)</code>，
+  实测<b>草地的 ExG（136.8）反而比油棕树冠（88.6）高 54%</b> ——
+  于是草地被算成「树」，从空地候选里被扣掉，<b>真正该补种的草地被漏检</b>。<br><br>
+  修复方向<b>不是调阈值</b>（调不动，方向就是反的），而是<b>换判据</b>：
+  从「这块地绿不绿」转向「这块地像不像树」——即引入<b>结构 / 空间周期</b>证据。
+</div>
+
+<h2>1. 问题是什么</h2>
+
+<p>
+  用户在 2026-10-13 提供了关键领域知识：
+  <b>「油棕与绿地色彩差距很大，可种植的土地不仅有褐色的，也有绿色的」</b>。
+  这句话点破了一个此前被忽略的业务前提 ——
+</p>
+
+<div class="card">
+  <b>「空地」= 没有油棕树冠的地面</b>，它<b>可以是褐色裸土，也可以是绿色草皮</b>。
+  两种都属于「该补种」的范畴。
+</div>
+
+<p>
+  而现有流水线的逻辑是：<b>先判树冠，再取补集得空地</b>。
+  也就是说，「绿」被直接当成了「树」的证据。一旦某块草皮的绿度超过阈值，
+  它就会被判为树冠、被排除在空地之外，<b>补种清单上就少了这块地</b>。
+  这就是<b>漏检</b>。
+</p>
+
+<div class="flow">
+  <div><b>当前流程</b>绿度判据 → 判为树冠 → 排除 → <span class="tag t-bad">草地漏检</span></div>
+  <div><b>应有流程</b>绿度 + 结构 → 判「像不像树」→ 草地保留在空地中 → <span class="tag t-ok">正确补种</span></div>
+</div>
+
+<h2>2. 根因：为什么「更绿」不等于「更像树」</h2>
+
+<p>
+  把两块地放到一起看，结论很反直觉 ——
+</p>
+
+<table>
+  <thead>
+    <tr><th>地物</th><th>RGB</th><th>ExG（绿度）</th><th>饱和度</th><th>纹理 std</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><b>草地</b>（草皮）</td><td class="mono">(120, 157, 58)</td><td><b>136.8</b></td><td>0.651</td><td>46.3</td></tr>
+    <tr><td>油棕树冠（样本一）</td><td class="mono">(83, 115, 59)</td><td>88.6</td><td>0.501</td><td>39.3</td></tr>
+    <tr><td>油棕树冠（样本二）</td><td class="mono">(96, 132, 54)</td><td>113.2</td><td>0.612</td><td>46.9</td></tr>
+  </tbody>
+</table>
+
+<p>
+  <b>草地的绿度比油棕高 54%。</b>原因在于，正射影像上的「绿」其实是两件事叠在一起的：
+</p>
+
+<div class="card">
+  <b>① 叶片本身的反射率</b> —— 草皮是<b>单层鲜嫩叶片</b>，反射均匀、直接朝上，绿得很「纯」。<br>
+  <b>② 冠层结构的覆盖度与阴影</b> —— 油棕是<b>立体伞状叶</b>，冠层内部有大量阴影和缝隙，
+  正射（垂直向下拍）之后，这些<b>内部暗部把整体绿度拉低</b>了。
+</div>
+
+<p>
+  所以「油棕看起来没那么绿」，不是因为它不像植物，而是因为
+  <b>它的绿被自己的立体结构「打折」了</b>。
+  用绿度做判据，等于用「打折后的数值」去比一个「没有打折的数值」，
+  方向天然是反的。
+</p>
+
+<div class="note">
+  <b>一句话记住：</b>草是「平面上的绿」，油棕是「立体的绿」。
+  要区分它们，得看<b>结构</b>，而不是看<b>颜色深浅</b>。
+</div>
+
+<h2>3. 三个可用的突破口（附实测依据）</h2>
+
+<h3>突破口 ①：纹理 std（局部粗糙度）</h3>
+<p>
+  纹理 std 是 5×5 邻域内亮度的标准差，衡量「这块地表面有多粗糙」。
+  它的最大优点是 <b>不依赖绝对亮度</b>，因此对跨航带曝光差（ExG 中位 37~116）天然鲁棒。
+</p>
+<table>
+  <thead><tr><th>地物</th><th>纹理 std 实测</th><th>含义</th></tr></thead>
+  <tbody>
+    <tr><td>株位空缺</td><td>8 ~ 15</td><td>平滑，只有一个小凹坑</td></tr>
+    <tr><td>连片空地</td><td>22 ~ 26</td><td>较平滑</td></tr>
+    <tr><td>油棕树冠</td><td>39 ~ 47</td><td>伞状叶 + 阴影，粗糙</td></tr>
+    <tr><td><b>草地</b></td><td><b>46.3</b></td><td><span class="tag t-bad">与油棕重叠</span></td></tr>
+  </tbody>
+</table>
+<div class="note danger">
+  <b>注意：单尺度纹理不够用。</b>草地 46.3 落在油棕 39~47 区间内，
+  单靠一个数值分不开。但如果换成<b>多尺度比值</b>（粗窗口纹理 ÷ 细窗口纹理），
+  草地的「细密均匀」与油棕的「大尺度明暗交替」就会显出差别 —— 这一条<b>需要新数据验证</b>。
+</div>
+
+<h3>突破口 ②：株行距网格周期（最强的先验）</h3>
+<p>
+  这是交接文档明确标注的<b>比纹理更强的判据</b>：
+</p>
+<div class="card">
+  <b>草地不服从种植网格，油棕服从。</b><br>
+  油棕按 8.35 m 株距 / 7.23 m 行距 / 60° 错行的规则网格种植；
+  草皮是自然生长的，<b>没有任何空间周期</b>。
+</div>
+<p>
+  也就是说，与其问「这块地绿不绿」，不如问
+  <b>「这块地的树心是不是按 8.35 m 的周期规则排列」</b>。
+  规则排列 = 真油棕；毫无规律 = 草地或其它地物。
+</p>
+<div class="note good">
+  <b>好消息：这套能力项目里已经有了，不用从零写。</b>
+  <code>grid_prior.py</code> 里现成两个函数可以直接复用：
+  <ul style="margin:8px 0 0">
+    <li><code>detect_tree_centers()</code> —— 用 ExG 局部极大找出每个树冠中心</li>
+    <li><code>_nn_stats()</code> —— 用「最近邻距离的变异系数 CV」判断是否规则种植
+      （规则网格 CV ≈ 0~0.20；随机点过程 ≈ 0.52；聚集分布 &gt; 0.8）</li>
+  </ul>
+</div>
+
+<h3>突破口 ③：连片空地内部成分拆解</h3>
+<p>
+  实测发现，被归为同一个 <code>open_patch</code>（连片空地）类别的多边形，
+  内部其实混着<b>两种截然不同的地物</b>：
+</p>
+<table>
+  <thead><tr><th>地块</th><th>内部成分</th><th>类型判读</th></tr></thead>
+  <tbody>
+    <tr><td>前 4 大块连片空地</td><td>35~39% 黄褐裸土 + 41~47% 暗区 + 7~26% 亮白碎片，<b>强绿 0%</b></td><td><span class="tag t-mid">基建型</span>（堆料 / 硬化 / 扰动地）</td></tr>
+    <tr><td>第 5 块</td><td><b>89.7% 强绿</b></td><td><span class="tag t-ok">草荒型</span>（该补种）</td></tr>
+  </tbody>
+</table>
+<p>
+  两者的补种含义完全相反，却被塞进了同一个类别里。这一条<b>不需要动分割判据</b>，
+  只需要在分类阶段增加一个「内部成分」维度。
+</p>
+
+<h2>4. 候选方案与对比</h2>
+
+<div class="card">
+  <h3 style="margin-top:0">方案 A · 多尺度纹理回检</h3>
+  <p>
+    在分割出树冠之后加一道回检：对纹理特征显示为「细密均匀」的连片区域，
+    怀疑是草地，改判为可种植空地。用<b>多尺度纹理比值</b>弥补单尺度的重叠问题。
+  </p>
+  <p><b>代价</b>小（<code>landcover.py:_texture_std</code> 可复用）　
+     <b>对曝光鲁棒</b>（纹理不看绝对值）　
+     <b>风险</b>中（需新数据标定多尺度阈值）</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">方案 B · 株行距网格周期性回检 <span class="tag t-ok">核心</span></h3>
+  <p>
+    对每个「疑似树冠」的连通域，在内部检测是否存在 8.35 m 的种植周期：
+  </p>
+  <ul>
+    <li>树心最近邻 CV &lt; 0.30 且株距 ≈ 8.35 m → <b>规则种植，确认是油棕</b></li>
+    <li>树心最近邻 CV &gt; 0.45，或株距发散、无周期 → <b>非种植，判为草地/其它</b></li>
+  </ul>
+  <p><b>代价</b>中（需在分割与网格模块之间搭桥）　
+     <b>区分力最强</b>（周期是比颜色更本质的特征）　
+     <b>风险</b>低-中（判据可解释、可回退）</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">方案 C · 连片空地成分拆解 <span class="tag t-ok">低风险</span></h3>
+  <p>
+    不改分割，只对已判为 <code>open_patch</code> 的连片空地统计内部光谱成分，
+    按「强绿占比」拆成草荒型 / 基建型两个子类。
+  </p>
+  <p><b>代价</b>小-中（纯增量，不动现有判据）　
+     <b>风险</b>低（可随时开关）　
+     <b>局限</b>：只解决「已进入空地的连片区域」，<b>不能解决草地被误判成树冠的漏检</b></p>
+</div>
+
+<h3>对比总表</h3>
+<table>
+  <thead>
+    <tr><th>方案</th><th>解决的问题</th><th>区分力</th><th>对曝光鲁棒性</th><th>实现代价</th><th>回归风险</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><b>A</b> 多尺度纹理</td><td>草地 vs 油棕</td><td>中</td><td><span class="tag t-ok">高</span></td><td>小</td><td>中</td></tr>
+    <tr><td><b>B</b> 网格周期性</td><td>草地漏检（根本）</td><td><span class="tag t-ok">高</span></td><td><span class="tag t-ok">高</span></td><td>中</td><td>低-中</td></tr>
+    <tr><td><b>C</b> 成分拆解</td><td>连片空地语义混杂</td><td>中</td><td>中</td><td>小-中</td><td><span class="tag t-ok">低</span></td></tr>
+  </tbody>
+</table>
+
+<h2>5. 推荐路线（分阶段，先低风险后核心）</h2>
+
+<div class="flow">
+  <div><b>阶段 1</b>方案 C：连片空地成分拆解<br><span class="tag t-ok">不动分割判据</span></div>
+  <div><b>阶段 2</b>方案 B：网格周期性回检<br><span class="tag t-mid">核心修复</span></div>
+  <div><b>阶段 3</b>方案 A 作为 B 的辅助特征，组合打分</div>
+  <div><b>阶段 4</b>全量重跑 + A/B 对比验证</div>
+</div>
+
+<p>
+  这样安排的道理：<b>先把零风险、见效快的做了</b>（C 不改判据，只加维度），
+  再动核心的 B（需要跨模块搭桥），最后用 A 补充边界情况。
+  每一步都可单独验收、可单独回退。
+</p>
+
+<h2>6. 影响面（改之前必须知道）</h2>
+
+<table>
+  <thead><tr><th>层面</th><th>影响</th></tr></thead>
+  <tbody>
+    <tr><td>输出 schema</td><td>新增字段（如 <code>patch_type</code> / <code>grass_ratio</code> / <code>periodicity_cv</code>），需同步 <code>process_image.py</code> 的 feature 构造</td></tr>
+    <tr><td>推理服务契约</td><td>新增参数需同步 <code>sidecar.py</code> 的参数表 + 指纹 + 回传；<b>契约测试 95/95 是验收基线，不能掉</b></td></tr>
+    <tr><td>缓存</td><td>参数指纹变化 → 528 块瓦片全部重算（预期行为）</td></tr>
+    <tr><td>文档</td><td>需同步更新《分割判据说明》；本方案文档定稿后登记进 <code>docs/README.md</code></td></tr>
+  </tbody>
+</table>
+
+<h2>7. 怎么证明改对了（验证方法）</h2>
+
+<ol>
+  <li><b>需要样例</b>：请用户在影像上指出 2~3 处「已知是草地、且该补种」的位置坐标
+      （可在 ArcGIS / Google Earth 里目视找）。这是唯一的真值来源。</li>
+  <li><b>A/B 对比</b>：同一幅影像，改前 vs 改后，对比
+      「检出空地数」「需补种面积」「样例草地的命中情况」。</li>
+  <li><b>回归检查</b>：确认「园区内部无路」等已知负例仍然零误报，契约测试仍 95/95。</li>
+</ol>
+
+<h2>8. 需要你决策的点</h2>
+
+<div class="card">
+  <ol style="margin:0">
+    <li><b>是否允许修改分割判据？</b>（方案 B 会动到 <code>detect.py:canopy_structural</code> 的下游逻辑。
+        项目红线要求：改分割判据前必须用户同意。）</li>
+    <li><b>草荒型空地怎么表达？</b>新增一个子类别（如 <code>open_patch_grass</code>），
+        还是只在现有类别上加一个字段？前者更醒目，后者对下游改动更小。</li>
+    <li><b>能否提供样例坐标？</b>没有真值样例，任何方案都无法证明「修好了」。</li>
+    <li><b>是否接受分阶段推进？</b>（先 C 后 B，每步独立验收）</li>
+  </ol>
+</div>
+
+<div class="note">
+  <b>本方案未改动任何代码。</b>待上述决策明确后，再进入实现。
+  实现前会先补一份「改动前后对比」的验证脚本，确保可回退。
+</div>
+
+<hr style="margin:56px 0 24px;border:none;border-top:1px solid var(--line)">
+<p style="font-size:13.5px;color:var(--ink3)">
+  相关文档：《分割判据说明》（现有判据的演进史）·
+  《地物光谱特征报告》（全图 1874 万像元普查）·
+  《预留带形态分析》（同类决策文档）
+</p>
+
+</div>
+</body>
+</html>

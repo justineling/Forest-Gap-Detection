@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>草地与油棕区分方案（小白版）—— 为什么电脑会认错</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1d21; --ink2:#4a5158; --ink3:#7a828a;
+    --line:#e3e6ea; --accent:#1f6feb; --warn:#c2410c; --ok:#15803d; --bad:#b91c1c;
+    --code:#f3f4f6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16.5px/1.85 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:48px 26px 96px}
+  h1{font-size:29px;line-height:1.35;margin:0 0 10px;letter-spacing:-.4px}
+  .sub{color:var(--ink3);font-size:15px;margin-bottom:34px}
+  h2{font-size:21px;margin:48px 0 14px;padding-top:20px;border-top:1px solid var(--line)}
+  h3{font-size:17.5px;margin:28px 0 10px}
+  p{margin:13px 0;color:var(--ink2)}
+  code{background:var(--code);padding:2px 6px;border-radius:4px;
+       font:13.5px/1.5 "Cascadia Code",Consolas,monospace;color:#0f172a}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:20px 22px;margin:18px 0}
+  .story{background:#fffdf5;border:1px solid #f0e2b8;border-radius:12px;
+         padding:18px 22px;margin:20px 0;font-size:15.5px}
+  .story b{color:#8a6d1f}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:15px}
+  th,td{padding:11px 12px;border-bottom:1px solid var(--line);text-align:left}
+  th{background:#fafbfc;font-weight:600;color:var(--ink)}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12.5px;font-weight:600}
+  .t-bad{background:#fee2e2;color:var(--bad)}
+  .t-mid{background:#fef3c7;color:#92400e}
+  .t-ok{background:#dcfce7;color:var(--ok)}
+  .note{border-left:4px solid var(--accent);background:#f0f6ff;
+        padding:14px 18px;border-radius:0 10px 10px 0;margin:20px 0;font-size:15.5px}
+  .danger{border-left-color:var(--bad);background:#fef2f2}
+  .good{border-left-color:var(--ok);background:#f0fdf4}
+  ul,ol{color:var(--ink2);padding-left:22px}
+  li{margin:8px 0}
+  .big{font-size:17px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>草地与油棕区分方案（小白版）</h1>
+<div class="sub">
+  电脑现在会把「草地」当成「油棕树」，结果该补种的地被漏掉了。<br>
+  这一页用大白话讲清楚：为什么会认错，以及有哪几个办法能修好。
+</div>
+
+<div class="note danger">
+  <b>一句话说清</b><br>
+  电脑判断「哪里有树」的办法是<b>看颜色够不够绿</b>。
+  可是草地上长得又嫩又绿，<b>比油棕树还绿</b>——
+  于是电脑把草地当成了树，把这块地划出了「需要补种」的名单。<br>
+  <b>问题就出在：用「绿不绿」来判断「是不是树」，本身就是个错的思路。</b>
+</div>
+
+<h2>1. 电脑现在是怎么想的</h2>
+
+<p>
+  先说说电脑的工作方式。它拿到一张从上往下拍的大照片，
+  要干的事很简单：<b>把「有树的地方」圈出来，剩下的就是「没树的地方」</b>，
+  没树的地方就需要补种。
+</p>
+
+<p>
+  那它怎么认出「有树」呢？它没有鼻子也没有手，只能<b>看颜色</b>。
+  它的标准是：<b>这块地方够绿，就当成树。</b>
+</p>
+
+<div class="story">
+  <b>打个比方：</b><br>
+  这就像让你看一张俯拍的照片，判断哪些是「树」。
+  如果规则是「颜色深绿的就是树」，那么一块<b>修剪得整整齐齐、绿得发亮的草坪</b>，
+  就会被你误认成树。而旁边那些<b>看起来灰扑扑、没那么鲜艳</b>的油棕，
+  反而会被漏掉。
+</div>
+
+<h2>2. 为什么「更绿」反而不等于「是树」</h2>
+
+<p>
+  这里是整件事最关键、也最反常识的一点 ——
+</p>
+
+<div class="note">
+  <b>草地，真的比油棕树更绿。</b>
+</div>
+
+<p>
+  为什么会这样？因为「绿」这件事，被两样东西影响了：
+</p>
+
+<div class="card">
+  <p class="big" style="margin-top:0"><b>① 叶子本身有多鲜嫩</b></p>
+  <p>
+    草坪是<b>薄薄一层嫩叶子</b>，平铺在地上，阳光直接照上去，绿得非常「纯」、非常亮。
+  </p>
+  <p class="big"><b>② 树的结构有没有「打折」</b></p>
+  <p>
+    油棕树是<b>一把立体的绿色大伞</b>，一层层的叶子撑开，
+    中间夹着很多<b>阴影和缝隙</b>。从正上方往下拍的时候，
+    这些内部的黑影会把整体的绿给<b>拉低</b>。
+  </p>
+</div>
+
+<div class="story">
+  <b>再打个比方：</b><br>
+  想象两样东西：一顶<b>撑开的绿色雨伞</b>，和一块<b>绿色的地毯</b>。
+  <br><br>
+  从正上方看下去，地毯是<b>一整片均匀的绿</b>，颜色很足；
+  而雨伞虽然也是绿的，但因为伞骨、褶皱、底下的阴影，
+  <b>整体看起来反而没那么绿、还有点花</b>。
+  <br><br>
+  电脑现在只看「谁更绿」，当然就选中了地毯（草地），
+  把雨伞（油棕）漏掉了。
+</div>
+
+<h2>3. 那要怎么才能分得开？</h2>
+
+<p>
+  关键思路的转变是：<b>别再问「这块地绿不绿」，改问「这块地像不像树」。</b>
+  而「像不像树」，看的是<b>结构</b>，不是颜色。
+</p>
+
+<p>下面三个办法，就是从不同角度去看「结构」：</p>
+
+<div class="card">
+  <h3 style="margin-top:0">办法一：摸一摸「表面粗不粗糙」</h3>
+  <p>
+    草地摸起来像<b>一块平整的地毯</b>；油棕树冠摸起来像<b>一丛一丛的灌木</b>，
+    有高有低、有明有暗。
+  </p>
+  <p><b>优点：</b>「粗糙程度」和照片亮不亮没关系，阴天晴天都管用。<br>
+     <b>缺点：</b>光靠这一个指标，草地和油棕的数值会撞在一起，<b>不太够用</b>。</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">办法二：看「是不是按格子摆的」<span class="tag t-ok">最靠谱</span></h3>
+  <p>
+    油棕是<b>人一株一株种下去的</b>，排列得整整齐齐，
+    株距 8.35 米、行距 7.23 米，像<b>停车场的车位</b>一样有规律。
+    而草地是<b>自己长出来的</b>，东一块西一块，<b>毫无规律</b>。
+  </p>
+  <p>
+    所以只要问一句：<b>「这里的树是不是按固定间距、规规矩矩排的？」</b>
+    排得整齐 → 真油棕；乱糟糟没规律 → 草地。
+  </p>
+  <p><b>优点：</b>这是最本质的区别，比看颜色可靠得多。
+    而且好消息是，<b>这个本领电脑已经会了</b>，不用重新教。<br>
+     <b>缺点：</b>要把这个本领接到现在的流程里，需要一点改造工作。</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">办法三：把「空地」再分分类</h3>
+  <p>
+    现在已经找出来的「空地」里，其实混着两种完全不同的地：
+    一种是<b>工地、堆料场</b>那种（基本没有绿色，多半不用补种），
+    另一种是<b>长满草的荒地</b>（绿油油一片，正是该补种的）。
+  </p>
+  <p>
+    这两类被塞在同一个「连片空地」标签下，含义完全不同。
+    <b>办法三就是把它们分开。</b>
+  </p>
+  <p><b>优点：</b>不用动原来的判断逻辑，风险最低，马上能做。<br>
+     <b>缺点：</b>只能解决「已经被找出来的空地」，
+    治不了「草地被误当成树、根本没进名单」的那个病根。</p>
+</div>
+
+<h2>4. 三个办法，哪个更好？</h2>
+
+<p><b>这张表在说什么：</b>把三个办法放在一起比，看谁最管用、谁最容易做、谁风险最小。</p>
+
+<table>
+  <thead>
+    <tr><th>办法</th><th>管用程度</th><th>好不好做</th><th>风险</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>一、摸粗糙度</td><td>一般</td><td>容易</td><td>中等</td></tr>
+    <tr><td><b>二、看摆放规律</b></td><td><span class="tag t-ok">最管用</span></td><td>中等</td><td><span class="tag t-ok">较小</span></td></tr>
+    <tr><td>三、给空地分类</td><td>一般</td><td><span class="tag t-ok">最容易</span></td><td><span class="tag t-ok">最小</span></td></tr>
+  </tbody>
+</table>
+
+<h2>5. 我们的建议</h2>
+
+<div class="note good">
+  <b>先易后难，分两步走：</b>
+  <ol style="margin:10px 0 0">
+    <li><b>先做办法三</b>（给空地分类）—— 不动老逻辑，风险最低，马上能见到效果。</li>
+    <li><b>再做办法二</b>（看摆放规律）—— 这才是治本的那一刀，把被误认成树的草地救回来。</li>
+    <li>办法一（摸粗糙度）作为补充，用来处理一些边边角角的情况。</li>
+  </ol>
+</div>
+
+<p>
+  这样安排的好处是：<b>每一步都能单独检查、单独回退</b>，
+  不会一上来就把整个系统改乱。
+</p>
+
+<h2>6. 你能做什么</h2>
+
+<div class="card">
+  <p class="big" style="margin-top:0"><b>① 帮我们指出几块「真的是草地」的地方</b></p>
+  <p>
+    这是最要紧的一件事。电脑要证明自己「改对了」，
+    就必须有一个<b>标准答案</b>作对照。
+    你可以在 ArcGIS 或 Google Earth 的地图上，
+    圈出 2~3 处你确认「这是草地、应该补种」的位置，把坐标给我们。
+  </p>
+
+  <p class="big"><b>② 拍板：要不要动「判断树冠」的老规矩</b></p>
+  <p>
+    办法二会改到最核心的判断逻辑，按项目约定，<b>必须你同意才能动</b>。
+  </p>
+
+  <p class="big"><b>③ 决定草荒型空地怎么标</b></p>
+  <p>
+    是把「长草的荒地」单独列成一类（更醒目），
+    还是在原来类别上加个标记（改动更小）？你说了算。
+  </p>
+</div>
+
+<div class="note">
+  <b>放心：这一页只是「方案」，我们一个字代码都还没改。</b>
+  等你把上面几件事定了，再动手。
+</div>
+
+<hr style="margin:52px 0 22px;border:none;border-top:1px solid var(--line)">
+<p style="font-size:13.5px;color:var(--ink3)">
+  想了解技术细节，可以看同目录的《草地与油棕区分方案》（专业版）。
+</p>
+
+</div>
+</body>
+</html>
