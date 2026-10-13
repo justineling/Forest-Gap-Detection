@@ -1,0 +1,229 @@
+{
+ "type": "FeatureCollection",
+ "crs": {
+  "type": "name",
+  "properties": {
+   "name": "EPSG:32649"
+  }
+ },
+ "generated_at": "2026-10-13T11:06:05.178170+00:00",
+ "note": "几何已投影到 UTM 49N（米）。ArcGIS 导入后若显示为直线，请手动指定坐标系为 WGS 1984 UTM Zone 49N。",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "SLOT-0001",
+    "cls": "vacant_slot",
+    "cls_label": "株位空缺",
+    "area_sqm": 42.5,
+    "cls_conf": 0.0,
+    "cls_meth": "planting_grid_prior"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       555619.25,
+       165801.8
+      ],
+      [
+       555641.5,
+       165801.81
+      ],
+      [
+       555641.5,
+       165812.86
+      ],
+      [
+       555619.25,
+       165812.86
+      ],
+      [
+       555619.25,
+       165801.8
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "ROAD-0001",
+    "cls": "road",
+    "cls_label": "道路",
+    "area_sqm": 786.0,
+    "cls_conf": 0.83,
+    "cls_meth": "landcover_mask"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       555730.47,
+       165912.36
+      ],
+      [
+       555841.71,
+       165912.39
+      ],
+      [
+       555841.71,
+       165923.44
+      ],
+      [
+       555730.47,
+       165923.42
+      ],
+      [
+       555730.47,
+       165912.36
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "WATER-0001",
+    "cls": "water",
+    "cls_label": "水体",
+    "area_sqm": 950.0,
+    "cls_conf": 0.91,
+    "cls_meth": "landcover_mask"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       555952.9,
+       166133.48
+      ],
+      [
+       556064.14,
+       166133.51
+      ],
+      [
+       556064.12,
+       166244.04
+      ],
+      [
+       555952.88,
+       166244.02
+      ],
+      [
+       555952.9,
+       166133.48
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "OFFICE-0001",
+    "cls": "office",
+    "cls_label": "办公生活区",
+    "area_sqm": 773.0,
+    "cls_conf": 0.77,
+    "cls_meth": "landcover_mask"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       556175.33,
+       166354.61
+      ],
+      [
+       556286.57,
+       166354.63
+      ],
+      [
+       556286.55,
+       166465.17
+      ],
+      [
+       556175.31,
+       166465.14
+      ],
+      [
+       556175.33,
+       166354.61
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "PATCH-0001",
+    "cls": "open_patch",
+    "cls_label": "连片空地",
+    "area_sqm": 128.0,
+    "cls_conf": 0.0,
+    "cls_meth": "planting_grid_prior"
+   },
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        556397.76,
+        166575.73
+       ],
+       [
+        556453.38,
+        166575.74
+       ],
+       [
+        556453.37,
+        166631.01
+       ],
+       [
+        556397.75,
+        166631.0
+       ],
+       [
+        556397.76,
+        166575.73
+       ]
+      ]
+     ],
+     [
+      [
+       [
+        556508.98,
+        166686.29
+       ],
+       [
+        556564.6,
+        166686.3
+       ],
+       [
+        556564.59,
+        166741.57
+       ],
+       [
+        556508.97,
+        166741.56
+       ],
+       [
+        556508.98,
+        166686.29
+       ]
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

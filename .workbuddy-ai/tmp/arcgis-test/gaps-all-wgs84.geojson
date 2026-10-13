@@ -1,0 +1,229 @@
+{
+ "type": "FeatureCollection",
+ "schema_version": "0.3",
+ "crs": "EPSG:4326",
+ "area_crs": "EPSG:32649",
+ "source_image": "synthetic.tif",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "SLOT-0001",
+    "class": "vacant_slot",
+    "class_label": "株位空缺",
+    "class_confidence": 0.0,
+    "class_method": "planting_grid_prior",
+    "area_sqm": 42.5,
+    "centroid_utm": [
+     1,
+     2
+    ]
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       111.5,
+       1.5
+      ],
+      [
+       111.5002,
+       1.5
+      ],
+      [
+       111.5002,
+       1.5001
+      ],
+      [
+       111.5,
+       1.5001
+      ],
+      [
+       111.5,
+       1.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "ROAD-0001",
+    "class": "road",
+    "class_label": "道路",
+    "class_confidence": 0.83,
+    "class_method": "landcover_mask",
+    "area_sqm": 786.0
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       111.501,
+       1.501
+      ],
+      [
+       111.502,
+       1.501
+      ],
+      [
+       111.502,
+       1.5011
+      ],
+      [
+       111.501,
+       1.5011
+      ],
+      [
+       111.501,
+       1.501
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "WATER-0001",
+    "class": "water",
+    "class_label": "水体",
+    "class_confidence": 0.91,
+    "class_method": "landcover_mask",
+    "area_sqm": 950.0
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       111.503,
+       1.503
+      ],
+      [
+       111.504,
+       1.503
+      ],
+      [
+       111.504,
+       1.504
+      ],
+      [
+       111.503,
+       1.504
+      ],
+      [
+       111.503,
+       1.503
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "OFFICE-0001",
+    "class": "office",
+    "class_label": "办公生活区",
+    "class_confidence": 0.77,
+    "class_method": "landcover_mask",
+    "area_sqm": 773.0
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       111.505,
+       1.505
+      ],
+      [
+       111.506,
+       1.505
+      ],
+      [
+       111.506,
+       1.506
+      ],
+      [
+       111.505,
+       1.506
+      ],
+      [
+       111.505,
+       1.505
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "gap_id": "PATCH-0001",
+    "class": "open_patch",
+    "class_label": "连片空地",
+    "class_confidence": 0.0,
+    "class_method": "planting_grid_prior",
+    "area_sqm": 128.0
+   },
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        111.507,
+        1.507
+       ],
+       [
+        111.5075,
+        1.507
+       ],
+       [
+        111.5075,
+        1.5075
+       ],
+       [
+        111.507,
+        1.5075
+       ],
+       [
+        111.507,
+        1.507
+       ]
+      ]
+     ],
+     [
+      [
+       [
+        111.508,
+        1.508
+       ],
+       [
+        111.5085,
+        1.508
+       ],
+       [
+        111.5085,
+        1.5085
+       ],
+       [
+        111.508,
+        1.5085
+       ],
+       [
+        111.508,
+        1.508
+       ]
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

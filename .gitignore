@@ -16,7 +16,7 @@ output/
 *.log
 
 # ---- 编辑器 / 系统 ----
-.workbuddy-ai/
+# .workbuddy-ai/   # 2026-10-14 起纳入版本管理（项目记忆 + 分析脚本 + 验证图）
 .idea/
 .vscode/
 *.swp
