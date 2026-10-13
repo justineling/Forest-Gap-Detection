@@ -87,6 +87,7 @@ os.environ.setdefault("TORCH_HOME", str(_PROJ / ".cache" / "torch"))
 
 import numpy as np
 import rasterio
+from scipy import ndimage as ndi
 from rasterio.features import shapes as rio_shapes
 from rasterio.enums import Resampling
 from rasterio.windows import Window, transform as win_transform, bounds as win_bounds
@@ -108,7 +109,8 @@ from grid_prior import (  # noqa: E402
     summarize_unplantable, UNPLANTABLE_CLASSES, CLASS_SEMANTICS,
     DEFAULT_PRIOR_PITCH_M,
 )
-from landcover import detect_unplantable, LandcoverParams  # noqa: E402
+from landcover import (detect_unplantable, detect_grass,  # noqa: E402
+                       LandcoverParams)
 
 
 def shp_transform(func, geom):
@@ -211,7 +213,8 @@ def plan_tiles(width: int, height: int, tile_size: int, overlap: int,
     return tiles
 
 
-def order_tiles_by_validity(ds, tiles: list[Tile], thresh: float = 0.02
+def order_tiles_by_validity(ds, tiles: list[Tile], thresh: float = 0.02,
+                            cache_path: Path | None = None
                             ) -> tuple[list[Tile], list[Tile]]:
     """把瓦片分成 (有数据的, 空白的) 两组，各自保持原有行优先顺序。
 
@@ -228,6 +231,26 @@ def order_tiles_by_validity(ds, tiles: list[Tile], thresh: float = 0.02
     """
     if not tiles:
         return [], []
+
+    # 缓存（2026-10-13 新增）：有效性排序只取决于「影像 + 瓦片网格」，与算法参数
+    # 无关，可安全复用。命中缓存能省掉一次全图降采样读取 —— 实测这一步要
+    # 55~117 秒，是整幅流程里最大的单点固定开销。
+    key = None
+    if cache_path is not None:
+        key = (f"{Path(ds.name).name}|{ds.width}x{ds.height}|{ds.count}"
+               f"|{len(tiles)}|{thresh}")
+        try:
+            obj = json.loads(Path(cache_path).read_text(encoding="utf-8"))
+            if obj.get("key") == key:
+                ids = set(obj.get("good", []))
+                good = [t for t in tiles if t.tile_id in ids]
+                blank = [t for t in tiles if t.tile_id not in ids]
+                if len(good) + len(blank) == len(tiles):
+                    log(f"瓦片有效性排序命中缓存（{len(good)} 有效 / "
+                        f"{len(blank)} 空白），跳过全图概览读取")
+                    return good, blank
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+            pass
 
     H, W = 128, 136          # 概览分辨率（与瓦片网格对齐，约 8×9 格/瓦片）
     try:
@@ -252,6 +275,18 @@ def order_tiles_by_validity(ds, tiles: list[Tile], thresh: float = 0.02
     # 组内按原始行优先序号排序，保证可复现
     good.sort(key=lambda t: (t.row_core, t.col_core))
     blank.sort(key=lambda t: (t.row_core, t.col_core))
+
+    # 写缓存，供下次启动直接复用（失效条件见上方 key 的构成）
+    if cache_path is not None and key is not None:
+        try:
+            cp = Path(cache_path)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            cp.write_text(json.dumps(
+                {"key": key, "good": [t.tile_id for t in good],
+                 "blank": [t.tile_id for t in blank]},
+                ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
     return good, blank
 
 
@@ -514,6 +549,17 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                                exg_threshold=args.exg_threshold,
                                use_saturation=args.use_saturation,
                                exg_lo=args.exg_lo, exg_hi=args.exg_hi) & valid
+
+    # --- 草地回检（2026-10-13）---------------------------------------------
+    # 全项目最大的算法缺陷：现有判据「ExG > 阈值 = 树冠」会把**草地**也算成树，
+    # 因为实测草地的 ExG（159）反而比油棕（64~102）高 54% —— 油棕是「立体的绿」，
+    # 冠层内部阴影把绿度打折了。草地因此被从空地候选中扣掉，造成**漏检**。
+    # 这里把「过于鲜绿 + 高饱和 + 连片」的区域从树冠里剔除，让它们回到空地。
+    # 详见 docs/03-算法教学/草地与油棕区分方案.html
+    if not args.no_grass_recheck:
+        grass = detect_grass(rgb, valid, px_m)
+        canopy = canopy & ~grass
+
     gap = complement(canopy, valid)
 
     # --- 空地分离 ---
@@ -545,6 +591,49 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
     # core_box 用的是影像原坐标系；下面统一在 UTM 下比较，所以转换一次
     core_box_utm = shp_transform(fwd, core_box)
 
+    # --- 不可种植地物：按像素从空地中扣除，并单独成层 ---------------------
+    # 设计变更（2026-10-13）：
+    #   旧做法是「整块改判」—— 把与掩膜重叠 ≥ unplantable_overlap 的空地多边形
+    #   整块换成 road/water/office。实测有两个硬伤：
+    #     ① 道路天然与周边裸土连成一片：1048 块空地里**没有一块是"纯道路"**
+    #        （road 覆盖率最大仅 58.2%、中位 0%），0.5 门槛下只扣掉实际路网的 2%；
+    #     ② 放宽阈值后改判面积会**超过掩膜本身**（thr=0.3 → 43,606 m² >
+    #        掩膜 34,725 m²），把大量本该补种的裸土误标成道路。
+    #   改为**几何差集**：先把不可种植掩膜按像素从空地栅格中扣除，再矢量化。
+    #   补种面积因此是精确的（不依赖任何阈值），掩膜另存为独立图层供 ArcGIS 查看。
+    unplantable_polys: list[tuple[str, object, float, str]] = []
+    unplantable_stats: dict[str, float] = {}
+    if not args.no_landcover:
+        masks = detect_unplantable(rgb, valid, px_m, LandcoverParams())
+        union = masks["road"] | masks["water"] | masks["office"]
+        gap_units = gap_units & ~union        # ← 关键：按像素扣除，不整块改判
+        for cls in ("water", "road", "office"):
+            mk = masks[cls]
+            if not mk.any():
+                continue
+            # ⚠️ 试过「先在栅格层面按 min_area 粗筛连通域再矢量化」，实测是**负优化**：
+            #    掩膜连通域绝大多数本来就 > min_area（30 m²），粗筛几乎筛不掉东西，
+            #    反而多付了 ndi.label + bincount + 全图布尔索引的开销
+            #    （整幅从 1336 s 涨到 2400+ s）。故不采用。
+            for geom, val in rio_shapes(mk.astype(np.uint8), mask=mk,
+                                        transform=aff_buf):
+                if int(val) != 1:
+                    continue
+                g = shape(geom)
+                if g.is_empty:
+                    continue
+                g_utm = shp_transform(fwd, g)
+                if args.simplify_m > 0:
+                    g_utm = g_utm.simplify(args.simplify_m, preserve_topology=True)
+                a = float(g_utm.area)
+                if a < args.min_area:
+                    continue
+                if not core_box_utm.contains(g_utm.centroid):
+                    continue
+                gid = f"{tile.tile_id}-U{len(unplantable_polys)+1:04d}"
+                unplantable_polys.append((gid, g_utm, a, cls))
+                unplantable_stats[cls] = unplantable_stats.get(cls, 0.0) + a
+
     polys_utm: list[tuple[str, object, float]] = []
     n_dim = int(min(gap_units.sum(), 1e12))
     for gi, (geom, val) in enumerate(rio_shapes(gap_units.astype(np.uint8),
@@ -574,53 +663,7 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                            min_coverage_for_slot=args.min_coverage_for_slot)
     lab_by_id = {l["gap_id"]: l for l in labels}
 
-    # --- 不可种植地物改判 -------------------------------------------------
-    # 用户 2026-10-13 要求：道路（白色）、河流/水塘、油棕树、办公生活区
-    # 四类算"不可种植"，其余才算空地。前三类由 landcover 检测；
-    # 油棕树已是 canopy，天然不落在空地补集里。
-    #
-    # 做法：对每个空地多边形，把它**反投影回瓦片栅格**，与三类掩膜算重叠占比，
-    # 超过 --unplantable-overlap 阈值就改判为对应类别。
-    # 这些多边形仍然输出（class = road/water/office），只是不再计入"需补种"统计。
-    unplantable_stats: dict[str, float] = {}
-    if not args.no_landcover:
-        from rasterio.features import rasterize as rio_rasterize
-
-        masks = detect_unplantable(rgb, valid, px_m, LandcoverParams())
-        rows = gap_units.shape[0]
-        cols = gap_units.shape[1]
-        for gid, p, area in polys_utm:
-            g_img = shp_transform(bwd, p)          # 回到影像坐标系（经纬度）
-            try:
-                poly_r = rio_rasterize([(g_img, 1)], out_shape=(rows, cols),
-                                       transform=aff_buf, dtype=np.uint8,
-                                       all_touched=False)
-            except Exception as exc:               # noqa: BLE001
-                log(f"  [{tile.tile_id}] landcover 栅格化失败 {gid}: {exc}")
-                continue
-            n_poly = int(poly_r.sum())
-            if n_poly == 0:
-                continue
-            best_cls, best_frac = None, 0.0
-            for cls in ("water", "road", "office"):   # 优先级：水 > 路 > 办公
-                mk = masks.get(cls)
-                if mk is None:
-                    continue
-                inter = int((poly_r.astype(bool) & mk).sum())
-                frac = inter / n_poly
-                if frac > best_frac:
-                    best_cls, best_frac = cls, frac
-            if best_cls is not None and best_frac >= args.unplantable_overlap:
-                lab = lab_by_id.setdefault(gid, {})
-                lab["class"] = best_cls
-                lab["class_label"] = CLASS_LABEL_CN[best_cls]
-                lab["class_method"] = "landcover_mask"
-                lab["class_confidence"] = round(float(best_frac), 3)
-                lab["class_reason"] = (
-                    f"该区域 {best_frac*100:.0f}% 的像素命中"
-                    f"{CLASS_LABEL_CN[best_cls]}掩膜 → 判为不可种植，不计入需补种空地")
-                lab["class_semantics"] = CLASS_SEMANTICS[best_cls]
-                unplantable_stats[best_cls] = unplantable_stats.get(best_cls, 0.0) + area
+    # （原「整块改判」逻辑已废弃 —— 改为上方「按像素几何差集」，理由见那里的说明。）
 
     features = []
     total_area = 0.0
@@ -652,9 +695,39 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
             "geometry": mapping(shp_transform(bwd, p)),
         })
 
+    # 不可种植地物单独成层（class = road/water/office），供 ArcGIS 分层查看。
+    # 它们不在 polys_utm 里（已被按像素扣除），因此不计入需补种面积。
+    for gid, p, area, cls in unplantable_polys:
+        c_utm = p.centroid
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "gap_id": gid,
+                "class": cls,
+                "class_label": CLASS_LABEL_CN[cls],
+                "class_confidence": None,
+                "class_method": "landcover_mask",
+                "class_reason": (f"该区域命中{CLASS_LABEL_CN[cls]}掩膜 → "
+                                 f"不可种植，已从需补种面积中按像素扣除"),
+                "class_semantics": CLASS_SEMANTICS[cls],
+                "area_sqm": round(area, 2),
+                "centroid_utm": [round(c_utm.x, 2), round(c_utm.y, 2)],
+                "grid_cell": None,
+                "node_distance_m": None,
+                "coverage_ratio": None,
+                "elongation": None,
+                "slot_score": None,
+                "patch_score": None,
+                "alley_score": None,
+                "confidence": None,
+            },
+            "geometry": mapping(shp_transform(bwd, p)),
+        })
+
     counts = summarize_classes(labels)
     if len(labels) != len(features):
-        # 有不可种植改判时 labels 数量会对不上，直接按最终 feature 统计
+        # features 里额外含「不可种植地物」多边形，与 labels 数量对不上，
+        # 直接按最终 feature 统计。
         counts = summarize_classes(features and
                                    [{"class": f["properties"]["class"]}
                                     for f in features])
@@ -663,8 +736,9 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
         [{"class": f["properties"]["class"],
           "area_sqm": f["properties"]["area_sqm"]} for f in features])
 
-    # 需补种面积 = 全部空地面积 − 不可种植面积
-    plantable_area = round(total_area - unplantable["area_sqm"], 2)
+    # ⚠️ polys_utm 已在前面按像素扣除不可种植区域，因此 total_area 本身就是
+    #    「需补种面积」，**不能**再减一次 unplantable（否则重复扣减）。
+    plantable_area = round(total_area, 2)
 
     return {
         "tile_id": tile.tile_id,
@@ -781,8 +855,11 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--no-landcover", action="store_true",
                     help="关闭道路/水体/办公区检测（退化为旧行为）")
     ap.add_argument("--unplantable-overlap", type=float, default=0.5,
-                    help="空地多边形与不可种植掩膜的重叠占比阈值，"
-                         "超过则改判为对应类别，默认 0.5")
+                    help="[已失效，仅为向后兼容] 旧的「整块改判」阈值。"
+                         "现改为按像素几何差集扣除不可种植区域，不再使用该阈值")
+    ap.add_argument("--no-grass-recheck", action="store_true",
+                    help="关闭草地回检。默认开启：把「过于鲜绿且连片」的区域从树冠中"
+                         "剔除，修正草地被误判成油棕导致的漏检")
 
     ap.add_argument("--quiet", action="store_true", help="精简日志")
     return ap
@@ -835,6 +912,7 @@ def main() -> int:
         "min_valid_ratio": args.min_valid_ratio,
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
+        "no_grass_recheck": args.no_grass_recheck,
         "method": args.method,
     }
     fp = fingerprint(str(in_path), fp_params)
@@ -858,7 +936,8 @@ def main() -> int:
     total_all = len(all_tiles)
 
     # 有数据的瓦片排前面（园区是不规则多边形，先剔除大片 NoData）
-    good, blank = order_tiles_by_validity(ds, all_tiles)
+    good, blank = order_tiles_by_validity(
+        ds, all_tiles, cache_path=job_dir / "tile-order.json")
     tiles = good + blank
     # 提示：本幅影像有效瓦片远少于外接矩形瓦片数
     log(f"瓦片规划：全图外接矩形 {total_all} 块，其中含有效数据 {len(good)} 块、"
@@ -896,8 +975,10 @@ def main() -> int:
     # --- 逐瓦片处理 ---
     done = skipped = failed = 0
     all_features: list[dict] = []
-    class_totals = {CLASS_VACANT_SLOT: 0, CLASS_ALLEY_GAP: 0,
-                    CLASS_OPEN_PATCH: 0, CLASS_UNCERTAIN: 0}
+    # 覆盖全部类别（含本轮新增的 road/water/office）。
+    # ⚠️ 若只初始化旧 4 类，下面 `if k in class_totals` 会把新增三类静默过滤掉，
+    #    导致日志与 summary.by_class 漏报 road/water/office（本轮踩过）。
+    class_totals = {c: 0 for c in CLASS_LABEL_CN}
     area_total = 0.0
     t_proc = time.time()
 
@@ -906,14 +987,16 @@ def main() -> int:
 
         if not args.force and not args.merge_only:
             cached = load_tile_result(tf, fp)
-            if cached is not None:
+            # ⚠️ 必须同时校验 status == "done"：上一轮失败的瓦片也带着有效指纹躺在
+            # 磁盘上，只按指纹命中会把它当缓存跳过，导致那几块永远补不回来
+            # （本轮 6 块边缘瓦片因此丢失，实测踩过）。
+            if cached is not None and cached.get("status") == "done":
                 skipped += 1
-                if cached.get("status") == "done":
-                    all_features.extend(cached.get("gaps", []))
-                    area_total += cached.get("stats", {}).get("area_sqm", 0.0)
-                    for k, v in cached.get("stats", {}).get("by_class", {}).items():
-                        if k in class_totals:
-                            class_totals[k] += v
+                all_features.extend(cached.get("gaps", []))
+                area_total += cached.get("stats", {}).get("area_sqm", 0.0)
+                for k, v in cached.get("stats", {}).get("by_class", {}).items():
+                    if k in class_totals:
+                        class_totals[k] += v
                 continue
 
         if args.merge_only:
@@ -975,17 +1058,26 @@ def main() -> int:
     log("=" * 78)
     log(f"总耗时 {time.time()-t_start:.1f} 秒")
     log(f"瓦片：新处理 {done}，命中缓存 {skipped}，失败 {failed}（共 {len(tiles)}）")
-    log(f"检出空地 {len(all_features)} 块，总面积 {area_total:,.0f} m² "
+    # 需补种 / 不可种植分开报 —— 二者语义完全不同，混在一起会误导
+    # （area_total 已经是「按像素扣除不可种植后」的需补种面积）
+    n_plant = sum(class_totals[k] for k in
+                  (CLASS_VACANT_SLOT, CLASS_ALLEY_GAP,
+                   CLASS_OPEN_PATCH, CLASS_UNCERTAIN))
+    n_unp = sum(class_totals[k] for k in UNPLANTABLE_CLASSES)
+    unp_area = sum(f["properties"]["area_sqm"] for f in all_features
+                   if f["properties"]["class"] in UNPLANTABLE_CLASSES)
+    log(f"需补种空地 {n_plant} 块 / {area_total:,.0f} m² "
         f"（占影像覆盖的 {area_total/(area_ha*1e4)*100:.2f}%）")
-    log(f"按类别：株位空缺 {class_totals[CLASS_VACANT_SLOT]} 块，"
-        f"林间空隙 {class_totals[CLASS_ALLEY_GAP]} 块，"
-        f"连片空地 {class_totals[CLASS_OPEN_PATCH]} 块，"
-        f"不确定 {class_totals[CLASS_UNCERTAIN]} 块")
-    if all_features:
-        areas = np.array([f["properties"]["area_sqm"] for f in all_features])
-        log(f"空地面积：最大 {areas.max():.1f} m²，"
-            f"中位 {np.median(areas):.1f} m²，最小 {areas.min():.1f} m²，"
-            f"合计 {areas.sum():.1f} m²")
+    log(f"不可种植地物 {n_unp} 块 / {unp_area:,.0f} m²（已从补种面积中按像素扣除）")
+    # 动态列出所有非零类别（含新增 road/water/office），不再硬编码旧 4 类
+    log("按类别：" + "，".join(
+        f"{CLASS_LABEL_CN[k]} {v} 块" for k, v in class_totals.items() if v))
+    plant_areas = np.array([f["properties"]["area_sqm"] for f in all_features
+                            if f["properties"]["class"] not in UNPLANTABLE_CLASSES])
+    if plant_areas.size:
+        log(f"需补种空地面积：最大 {plant_areas.max():.1f} m²，"
+            f"中位 {np.median(plant_areas):.1f} m²，最小 {plant_areas.min():.1f} m²，"
+            f"合计 {plant_areas.sum():.1f} m²")
     log(f"网格：株距 {grid.plant_pitch_m:.2f} m  行距 {grid.row_pitch_m:.2f} m  "
         f"错行角 {grid.skew_angle_deg:.1f}°  质量 {grid.quality:.3f}  方法 {grid.method}")
     log("=" * 78)
@@ -996,8 +1088,7 @@ def _reload_from_disk(tiles_dir: Path, tiles: list[Tile], fp: str
                       ) -> tuple[list[dict], dict, float]:
     """把磁盘上所有有效瓦片结果载入内存（用于 --merge-only 与全命中缓存的场景）。"""
     feats: list[dict] = []
-    counts = {CLASS_VACANT_SLOT: 0, CLASS_ALLEY_GAP: 0,
-              CLASS_OPEN_PATCH: 0, CLASS_UNCERTAIN: 0}
+    counts = {c: 0 for c in CLASS_LABEL_CN}   # 含新增三类，避免被 `if k in counts` 过滤
     area = 0.0
     for t in tiles:
         obj = load_tile_result(tiles_dir / f"{t.tile_id}.json", fp)

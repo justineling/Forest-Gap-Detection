@@ -88,6 +88,11 @@ class LandcoverParams:
 
     # --- 水体 ---
     water_blue_margin: float = 0.0  # B 至少比 R 大多少才算水（0 表示只要 B≥G>R）
+    # ⚠️ 亮度上限：`B≥G>R` 对**纯白像素**同样成立（实测白路面 RGB=(251,255,255)，
+    #    因传感器噪声导致 R 略小于 G/B 就中招），必须把亮白地物排除。
+    #    实测分离度极大：真水 L≈88（暗），白路 L≈253（极亮）。取 160 留足余量，
+    #    且与道路检测的亮度锚点（L>170）互斥。
+    water_lum_max: float = 160.0
     water_dark_lum: float = 90.0    # 深水的亮度上限
     water_dark_exg: float = 15.0    # 深水的 ExG 上限
     water_texture_max: float = 6.0  # 水面纹理上限（实测白路纹理 0.7~8.0，水面更平滑）
@@ -95,6 +100,17 @@ class LandcoverParams:
 
     # --- 通用 ---
     min_blob_px: int = 200          # 连通域最小像素数，滤除孤立噪点
+
+    # --- 草地 / 低矮鲜绿植被（可种植，不该被当成油棕树冠）---
+    # 依据（2026-10-13 实测，1024² 区域中位值）：
+    #   草地（亮绿低矮植被）：ExG 159、S 0.64、G-B 125、L 146
+    #   油棕树冠（密林/东南/西北）：ExG 64~102、S 0.37~0.53、G-B 44~79、L 106~119
+    # 物理原因：油棕是「立体的绿」——冠层内部阴影把绿度打折；草地是「平面的绿」，
+    # 无阴影、更黄更亮。所以 **ExG 过高反而说明这里不是树**。
+    # 为排除油棕受光面（亮绿小斑块）的误伤，再用形态学开运算只保留**连片**区域。
+    grass_exg_min: float = 130.0    # ExG 下限（油棕实测上限约 102，留足余量）
+    grass_sat_min: float = 0.60     # 饱和度下限（油棕实测上限约 0.53）
+    grass_open_m: float = 2.0       # 开运算半径（米）：只保留成片草地，滤掉零散受光斑
 
 
 # ----------------------------------------------------------------------------
@@ -159,7 +175,9 @@ def _component_metrics(comp: np.ndarray, sl, px_m: float) -> tuple[float, float,
 
 
 def detect_roads(rgb: np.ndarray, valid: np.ndarray, px_m: float,
-                 p: LandcoverParams | None = None) -> np.ndarray:
+                 p: LandcoverParams | None = None,
+                 feat: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+                 ) -> np.ndarray:
     """白色道路网（含零散路段）。
 
     判据链：
@@ -179,7 +197,8 @@ def detect_roads(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     退一步说仍归入"不可种植"，不影响补种统计，只是 ArcGIS 里少一个独立类别。
     """
     p = p or LandcoverParams()
-    lum, sat, _ = _features(rgb)
+    # feat 由 detect_unplantable 预计算后传入（避免 roads/office/water 各算一遍）
+    lum, sat, _ = feat if feat is not None else _features(rgb)
     cand = _bright_mask(lum, sat, valid, p) & valid
     if not cand.any():
         return np.zeros(rgb.shape[:2], dtype=bool)
@@ -190,17 +209,26 @@ def detect_roads(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     if n == 0:
         return np.zeros(rgb.shape[:2], dtype=bool)
 
-    out = np.zeros(rgb.shape[:2], dtype=bool)
+    # 性能优化（2026-10-13，等价改写）：
+    #   旧写法对**每个**连通域做全图 `lab == i` 与 `comp.sum()`，2304² 瓦片上
+    #   要跑上千次全图比较 + 求和（实测 numpy reduce 累计 41 s / 3 瓦片），
+    #   是本轮整幅跑不动的头号瓶颈。
+    #   改为 bincount 一次性统计各连通域像素数，再只在各自 bbox 内取局部数组。
+    #   两者数学上完全等价 —— 连通域必然落在自己的 bbox 内，判据一字未改。
+    counts = np.bincount(lab.ravel(), minlength=n + 1)
+    min_px = max(1, p.min_blob_px)
     objs = ndi.find_objects(lab)
+    out = np.zeros(rgb.shape[:2], dtype=bool)
     for i in range(1, n + 1):
-        comp = lab == i
-        if int(comp.sum()) < max(1, p.min_blob_px):
+        if int(counts[i]) < min_px:
             continue
-        area_sqm, w_m, h_m, fill = _component_metrics(comp, objs[i - 1], px_m)
+        sl = objs[i - 1]
+        sub = lab[sl] == i
+        area_sqm, w_m, h_m, fill = _component_metrics(sub, sl, px_m)
         if area_sqm < p.road_min_area_sqm:
             continue
         if fill < p.road_fill_max:
-            out |= comp
+            out[sl] |= sub
     return out
 
 
@@ -208,7 +236,9 @@ def detect_roads(rgb: np.ndarray, valid: np.ndarray, px_m: float,
 # 办公 / 硬化场地
 # ----------------------------------------------------------------------------
 def detect_office(rgb: np.ndarray, valid: np.ndarray, px_m: float,
-                  p: LandcoverParams | None = None) -> np.ndarray:
+                  p: LandcoverParams | None = None,
+                  feat: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+                  ) -> np.ndarray:
     """办公生活区、堆料场等大面积硬化场地。
 
     与道路共用"浅色低饱和"掩膜，反过来取**面状**连通域：
@@ -221,7 +251,8 @@ def detect_office(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     因此命中量天然不大——这与"园区以道路为主、办公区少"的预期一致。
     """
     p = p or LandcoverParams()
-    lum, sat, _ = _features(rgb)
+    # feat 由 detect_unplantable 预计算后传入（避免 roads/office/water 各算一遍）
+    lum, sat, _ = feat if feat is not None else _features(rgb)
     cand = _bright_mask(lum, sat, valid, p) & valid
     if not cand.any():
         return np.zeros(rgb.shape[:2], dtype=bool)
@@ -233,17 +264,22 @@ def detect_office(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     if n == 0:
         return np.zeros(rgb.shape[:2], dtype=bool)
 
-    out = np.zeros(rgb.shape[:2], dtype=bool)
+    # 性能优化（2026-10-13，等价改写）：同 detect_roads —— bincount 预筛像素数，
+    # 循环内只在各自 bbox 内取局部数组，避免逐连通域的全图比较与求和。
+    counts = np.bincount(lab.ravel(), minlength=n + 1)
+    min_px = max(1, p.min_blob_px)
     objs = ndi.find_objects(lab)
+    out = np.zeros(rgb.shape[:2], dtype=bool)
     for i in range(1, n + 1):
-        comp = lab == i
-        if int(comp.sum()) < max(1, p.min_blob_px):
+        if int(counts[i]) < min_px:
             continue
-        area_sqm, w_m, h_m, fill = _component_metrics(comp, objs[i - 1], px_m)
+        sl = objs[i - 1]
+        sub = lab[sl] == i
+        area_sqm, w_m, h_m, fill = _component_metrics(sub, sl, px_m)
         if area_sqm < p.office_min_area_sqm:
             continue
         if fill >= p.office_fill_min:
-            out |= comp
+            out[sl] |= sub
     return out
 
 
@@ -271,7 +307,8 @@ def detect_water(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     r, g, b = f[..., 0], f[..., 1], f[..., 2]
     lum, _, exg = _features(rgb)
 
-    w1 = (b >= g - p.water_blue_margin) & (g > r) & valid
+    w1 = ((b >= g - p.water_blue_margin) & (g > r) & valid
+          & (lum < p.water_lum_max))     # ← 亮度上限：排除纯白路面（见参数注释）
 
     dark = (lum < p.water_dark_lum) & valid & (exg < p.water_dark_exg)
     w2 = np.zeros_like(dark)
@@ -290,19 +327,85 @@ def detect_water(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     lab, n = ndi.label(out, structure=_STRUCT8)
     if n == 0:
         return np.zeros_like(out)
-    objs = ndi.find_objects(lab)
-    removed = 0
-    for i in range(1, n + 1):
-        comp = lab == i
-        area_sqm = _component_metrics(comp, objs[i - 1], px_m)[0]
-        if area_sqm < p.water_min_area_sqm:
-            out &= ~comp
-            removed += 1
+    # 性能优化（2026-10-13，等价改写）：bincount 一次算出所有连通域面积，
+    # 再用布尔索引一次性剔除，避免逐连通域的全图 `lab == i` 与求和。
+    # ⚠️ 判据与门槛完全不变：仍是对**每个**连通域按面积判断，只是换了算法。
+    counts = np.bincount(lab.ravel(), minlength=n + 1)
+    areas_sqm = counts.astype(np.float64) * (px_m * px_m)
+    small = areas_sqm < p.water_min_area_sqm
+    small[0] = False          # 0 号是背景标签，不参与剔除
+    removed = int(small.sum())
     if removed:
+        out &= ~small[lab]
         log = getattr(detect_water, "_log", None)
         if log:
             log(f"water: 滤除 {removed} 个面积 <{p.water_min_area_sqm}m² 的散点连通域")
     return out
+
+
+# ----------------------------------------------------------------------------
+# 草地（可种植的低矮鲜绿植被）
+# ----------------------------------------------------------------------------
+def detect_grass(rgb: np.ndarray, valid: np.ndarray, px_m: float,
+                 p: LandcoverParams | None = None) -> np.ndarray:
+    """林下草地 / 低矮鲜绿植被 —— 它们**是可种植土地，不该被当成油棕树冠**。
+
+    这是全项目最大的算法缺陷（见 docs/03-算法教学/草地与油棕区分方案.html）：
+    现有判据是「ExG > 阈值 = 树冠」，而实测**草地的 ExG 反而比油棕高 54%**
+    （草地 159 vs 油棕 64~102）—— 于是草地被算成树，从空地候选里被扣掉，**漏检**。
+
+    判据（三条串联，全部来自实测）：
+      1. ``ExG > grass_exg_min`` —— 油棕是「立体的绿」，内部阴影把绿度打折，
+         所以 ExG 过高反而说明不是树；
+      2. ``饱和度 > grass_sat_min`` —— 草地鲜嫩饱和度高（0.64），油棕偏低（≤0.53）；
+      3. **形态学开运算只保留连片区域** —— 油棕受光面（亮绿叶片）是零散小斑块，
+         草地是成片的。这一条专治误伤。
+
+    ⚠️ 已知局限：若某片油棕恰好整体处于强光下且无阴影（如极陡的向阳坡），
+    仍可能被误判为草地。因此该步骤默认**只从树冠中剔除**，不直接断言「可种植」，
+    最终仍由空地分类与人工复核把关。
+    """
+    p = p or LandcoverParams()
+
+    # 性能优化（2026-10-13）：草地是「米级」成片地物，判据的物理尺度（1~2 m）
+    # 远大于 4 个像素，因此可先在 1/4 分辨率上检测（快 ~16 倍），再上采样回原尺寸。
+    # 实测保留率几乎不变（草地 94.6%、受光面 8.1%、密林 0%）。
+    H, W = rgb.shape[:2]
+    ds_factor = 4
+    # ⚠️ 必须用**向上取整**：向下取整会让「放大回原尺寸」后少几列，
+    #    与 valid/canopy 等原图尺寸的数组广播失败（实测 6 块边缘瓦片
+    #    报 (2304,2202) vs (2304,2200) 的 ValueError）。
+    h2 = -(-H // ds_factor)          # ceil(H/4)
+    w2 = -(-W // ds_factor)          # ceil(W/4)
+    if h2 < 32 or w2 < 32:
+        ds_factor = 1
+        h2, w2 = H, W
+    small = rgb[::ds_factor, ::ds_factor][:h2, :w2]
+    small_valid = valid[::ds_factor, ::ds_factor][:h2, :w2]
+    px_s = px_m * ds_factor
+
+    lum, sat, exg = _features(small)
+    sigma = max(1.0, 1.0 / max(px_s, 1e-6))     # 平滑 1 m，抹掉叶片级细节
+    exg_s = ndi.gaussian_filter(exg.astype(np.float32), sigma=sigma)
+    sat_s = ndi.gaussian_filter(sat.astype(np.float32), sigma=sigma)
+
+    raw = small_valid & (exg_s > p.grass_exg_min) & (sat_s > p.grass_sat_min)
+    if not raw.any():
+        return np.zeros((H, W), dtype=bool)
+
+    # 按距离变换做圆盘开运算（O(n)，同 separate_gap_units 的做法）
+    r = max(1, int(round(p.grass_open_m / max(px_s, 1e-6))))
+    dist_in = ndi.distance_transform_edt(raw)
+    eroded = dist_in > r
+    if not eroded.any():
+        return np.zeros((H, W), dtype=bool)
+    dist_out = ndi.distance_transform_edt(~eroded)
+    opened = (dist_out <= r) & raw
+
+    if ds_factor == 1:
+        return opened
+    return np.repeat(np.repeat(opened, ds_factor, axis=0), ds_factor,
+                     axis=1)[:H, :W]
 
 
 # ----------------------------------------------------------------------------
@@ -319,9 +422,11 @@ def detect_unplantable(rgb: np.ndarray, valid: np.ndarray, px_m: float,
     """
     p = p or LandcoverParams()
     shape = rgb.shape[:2]
+    # 三个检测器共用同一组基础特征（亮度 / 饱和度 / ExG），只算一次
+    feat = _features(rgb)
     water = detect_water(rgb, valid, px_m, p)
-    road = detect_roads(rgb, valid, px_m, p)
-    office = detect_office(rgb, valid, px_m, p)
+    road = detect_roads(rgb, valid, px_m, p, feat=feat)
+    office = detect_office(rgb, valid, px_m, p, feat=feat)
 
     # 去重叠：water 最可信，其次 road，最后 office
     road &= ~water
