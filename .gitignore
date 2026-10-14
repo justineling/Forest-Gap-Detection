@@ -12,6 +12,10 @@ models/*
 .cache/
 
 # ---- 运行产物 ----
+# output/ 不进 git：单次全量 GeoJSON 就有 6.6 MB，且每次重跑内容全变，
+# 二进制大文件反复提交会让仓库迅速膨胀（对比：误纳管 .workbuddy-ai/tmp/
+# 就贡献了 16.9 MB）。改用 Google Drive 跨机器同步，
+# 详见 docs/05-环境与部署/跨机器协同工作流.md
 output/
 *.log
 
