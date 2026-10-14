@@ -95,7 +95,11 @@ $DataDrive = $DataDrive.TrimEnd(':')
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) { $InstallRoot = "${DataDrive}:\forest-gap-tools" }
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
     $projRootGuess = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
-    $ReportPath = Join-Path $projRootGuess 'docs\environment-report.md'
+    # 中文子目录 + 中文文件名，并带机器名后缀：
+    # 报告是**每台机器各自生成**的（组件可用性因机器而异），
+    # 加机器名后缀可避免两台机器互相覆盖。
+    $machineTag = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { 'unknown' }
+    $ReportPath = Join-Path $projRootGuess "docs\05-环境与部署\环境检测报告-$machineTag.md"
 }
 $script:LogFile = Join-Path $InstallRoot 'logs\setup-env.log'
 

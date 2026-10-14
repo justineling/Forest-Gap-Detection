@@ -37,7 +37,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%PSFILE%" %*
 echo.
 echo  ====================================================================
 echo   执行完毕，上方为环境检测报告。
-echo   报告文件： docs\environment-report.md
+echo   报告文件： docs\05-环境与部署\环境检测报告-%COMPUTERNAME%.md
 echo  ====================================================================
 echo.
 pause

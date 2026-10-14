@@ -24,6 +24,6 @@ echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PSFILE%" -CheckOnly %*
 
 echo.
-echo  报告文件： docs\environment-report.md
+echo  报告文件： docs\05-环境与部署\环境检测报告-%COMPUTERNAME%.md
 echo.
 pause
