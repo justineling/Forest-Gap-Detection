@@ -92,7 +92,8 @@ padding:10px 14px;margin:10px 0;font-size:13.5px;color:#7a2418}
 <div class="verdict v-yes">
 <div class="vico">✅</div>
 <div><b>几何自动画：一定能。</b>任选一个 <code>gaps-all-*</code> 文件导入，ArcGIS 即自动生成
-<b>1,048 个 Polygon 要素</b>（连片空地 380 + 不确定 318 + 株位空缺 180 + 林间空隙 170），
+<b>1,442 个 Polygon 要素</b>（连片空地 381 + 不确定 426 + 株位空缺 233 + 林间空隙 210
++ 道路 180 + 水体 8 + 办公生活区 4），
 无需手动画任何一个多边形。</div>
 </div>
 
@@ -119,7 +120,7 @@ ring 闭合、88 个顶点、宽高比 1:1、跨度 0.01315°×0.01318° ≈ 146
 <li><b>ArcGIS 的 GeoJSON 导入器忽略顶层 <code>crs</code> 成员</b>，按「未知平面坐标系」处理——
 经纬度数值被当成了平面坐标 (X, Y)。</li>
 <li><b>于是 1,048 个多边形被放进 X = 111.197 ~ 111.210、Y = 1.177 ~ 1.190 的 0.013°×0.013° 小方块</b>，
-而 TIF 在正确的地理位置。两者相距十万八千里，1048 个多边形挤成极小一坨——
+而 TIF 在正确的地理位置。两者相距十万八千里，上千个多边形挤成极小一坨——
 放大之前，每个地块在屏幕上不足一个像素，看起来就是「一堆直线」。</li>
 </ol>
 
@@ -215,24 +216,31 @@ ring 闭合、88 个顶点、宽高比 1:1、跨度 0.01315°×0.01318° ≈ 146
 <thead><tr><th style="width:34%">文件</th><th class="num" style="width:9%">大小</th>
 <th style="width:17%">坐标系</th><th>用途</th></tr></thead>
 <tbody>
-<tr><td class="mono">gaps-all-utm49n-shp.zip</td><td class="num">816 KB</td><td class="mono">EPSG:32649（米）</td>
+<tr><td class="mono">gaps-all-utm49n-shp.zip</td><td class="num">671 KB</td><td class="mono">EPSG:32649（米）</td>
 <td><span class="tag t-ok">ArcGIS 首选</span> 与 TIF 叠加最稳，.prj 必被识别，零手动指定</td></tr>
-<tr><td class="mono">gaps-all-wgs84-shp.zip</td><td class="num">660 KB</td><td class="mono">EPSG:4326</td>
+<tr><td class="mono">gaps-all-wgs84-shp.zip</td><td class="num">1,021 KB</td><td class="mono">EPSG:4326</td>
 <td>ArcGIS 备选，与 TIF 同 CRS</td></tr>
-<tr><td class="mono">gaps-all-wgs84.geojson</td><td class="num">3,526 KB</td><td class="mono">EPSG:4326</td>
+<tr><td class="mono">gaps-all-wgs84.geojson</td><td class="num">9,414 KB</td><td class="mono">EPSG:4326</td>
 <td>ArcGIS Pro / ArcMap 10.5+ 直接拖入</td></tr>
-<tr><td class="mono">gaps-all-utm49n.geojson</td><td class="num">3,495 KB</td><td class="mono">EPSG:32649</td>
+<tr><td class="mono">gaps-all-utm49n.geojson</td><td class="num">7,252 KB</td><td class="mono">EPSG:32649</td>
 <td>导入后手动指定 CRS 用</td></tr>
-<tr><td class="mono">gaps-all.kml</td><td class="num">1,817 KB</td><td>WGS84（强制）</td>
-<td>Google Earth（已验证清晰）</td></tr>
-<tr><td class="mono">by-class/gaps-open_patch-utm49n-shp.zip</td><td class="num">516 KB</td><td class="mono">EPSG:32649</td>
-<td>380 块连片空地单独成层（重点核查对象）</td></tr>
-<tr><td class="mono">by-class/gaps-uncertain-utm49n-shp.zip</td><td class="num">158 KB</td><td class="mono">EPSG:32649</td>
-<td>318 块不确定，需人工判读</td></tr>
-<tr><td class="mono">by-class/gaps-vacant_slot-utm49n-shp.zip</td><td class="num">77 KB</td><td class="mono">EPSG:32649</td>
-<td>180 个株位空缺</td></tr>
-<tr><td class="mono">by-class/gaps-alley_gap-utm49n-shp.zip</td><td class="num">65 KB</td><td class="mono">EPSG:32649</td>
-<td>170 个林间空隙</td></tr>
+<tr><td class="mono">gaps-all.kml</td><td class="num">3,596 KB</td><td>WGS84（强制）</td>
+<td>Google Earth（已验证清晰），按 7 类分文件夹</td></tr>
+<tr><td colspan="4" style="padding-top:14px"><b>按类别拆分（共 7 类，UTM 49N，便于分层控制符号）</b></td></tr>
+<tr><td class="mono">by-class/gaps-open_patch-utm49n-shp.zip</td><td class="num">294 KB</td><td class="mono">EPSG:32649</td>
+<td>381 块连片空地单独成层（重点核查对象）</td></tr>
+<tr><td class="mono">by-class/gaps-road-utm49n-shp.zip</td><td class="num">193 KB</td><td class="mono">EPSG:32649</td>
+<td>180 块道路 <span class="tag t-info">不可种植</span></td></tr>
+<tr><td class="mono">by-class/gaps-uncertain-utm49n-shp.zip</td><td class="num">128 KB</td><td class="mono">EPSG:32649</td>
+<td>426 块不确定，需人工判读</td></tr>
+<tr><td class="mono">by-class/gaps-vacant_slot-utm49n-shp.zip</td><td class="num">60 KB</td><td class="mono">EPSG:32649</td>
+<td>233 个株位空缺</td></tr>
+<tr><td class="mono">by-class/gaps-alley_gap-utm49n-shp.zip</td><td class="num">48 KB</td><td class="mono">EPSG:32649</td>
+<td>210 个林间空隙</td></tr>
+<tr><td class="mono">by-class/gaps-office-utm49n-shp.zip</td><td class="num">6 KB</td><td class="mono">EPSG:32649</td>
+<td>4 块办公生活区 <span class="tag t-info">不可种植</span></td></tr>
+<tr><td class="mono">by-class/gaps-water-utm49n-shp.zip</td><td class="num">5 KB</td><td class="mono">EPSG:32649</td>
+<td>8 块水体 <span class="tag t-info">不可种植</span></td></tr>
 </tbody>
 </table>
 
