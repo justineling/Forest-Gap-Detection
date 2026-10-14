@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>算法说明与演进史</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--lime:#7dcc29;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;
+--amber:#c98a00;--violet:#6b4fa8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.78;font-size:15px}
+.wrap{max-width:1060px;margin:0 auto;padding:34px 24px 84px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:30px}
+h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:20px;margin:46px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:16px;margin:28px 0 10px;color:#26382c}
+h4{font-size:14.5px;margin:20px 0 8px;color:#37473c}
+p{margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:16.5px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.lead b{color:var(--green)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;
+vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px}
+.sw{display:inline-block;width:15px;height:15px;border-radius:3px;
+vertical-align:-3px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11.5px;
+font-weight:600;vertical-align:1px;white-space:nowrap}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.t-info{background:#dceaf7;color:#1f5c8a}
+.t-gray{background:#e8e8e8;color:#555}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+.warn{border-left:3px solid var(--amber);background:#fffaf0;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:#eef2ee;padding:1px 5px;border-radius:3px;
+font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:12.5px}
+.step{display:flex;gap:14px;align-items:flex-start;margin:0 0 4px}
+.stepno{flex:0 0 34px;height:34px;border-radius:50%;background:var(--green);
+color:#fff;display:flex;align-items:center;justify-content:center;
+font-weight:700;font-size:15px}
+.steptitle{font-weight:700;font-size:15.5px;padding-top:4px}
+.hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
+.verdict{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;
+border-radius:8px;margin:12px 0;border:1px solid}
+.v-yes{background:#f0f9ec;border-color:#bfe0b0}
+.v-no{background:#fdf1ef;border-color:#efc4bb}
+.v-part{background:#fffaf0;border-color:#f0dfb8}
+.vico{font-size:19px;line-height:1.25}
+.tl{position:relative;margin:22px 0 22px 8px;padding-left:30px;
+border-left:2px solid #d6e2d6}
+.tlitem{position:relative;margin:0 0 26px}
+.tlitem::before{content:"";position:absolute;left:-39px;top:6px;width:14px;
+height:14px;border-radius:50%;background:var(--green);border:3px solid #fff;
+box-shadow:0 0 0 1px #cfe0cf}
+.tlitem.bad::before{background:var(--red)}
+.tlitem.fix::before{background:var(--amber)}
+.tldate{font-size:12.5px;color:var(--sub);font-weight:600}
+.tlhead{font-size:15.5px;font-weight:700;margin:2px 0 6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>算法说明与演进史</h1>
+  <div class="sub">Forest Gap Detection（油棕园空地智能检测）· 专业版 &nbsp;·&nbsp; 对应代码版本 682c995 &nbsp;·&nbsp; 2026-10-14</div>
+</header>
+
+<div class="lead">
+本文件是项目的<b>算法权威说明</b>：第 1 节讲清当前处理链的 7 个步骤，
+第 2 节讲清这套算法是怎么一步步演进过来的（含走过的弯路与实测证据），
+第 3 节是实测数据速查表。<br><br>
+全部数字均来自 <code>WGR17.tif</code>（47,130×44,686 px，3.3 cm/px，
+229 公顷油棕园）上的真实测量，非估计值。
+</div>
+
+<h2>一、当前处理链（7 步）</h2>
+<svg viewBox="0 0 680 250" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><rect x="8" y="52" width="88" height="104" rx="8" fill="#2f7d1f" fill-opacity="0.13" stroke="#2f7d1f" stroke-width="1.6"/><text x="52.0" y="74" font-size="11" font-weight="700" fill="#2f7d1f" text-anchor="middle">S1</text><text x="52.0" y="92" font-size="12.5" font-weight="700" fill="#1c2620" text-anchor="middle">树冠分割</text><text x="52.0" y="108" font-size="10" fill="#5b6b5f" text-anchor="middle">ExG 混合阈值</text><text x="52.0" y="121" font-size="10" fill="#5b6b5f" text-anchor="middle">+ 饱和度</text><path d="M97 104 l4 0" stroke="#9ab09a" stroke-width="1.8" marker-end="url(#ar)"/><rect x="102" y="52" width="88" height="104" rx="8" fill="#3f8f2a" fill-opacity="0.13" stroke="#3f8f2a" stroke-width="1.6"/><text x="146.0" y="74" font-size="11" font-weight="700" fill="#3f8f2a" text-anchor="middle">S2</text><text x="146.0" y="92" font-size="12.5" font-weight="700" fill="#1c2620" text-anchor="middle">空地分离</text><text x="146.0" y="108" font-size="10" fill="#5b6b5f" text-anchor="middle">圆盘开运算</text><text x="146.0" y="121" font-size="10" fill="#5b6b5f" text-anchor="middle">断开窄缝</text><path d="M191 104 l4 0" stroke="#9ab09a" stroke-width="1.8" marker-end="url(#ar)"/><rect x="196" y="52" width="88" height="104" rx="8" fill="#5aa03a" fill-opacity="0.13" stroke="#5aa03a" stroke-width="1.6"/><text x="240.0" y="74" font-size="11" font-weight="700" fill="#5aa03a" text-anchor="middle">S3</text><text x="240.0" y="92" font-size="12.5" font-weight="700" fill="#1c2620" text-anchor="middle">矢量化</text><text x="240.0" y="108" font-size="10" fill="#5b6b5f" text-anchor="middle">简化 + 面积门槛</text><text x="240.0" y="121" font-size="10" fill="#5b6b5f" text-anchor="middle">→ 多边形</text><path d="M285 104 l4 0" stroke="#9ab09a" stroke-width="1.8" marker-end="url(#ar)"/><rect x="290" y="52" width="88" height="104" rx="8" fill="#7dcc29" fill-opacity="0.13" stroke="#7dcc29" stroke-width="1.6"/><text x="334.0" y="74" font-size="11" font-weight="700" fill="#7dcc29" text-anchor="middle">S4</text><text x="334.0" y="92" font-size="12.5" font-weight="700" fill="#1c2620" text-anchor="middle">网格估计</text><text x="334.0" y="108" font-size="10" fill="#5b6b5f" text-anchor="middle">株距/行距</text><text x="334.0" y="121" font-size="10" fill="#5b6b5f" text-anchor="middle">+ 错行角</text><path d="M379 104 l4 0" stroke="#9ab09a" stroke-width="1.8" marker-end="url(#ar)"/><rect x="384" y="52" width="88" height="104" rx="8" fill="#c98a00" fill-opacity="0.13" stroke="#c98a00" stroke-width="1.6"/><text x="428.0" y="74" font-size="11" font-weight="700" fill="#c98a00" text-anchor="middle">S5</text><text x="428.0" y="92" font-size="12.5" font-weight="700" fill="#1c2620" text-anchor="middle">空地分类</text><text x="428.0" y="108" font-size="10" fill="#5b6b5f" text-anchor="middle">4 类</text><text x="428.0" y="121" font-size="10" fill="#5b6b5f" text-anchor="middle">（株位/空隙/连片/不确定）</text><path d="M473 104 l4 0" stroke="#9ab09a" stroke-width="1.8" marker-end="url(#ar)"/><rect x="478" y="52" width="88" height="104" rx="8" fill="#a8763f" fill-opacity="0.13" stroke="#a8763f" stroke-width="1.6"/><text x="522.0" y="74" font-size="11" font-weight="700" fill="#a8763f" text-anchor="middle">S6</text><text x="522.0" y="92" font-size="12.5" font-weight="700" fill="#1c2620" text-anchor="middle">不可种植检测</text><text x="522.0" y="108" font-size="10" fill="#5b6b5f" text-anchor="middle">道路/水体</text><text x="522.0" y="121" font-size="10" fill="#5b6b5f" text-anchor="middle">/办公区</text><path d="M567 104 l4 0" stroke="#9ab09a" stroke-width="1.8" marker-end="url(#ar)"/><rect x="572" y="52" width="88" height="104" rx="8" fill="#6b4fa8" fill-opacity="0.13" stroke="#6b4fa8" stroke-width="1.6"/><text x="616.0" y="74" font-size="11" font-weight="700" fill="#6b4fa8" text-anchor="middle">S7</text><text x="616.0" y="92" font-size="12.5" font-weight="700" fill="#1c2620" text-anchor="middle">草地回检</text><text x="616.0" y="108" font-size="10" fill="#5b6b5f" text-anchor="middle">颜色 + 格点</text><text x="616.0" y="121" font-size="10" fill="#5b6b5f" text-anchor="middle">（把草地判回空地）</text><defs><marker id="ar" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#9ab09a"/></marker></defs><text x="8" y="30" font-size="12.5" font-weight="700" fill="#26382c">输入：KML 范围 + 正射影像 → 输出：空地多边形 + 7 类标签</text><text x="8" y="196" font-size="11.5" fill="#5b6b5f">S1~S3 出「空地」，S4~S5 把空地分成 4 类，S6 扣掉不该种的地，S7 把被误判成树的草地找回来</text><text x="8" y="216" font-size="11.5" fill="#5b6b5f">「需补种面积」= 全部空地 − 不可种植（S6）</text></svg>
+
+<div class="card">
+<div class="step"><div class="stepno">1</div><div>
+<div class="steptitle">树冠分割 —— 找出哪些像素是树</div>
+<p><b>做法</b>：算植被指数 ExG（<code>2G − R − B</code>），高斯平滑后取阈值；
+再叠加一条饱和度判据。</p>
+<p><b>关键参数</b>：<code>阈值 = clip(ExG 的 40% 分位, 下限 40, 上限 80)</code>；
+<code>树冠 = (平滑ExG &gt; 阈值) 或 (饱和度 &gt; 0.45)</code></p>
+<p><b>为什么这么设计</b>：本园区<b>跨航带曝光差 3 倍</b>（ExG 中位数从 37 到 116），
+纯绝对阈值在亮航带会漏检、暗航带会误报。用「分位数」自适应曝光，
+再用上下限夹逼防止走极端。</p>
+<div class="q"><b>实测</b>：冠层率落在 60~80% 为正常；换影像需重标定上下限。</div>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">2</div><div>
+<div class="steptitle">空地分离 —— 把"一张网"拆成一块块</div>
+<p><b>做法</b>：空地取树冠的补集后，是连成一片的"网"（树冠之间的缝隙全连着）。
+用<b>圆盘开运算</b>把宽度小于阈值的窄缝断开，只留下"块状"空地。</p>
+<p><b>关键参数</b>：<code>min_gap_width_m = 1.6</code>（米）</p>
+<p><b>为什么是 1.6 m</b>：树冠间的正常缝隙宽度量级在此以下，
+保留它们只会产生海量无意义的碎片。</p>
+<div class="warn"><b>性能坑（已修）</b>：圆盘结构元的 <code>binary_opening</code> 是
+O(r²) 暴力卷积，在 2304² 上要 <b>11.7 秒</b>，占整条流水线 85% 的时间。
+改用<b>距离变换</b>实现等价的圆盘开运算（O(n)）后降到 <b>1.95 秒</b>，快 6 倍，
+等价性已逐像素验证。<br>
+⚠️ 不能用 <code>np.ones((3,3))</code> 迭代 r 次代替——那是<b>菱形</b>不是圆盘，实测差 46,092 像素。</div>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">3</div><div>
+<div class="steptitle">矢量化 —— 像素变成多边形</div>
+<p><b>做法</b>：连通域提取轮廓 → 转投影坐标系算面积 → Douglas-Peucker 简化 →
+面积门槛过滤。</p>
+<p><b>关键参数</b>：<code>simplify_m = 0.3</code>（简化容差）、
+<code>min_area = 30</code>（m²，小于此不算空地）</p>
+<div class="q"><b>坐标系陷阱</b>：GeoJSON 里存的是<b>经纬度</b>（EPSG:4326），
+但算面积必须转到投影系（EPSG:32649）。
+忘了转换会得到 <code>w=0, h=0</code> 这种荒谬结果（本项目踩过）。</div>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">4</div><div>
+<div class="steptitle">种植网格估计 —— 反推出人工种植的规律</div>
+<p><b>做法</b>：从树冠掩膜里找树心，拟合出规则网格的<b>株距、行距、错行角、方位</b>。</p>
+<p><b>实测结果</b>：株距 <b>8.35 m</b> / 行距 <b>7.23 m</b> / 错行角 <b>60°</b>
+（三角形种植）/ 密度 165.6 株/公顷 / 网格质量 <b>0.734</b></p>
+<p><b>为什么重要</b>：这是全项目<b>唯一对曝光不变的强信号</b>。
+树是按几何规则种的，草地是自然长的——这个差别不随光照变化。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">5</div><div>
+<div class="steptitle">空地分类 —— 4 类</div>
+<p>对每块空地，用「质心到最近格点的距离」「长宽比」「占单位格的比例」判类：</p>
+<table>
+<thead><tr><th>类别</th><th>判据要点</th><th>语义</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#e74c3c"></span><b>株位空缺</b></td>
+<td>质心贴近格点、形状规整</td><td>单株位缺一株，补 1 株</td></tr>
+<tr><td><span class="sw" style="background:#f1c40f"></span><b>林间空隙</b></td>
+<td>细长、远离格点、面积小</td><td>树冠正常缝隙，无需补种</td></tr>
+<tr><td><span class="sw" style="background:#e67e22"></span><b>连片空地</b></td>
+<td>跨多个株位、面积大</td><td>整片补种</td></tr>
+<tr><td><span class="sw" style="background:#95a5a6"></span><b>不确定</b></td>
+<td>证据不足，或网格质量 &lt; 0.15</td><td>交人工复核</td></tr>
+</tbody></table>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">6</div><div>
+<div class="steptitle">不可种植地物检测 —— 扣掉不该种的地</div>
+<p>用户口径：「道路（白色）、河流、油棕树、办公生活区四类算不可种植，
+<b>其他的都可以算空地</b>」。油棕树本身就是树冠，天然不在空地里，
+所以只需检测另外三类：</p>
+<table>
+<thead><tr><th>类别</th><th>判据</th><th>实测依据</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#e8e8e8"></span><b>道路</b></td>
+<td><code>L&gt;170 &amp; S&lt;0.18</code> + 填充率 &lt; 0.30（线状）</td>
+<td>全图 64,689 m²，最大连通域 bbox 1078×1111 m、<b>填充率仅 0.013</b> → 线状网络</td></tr>
+<tr><td><span class="sw" style="background:#4a90d9"></span><b>水体</b></td>
+<td><code>B≥G&gt;R</code> 或（暗+低 ExG+纹理&lt;6），再过 30 m² 最小连通域</td>
+<td><code>B≥G&gt;R</code> 仅命中 0.42%；裸规则会抓到密林阴影散点（最大 11 m²）</td></tr>
+<tr><td><span class="sw" style="background:#c9a06a"></span><b>办公生活区</b></td>
+<td>同"亮+低饱和"掩膜，但填充率 ≥ 0.30 且面积 ≥ 400 m²</td>
+<td>实测 fill 0.317~0.548（与道路的 0.013~0.211 <b>完全分离</b>）</td></tr>
+</tbody></table>
+<p><b>扣除方式</b>：按像素做几何差集（<code>空地 &amp;= ~(道路|水体|办公区)</code>），
+而不是"整块改判"——后者对骑在边界上的多边形会误伤。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">7</div><div>
+<div class="steptitle">草地回检 —— 把被误判成树的草地找回来</div>
+<p><b>要解决的问题</b>：分割判据是「ExG 高 = 树冠」，但草地 ExG 也可能很高
+（实测草地 133 vs 油棕 88.6，<b>草地更绿 54%</b>）→ 草地被算成树 → 漏检。</p>
+<p><b>两道闸</b>：</p>
+<ol>
+<li><b>方案 A（颜色 + 形态）</b>：<code>ExG &gt; 110 &amp; 饱和度 &gt; 0.50</code>，
+再过 2 m 圆盘开运算只留连片区域。油棕受光面是零散小斑块，草地是成片的。</li>
+<li><b>方案 B（格点回检）</b>：拟合种植网格后，剔除"坐在格点上"的候选连通域
+——那是油棕受光面/幼林，不是草地。<b>并加尺寸闸门</b>：面积超 2 个单位格
+（≈122 m²）的不剔除，因为单棵树的受光面不可能横跨两个以上种植单元。</li>
+</ol>
+<div class="q"><b>方案 B 的尺寸闸门是 2026-10-14 补的 bug 修复</b>：
+原判据「连通域像素到最近格点距离的中位数 ≤ 3.5 m」对<b>大块连片区域必然命中</b>
+（株距 8.45 m 的网格下，任意均匀分布的大片区域到最近格点的中位距离本就是 3~4 m），
+导致用户指认的 305 m² 草地被 100% 剔除。修复后该草地恢复到 446 m²，
+同时南部油棕的 219 m² 误报也归零。</div>
+</div></div>
+</div>
+
+<h2>二、技术演进史（9 个阶段）</h2>
+<p>下面按时间顺序记录每一次路线转折。<b>弯路和结论同样重要</b>——
+它们解释了为什么现在是这套算法。</p>
+
+<div class="tl">
+
+<div class="tlitem bad">
+<div class="tldate">阶段 1 · 起点</div>
+<div class="tlhead">DeepForest 预训练模型 —— 折戟</div>
+<p>最初的想法很直接：用现成的树冠检测模型。下载了 DeepForest（MIT 许可，
+weecology/deepforest-tree 权重，123 MB）。</p>
+<div class="verdict v-no"><div class="vico">❌</div><div>
+<b>失败原因：域偏移。</b>该权重训练于北美 NEON 温带林，树种、冠形、光照、
+种植密度都与东南亚油棕园差异巨大，在油棕影像上<b>漏检严重</b>。
+</div></div>
+<p><b>教训</b>：预训练模型不是拿来就能用的，域不匹配时还不如手工规则。
+这条教训后来直接影响了「草地识别要不要上分割模型」的决策（见配套文档）。</p>
+</div>
+
+<div class="tlitem">
+<div class="tldate">阶段 2</div>
+<div class="tlhead">结构法 —— 用植被指数 + 形态学代替深度学习</div>
+<p>改用可解释的经典方法：ExG 植被指数 + 高斯平滑 + 形态学后处理。
+不依赖训练数据，参数可解释，能在任意影像上重标定。</p>
+<p><b>结果</b>：树冠掩膜质量足以支撑后续所有处理，且运行速度快了几个数量级。</p>
+</div>
+
+<div class="tlitem">
+<div class="tldate">阶段 3</div>
+<div class="tlhead">空地分离 —— 从"一张网"到"一块块"</div>
+<p>发现树冠补集是连成一片的网，无法直接矢量化统计。引入圆盘开运算断开窄缝，
+并由此发现圆盘开运算的性能瓶颈（11.7 秒/瓦片），改用距离变换降到 1.95 秒。</p>
+</div>
+
+<div class="tlitem">
+<div class="tldate">阶段 4</div>
+<div class="tlhead">网格先验 —— 用种植几何给空地区分类型</div>
+<p>仅有"空地"无法指导补种。观察到油棕是<b>规则种植</b>的，
+于是从树心反推株距/行距/错行角，再用"空地相对格点的位置"把空地分成 4 类。</p>
+<p><b>实测</b>：株距 8.35 m / 行距 7.23 m / 错行角 60° / 质量 0.734。</p>
+</div>
+
+<div class="tlitem">
+<div class="tldate">阶段 5</div>
+<div class="tlhead">整幅工程化 —— 229 公顷分块处理 + 断点续跑</div>
+<p>3.5 GB 大图无法一次性载入。改为 2048 px 瓦片 + 128 px 外扩，
+用「质心落在本瓦片 core 区」的规则避免跨边界空地重复输出或丢失。</p>
+<p><b>性能</b>：528 瓦片 / 约 31 分钟（本机 4 核）。</p>
+<div class="warn"><b>续跑机制的一个真 bug（已修）</b>：原先只校验参数指纹、
+不校验瓦片状态，导致<b>失败瓦片被当作缓存静默跳过、永远补不回来</b>。</div>
+</div>
+
+<div class="tlitem fix">
+<div class="tldate">阶段 6</div>
+<div class="tlhead">判据纠错 —— 分割阈值迭代了三代</div>
+<table>
+<thead><tr><th>版本</th><th>判据</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>v1</td><td>纯分位数（ExG &gt; 40% 分位）</td>
+<td>密植区整片误报，全园 18% 被标成空地 <span class="tag t-bad">失败</span></td></tr>
+<tr><td>v2</td><td>纯绝对阈值（ExG &gt; 60）</td>
+<td>对曝光过敏：亮航带 84% / 暗航带 31% <span class="tag t-bad">失败</span></td></tr>
+<tr><td><b>v3</b></td><td><b>混合：<code>clip(40%分位, 40, 80)</code> + 饱和度辅助</b></td>
+<td>跨曝光稳定 <span class="tag t-ok">定稿</span></td></tr>
+</tbody></table>
+</div>
+
+<div class="tlitem">
+<div class="tldate">阶段 7</div>
+<div class="tlhead">分类补全 —— 新增不可种植三类</div>
+<p>用户提供关键领域知识：<b>道路是白色的</b>、图内有河流水塘、办公区周围是白色土地。
+据此实测并新增 <code>road</code> / <code>water</code> / <code>office</code> 三类，
+从"需补种面积"中按像素扣除。</p>
+<p><b>实测</b>：白色地物全图 64,689 m²，最大连通域填充率仅 0.013（线状路网）；
+道路与办公区的填充率分布 <b>0.013~0.211 vs 0.317~0.548 完全分离</b>。</p>
+</div>
+
+<div class="tlitem">
+<div class="tldate">阶段 8</div>
+<div class="tlhead">草地回检 —— 发现"草地比树还绿"</div>
+<p>用户指出「油棕与绿地色彩差距很大，可种植的土地不只有褐色的，也有绿色的」。
+实测证实：<b>草地 ExG 136.8 vs 油棕 88.6，草地更绿 54%</b>，
+现有判据会把草地判成树 → 漏检。</p>
+<p>实施方案 A（颜色+形态）+ 方案 B（株行距网格周期性回检）。</p>
+</div>
+
+<div class="tlitem fix">
+<div class="tldate">阶段 9 · 最新</div>
+<div class="tlhead">真值校验 —— 发现方案 B 把整片草地剔光了</div>
+<p>用户指认两个草地真值坐标做终检，结果<b>两个点都不在检出空地里</b>。</p>
+<div class="verdict v-part"><div class="vico">🔍</div><div>
+<b>定位到两个独立原因：</b><br>
+① <b>方案 B 的判据缺陷（真 bug）</b>：格点距离中位判据对大块连片区域必然命中
+→ 真值点1 的 305 m² 草地被 100% 剔除。<b>已修</b>（加尺寸闸门），
+修复后该草地恢复到 446 m²，同时消除了南部油棕 219 m² 的误报。<br>
+② <b>浅色草地仍不可分</b>：真值点2 那片草地 ExG 仅 87，
+而本园区油棕 ExG 跨 1~112，<b>区间完全重叠</b>；
+纹理、梯度、局部动态范围、排列周期性<b>全部重叠</b>。
+→ 需要学习型方法，见配套文档《草地识别方案》。
+</div></div>
+</div>
+
+</div>
+
+<h2>三、实测数据速查</h2>
+
+<h3>3.1 影像与种植</h3>
+<table>
+<thead><tr><th>项目</th><th class="num">数值</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>影像尺寸</td><td class="num">47,130 × 44,686</td><td>3.48 GB BigTIFF，4 波段（第 4 波段恒 255=Alpha）</td></tr>
+<tr><td>地面分辨率</td><td class="num">3.3 cm</td><td>EPSG:4326 经纬度</td></tr>
+<tr><td>园区面积</td><td class="num">229 公顷</td><td>占外接矩形 57%</td></tr>
+<tr><td>株距 / 行距</td><td class="num">8.35 / 7.23 m</td><td>三角形种植，错行角 60°</td></tr>
+<tr><td>种植密度</td><td class="num">165.6 株/公顷</td><td>网格质量 0.734</td></tr>
+</tbody></table>
+
+<h3>3.2 地物光谱（全图 1874 万有效像元普查）</h3>
+<table>
+<thead><tr><th>地物</th><th>ExG</th><th>饱和度</th><th>纹理 std</th><th>备注</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#7dcc29"></span>草地（鲜绿型）</td>
+<td class="num">133~137</td><td class="num">0.61~0.65</td><td class="num">46.3</td>
+<td>比油棕更绿</td></tr>
+<tr><td><span class="sw" style="background:#a8d16a"></span>草地（浅色型）</td>
+<td class="num">83~95</td><td class="num">0.41~0.51</td><td class="num">19~20</td>
+<td><span class="tag t-bad">与油棕重叠，检不出</span></td></tr>
+<tr><td><span class="sw" style="background:#2f7d1f"></span>油棕树冠</td>
+<td class="num">1~112</td><td class="num">0.13~0.60</td><td class="num">17~36</td>
+<td>跨航带差异极大</td></tr>
+<tr><td><span class="sw" style="background:#e8e8e8"></span>道路</td>
+<td class="num">−5~39</td><td class="num">&lt;0.18</td><td class="num">0.7~8.0</td>
+<td>极平滑</td></tr>
+<tr><td><span class="sw" style="background:#c9a06a"></span>连片空地（基建型）</td>
+<td class="num">−9~−5</td><td class="num">0.14~0.29</td><td class="num">22~26</td>
+<td>35~39% 黄褐裸土 + 41~47% 暗区</td></tr>
+<tr><td><span class="sw" style="background:#4a90d9"></span>水体</td>
+<td class="num">—</td><td class="num">—</td><td class="num">—</td>
+<td><code>B≥G&gt;R</code> 命中 0.42%</td></tr>
+</tbody></table>
+
+<h3>3.3 当前检测结果（7 类）</h3>
+<table>
+<thead><tr><th>类别</th><th class="num">块数</th><th>是否计入需补种</th></tr></thead>
+<tbody>
+<tr><td><span class="sw" style="background:#e74c3c"></span>株位空缺</td><td class="num">233</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#f1c40f"></span>林间空隙</td><td class="num">210</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#e67e22"></span>连片空地</td><td class="num">381</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#95a5a6"></span>不确定</td><td class="num">426</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#8a8a8a"></span>道路</td><td class="num">180</td><td>❌ 不可种植</td></tr>
+<tr><td><span class="sw" style="background:#4a90d9"></span>水体</td><td class="num">8</td><td>❌ 不可种植</td></tr>
+<tr><td><span class="sw" style="background:#c9a06a"></span>办公生活区</td><td class="num">4</td><td>❌ 不可种植</td></tr>
+<tr><td colspan="2"><b>合计 1,442 块</b></td>
+<td>需补种 <b>248,008 m²</b>（占 10.82%）</td></tr>
+</tbody></table>
+
+<h2>四、已知局限</h2>
+<ol>
+<li><b>浅色草地检不出</b>（最重要）：实测该类型与油棕在颜色/纹理/梯度/动态范围/
+周期性上<b>全部重叠</b>，任何手工阈值都不可分。→ 需学习型方法。</li>
+<li><b>草地判据只从树冠中剔除，不直接断言"可种植"</b>：最终仍由空地分类与人工复核把关。</li>
+<li><b>办公区若与路网直接相连</b>会合成一个连通域，被整体判为道路——
+仍属"不可种植"，不影响补种统计，只是少一个独立类别。</li>
+<li><b>水体检测只在"应该没有水"的瓦片上验证过</b>（结果全为 0，正确），
+尚未在已知水体上验证能否检出。</li>
+<li><b>大影像需另行获取</b>（3.5 GB，不在仓库里）。</li>
+</ol>
+
+<footer>
+生成时间：2026-10-14 &nbsp;·&nbsp; 对应代码版本 <span class="mono">682c995</span><br>
+数据来源：WGR17.tif 真实影像实测 + 项目 git 提交历史（29 个提交）<br>
+相关文档：《分割判据说明》《空地分离算法讲解》《方法对比-DeepForest与结构法》
+《预留带形态分析》《草地与油棕区分方案》《草地识别方案-SAM2标注与轻量分类器》
+</footer>
+
+</div>
+</body>
+</html>

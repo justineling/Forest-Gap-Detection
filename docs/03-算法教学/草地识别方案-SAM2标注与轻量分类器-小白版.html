@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>草地识别方案（小白版）</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--lime:#7dcc29;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;
+--amber:#c98a00;--violet:#6b4fa8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.78;font-size:15px}
+.wrap{max-width:1060px;margin:0 auto;padding:34px 24px 84px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:30px}
+h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:20px;margin:46px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:16px;margin:28px 0 10px;color:#26382c}
+h4{font-size:14.5px;margin:20px 0 8px;color:#37473c}
+p{margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:16.5px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.lead b{color:var(--green)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;
+vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px}
+.sw{display:inline-block;width:15px;height:15px;border-radius:3px;
+vertical-align:-3px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11.5px;
+font-weight:600;vertical-align:1px;white-space:nowrap}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.t-info{background:#dceaf7;color:#1f5c8a}
+.t-gray{background:#e8e8e8;color:#555}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+.warn{border-left:3px solid var(--amber);background:#fffaf0;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:#eef2ee;padding:1px 5px;border-radius:3px;
+font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:12.5px}
+.step{display:flex;gap:14px;align-items:flex-start;margin:0 0 4px}
+.stepno{flex:0 0 34px;height:34px;border-radius:50%;background:var(--green);
+color:#fff;display:flex;align-items:center;justify-content:center;
+font-weight:700;font-size:15px}
+.steptitle{font-weight:700;font-size:15.5px;padding-top:4px}
+.hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
+.verdict{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;
+border-radius:8px;margin:12px 0;border:1px solid}
+.v-yes{background:#f0f9ec;border-color:#bfe0b0}
+.v-no{background:#fdf1ef;border-color:#efc4bb}
+.v-part{background:#fffaf0;border-color:#f0dfb8}
+.vico{font-size:19px;line-height:1.25}
+.tl{position:relative;margin:22px 0 22px 8px;padding-left:30px;
+border-left:2px solid #d6e2d6}
+.tlitem{position:relative;margin:0 0 26px}
+.tlitem::before{content:"";position:absolute;left:-39px;top:6px;width:14px;
+height:14px;border-radius:50%;background:var(--green);border:3px solid #fff;
+box-shadow:0 0 0 1px #cfe0cf}
+.tlitem.bad::before{background:var(--red)}
+.tlitem.fix::before{background:var(--amber)}
+.tldate{font-size:12.5px;color:var(--sub);font-weight:600}
+.tlhead{font-size:15.5px;font-weight:700;margin:2px 0 6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>草地识别方案（小白版）</h1>
+  <div class="sub">给非技术读者：为什么要换个办法认出浅色草地，以及需要你做什么</div>
+</header>
+
+<div class="lead">
+这份是人话版，讲<b>接下来打算怎么教电脑认出浅色草地</b>。<br><br>
+先说结论：靠"看颜色"这条路已经走到头了（下面第 1 节解释为什么），
+所以打算换个办法——<b>先请一位"眼力很好的助手"帮忙圈地，再用这些例子教电脑</b>。
+</div>
+
+<h2>一、为什么"看颜色"这条路走不通了</h2>
+
+<p>你给了我们两个草地坐标，我们拿去核对，发现其中一个没被认出来。
+于是我们把能想到的"看颜色"的办法全都试了一遍：</p>
+
+<table>
+<thead><tr><th>看什么</th><th>草地的值</th><th>油棕的值</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>有多绿（绿度分数）</td><td>83 ~ 95</td><td><b>1 ~ 112</b></td>
+<td>❌ 混在一起</td></tr>
+<tr><td>表面粗不粗糙</td><td>19 ~ 20</td><td>17 ~ 20</td><td>❌ 混在一起</td></tr>
+<tr><td>边缘多不多</td><td>112 ~ 114</td><td>54 ~ <b>111</b></td><td>❌ 混在一起</td></tr>
+<tr><td>明暗落差大不大</td><td>156 ~ 165</td><td>119 ~ 172</td><td>❌ 混在一起</td></tr>
+<tr><td>是不是按 8.45 米排队</td><td>8.7 ~ 15.1%</td><td>0 ~ 11.0%</td><td>❌ 混在一起</td></tr>
+</tbody></table>
+
+<div class="verdict v-no"><div class="vico">⛔</div><div>
+<b>为什么全都失败？因为园子里"光照差 3 倍"。</b><br><br>
+同一片油棕，在暗的地方拍出来绿度只有 <b>1</b>，在亮的地方拍出来能到 <b>112</b>。
+而这个 1~112 的范围<b>把草地的 83~95 整个包住了</b>。<br><br>
+所以不管把分数线定在哪里，总有一边的地会被认错。
+<b>这不是调参数的问题，是这条路本身走不通。</b>
+</div></div>
+
+<div class="warn"><b>特别提醒一个反例</b>：南部那片油棕，各项数值和草地几乎一模一样。
+如果按"绿的就是草地"来判，这片油棕反而会被误认成草地。
+所以规则越改越容易两头不讨好。</div>
+
+<h2>二、换个思路：先请一位"眼力很好的助手"</h2>
+
+<p>我们手上其实已经有一个很厉害的 AI 助手了，叫 <b>SAM2</b>（已经下载好了）。</p>
+
+<div class="grid2">
+<div class="card">
+<h4 style="margin-top:0;color:#2b6b1c">它擅长什么</h4>
+<p>你在一张图上<b>随便点一个点</b>，它就能把那个东西的<b>完整轮廓</b>自动圈出来。
+圈得非常准，不用你手动画。</p>
+</div>
+<div class="card">
+<h4 style="margin-top:0;color:#a32b1c">它不懂什么</h4>
+<p>它<b>不知道"草地"和"油棕"是什么</b>。它只会"把一整块东西圈出来"，
+不会告诉你那是什么。</p>
+</div>
+</div>
+
+<div class="verdict v-yes"><div class="vico">🎯</div><div>
+<b>这正好解决了你的一个难题。</b><br><br>
+你之前说：「我不知道怎么提供 polygon，只好给 2 个点」。<br>
+有了 SAM2，<b>你只要点一下，它自动生成精确的多边形</b>——
+标注成本从"手描几十个点"降到"点一下"。
+</div></div>
+
+<svg viewBox="0 0 680 210" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><defs><marker id="a3" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#7a8a7a"/></marker></defs><rect x="16" y="34" width="196" height="132" rx="9" fill="#f2f7ef" stroke="#cfe0c8" stroke-width="1.5"/><text x="114" y="56" font-size="12.5" font-weight="700" fill="#2b6b1c" text-anchor="middle">你只要点一下</text><path d="M46 96 q22 -26 50 -14 q30 -20 52 6 q20 18 -4 34 q-30 20 -60 6 q-34 -12 -38 -32 z" fill="#9ac86a" stroke="#5a8f3a" stroke-width="1.2"/><circle cx="98" cy="106" r="7" fill="#e74c3c" stroke="#fff" stroke-width="2.5"/><text x="114" y="150" font-size="10.5" fill="#5b6b5f" text-anchor="middle">在草地中间点一个点</text><path d="M216 100 L250 100" stroke="#7a8a7a" stroke-width="1.8" marker-end="url(#a3)"/><text x="233" y="92" font-size="10" fill="#5b6b5f" text-anchor="middle">自动</text><rect x="258" y="34" width="196" height="132" rx="9" fill="#eef4fb" stroke="#c8dcf0" stroke-width="1.5"/><text x="356" y="56" font-size="12.5" font-weight="700" fill="#1f5c8a" text-anchor="middle">SAM2 自动圈出轮廓</text><path d="M288 96 q22 -26 50 -14 q30 -20 52 6 q20 18 -4 34 q-30 20 -60 6 q-34 -12 -38 -32 z" fill="#9ac86a" fill-opacity="0.45" stroke="#e74c3c" stroke-width="2.4" stroke-dasharray="5 3"/><text x="356" y="150" font-size="10.5" fill="#5b6b5f" text-anchor="middle">得到精确的多边形（存起来当例子）</text><rect x="470" y="34" width="194" height="132" rx="9" fill="#fffaf0" stroke="#f0dfb8" stroke-width="1.5"/><text x="567" y="56" font-size="12.5" font-weight="700" fill="#8a5a00" text-anchor="middle">重复二三十次</text><text x="486" y="78" font-size="10.5" fill="#8a5a00" font-weight="400">草地（鲜绿）点一批</text><text x="486" y="95" font-size="10.5" fill="#8a5a00" font-weight="400">草地（浅色）点一批</text><text x="486" y="112" font-size="10.5" fill="#8a5a00" font-weight="400">油棕（密林）点一批</text><text x="486" y="129" font-size="10.5" fill="#8a5a00" font-weight="400">油棕（稀疏）点一批</text><text x="486" y="146" font-size="10.5" fill="#c0392b" font-weight="700">散布在不同航带！</text></svg>
+
+<h2>三、四步走</h2>
+
+<div class="card">
+<div class="step"><div class="stepno">1</div><div>
+<div class="steptitle">你点几下，SAM2 圈出来</div>
+<p>你在草地和油棕上各点二三十个点，散布在园子各个角落
+（<b>一定要散布</b>，因为不同地方光照不一样）。SAM2 自动把轮廓圈好存下来。</p>
+<p>大概花你 1~2 小时。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">2</div><div>
+<div class="steptitle">从这些例子里算出"该怎么看"</div>
+<p>程序会把每一块的特征算出来，但这次<b>不看绝对值，看"比周围绿多少"</b>。</p>
+<p>打个比方：判断一个人高不高，不要看绝对身高，要看他在人群里排第几。
+这样不管在哪个航带（亮还是暗），标准都是一致的。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">3</div><div>
+<div class="steptitle">让电脑自己学出一套判断规则</div>
+<p>用你标的那几十个例子训练一个小模型（叫"随机森林"）。
+它训练只要<b>几秒钟</b>，不需要贵的显卡，而且<b>能告诉我们它主要靠哪个特征判断</b>。</p>
+<p>更重要的是：它跑全图的速度和现在一样快，不会拖慢程序。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">4</div><div>
+<div class="steptitle">拿你的两个坐标验收</div>
+<p>最后用你给的那两个草地坐标检查：<b>原来认不出的那块，现在认出来了吗？</b>
+同时确认没有把油棕错认成草地。</p>
+</div></div>
+</div>
+
+<h2>四、为什么不直接用那种"很厉害的 AI 分割模型"</h2>
+
+<p>这是个好问题，我们认真评估过，有三个原因不这么做：</p>
+
+<table>
+<thead><tr><th>原因</th><th>大白话</th></tr></thead>
+<tbody>
+<tr><td><b>这个坑踩过</b></td>
+<td>项目最开始就下载过一个"认树 AI"，结果它是在北美森林上训练的，
+完全认不出东南亚油棕。<b>别人训练好的模型，换个场景经常不能用。</b></td></tr>
+<tr><td><b>电脑跑不动</b></td>
+<td>现在整个园子跑一遍要 31 分钟。换成那种大模型，
+<b>要跑好几个小时</b>——因为这台电脑没有独立显卡。</td></tr>
+<tr><td><b>缺的不是模型，是例子</b></td>
+<td>现在连"哪些是草地"的例子都没有。
+先攒够例子，用轻量方法试试；<b>如果不够用，再升级大模型也不迟</b>——
+那时候已经有数据了。</td></tr>
+</tbody></table>
+
+<h2>五、一句话总结</h2>
+<div class="card">
+<p><b>为什么要换方法？</b>因为园子里的光照差了 3 倍，
+"看颜色"这条路已经被实测堵死了。</p>
+<p><b>打算怎么做？</b>请你用 SAM2 点几下把草地和油棕的例子圈出来（1~2 小时），
+然后教电脑"看相对值、不看绝对值"。全程不需要买显卡。</p>
+<p><b>需要你做什么？</b>就一件事：<b>抽 1~2 小时，在图点上二三十个点</b>。</p>
+</div>
+
+<footer>
+生成时间：2026-10-14 &nbsp;·&nbsp; 这是小白版；技术细节见同名专业版<br>
+全部数字来自真实影像实测
+</footer>
+
+</div>
+</body>
+</html>

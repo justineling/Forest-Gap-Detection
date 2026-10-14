@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>草地识别方案：SAM2 标注 + 轻量分类器</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--lime:#7dcc29;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;
+--amber:#c98a00;--violet:#6b4fa8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.78;font-size:15px}
+.wrap{max-width:1060px;margin:0 auto;padding:34px 24px 84px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:30px}
+h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:20px;margin:46px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:16px;margin:28px 0 10px;color:#26382c}
+h4{font-size:14.5px;margin:20px 0 8px;color:#37473c}
+p{margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:16.5px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.lead b{color:var(--green)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;
+vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px}
+.sw{display:inline-block;width:15px;height:15px;border-radius:3px;
+vertical-align:-3px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11.5px;
+font-weight:600;vertical-align:1px;white-space:nowrap}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.t-info{background:#dceaf7;color:#1f5c8a}
+.t-gray{background:#e8e8e8;color:#555}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+.warn{border-left:3px solid var(--amber);background:#fffaf0;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:#eef2ee;padding:1px 5px;border-radius:3px;
+font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:12.5px}
+.step{display:flex;gap:14px;align-items:flex-start;margin:0 0 4px}
+.stepno{flex:0 0 34px;height:34px;border-radius:50%;background:var(--green);
+color:#fff;display:flex;align-items:center;justify-content:center;
+font-weight:700;font-size:15px}
+.steptitle{font-weight:700;font-size:15.5px;padding-top:4px}
+.hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
+.verdict{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;
+border-radius:8px;margin:12px 0;border:1px solid}
+.v-yes{background:#f0f9ec;border-color:#bfe0b0}
+.v-no{background:#fdf1ef;border-color:#efc4bb}
+.v-part{background:#fffaf0;border-color:#f0dfb8}
+.vico{font-size:19px;line-height:1.25}
+.tl{position:relative;margin:22px 0 22px 8px;padding-left:30px;
+border-left:2px solid #d6e2d6}
+.tlitem{position:relative;margin:0 0 26px}
+.tlitem::before{content:"";position:absolute;left:-39px;top:6px;width:14px;
+height:14px;border-radius:50%;background:var(--green);border:3px solid #fff;
+box-shadow:0 0 0 1px #cfe0cf}
+.tlitem.bad::before{background:var(--red)}
+.tlitem.fix::before{background:var(--amber)}
+.tldate{font-size:12.5px;color:var(--sub);font-weight:600}
+.tlhead{font-size:15.5px;font-weight:700;margin:2px 0 6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>草地识别方案：SAM2 标注 + 轻量分类器</h1>
+  <div class="sub">Forest Gap Detection（油棕园空地智能检测）· 专业版 &nbsp;·&nbsp; 2026-10-14 &nbsp;·&nbsp; 对应代码版本 682c995</div>
+</header>
+
+<div class="lead">
+本文提出<b>浅色草地的识别方案</b>：用 <b>SAM2 做标注工具</b>、
+用<b>轻量分类器做判别</b>。<br><br>
+先说结论：<b>手工特征已被实测证明不可分</b>（第 1 节），
+所以必须引入学习方法；但<b>不推荐直接套用端到端语义分割模型</b>（第 6 节说明原因）。
+推荐路径是「SAM2 快速产标注 → 轻量分类器学判别」，成本低、可解释、无需 GPU。
+</div>
+
+<h2>一、问题：浅色草地与油棕在所有手工特征上重叠</h2>
+
+<p>用户指认两个草地真值点后，我们穷举了能想到的全部手工特征，实测结果如下：</p>
+
+<table>
+<thead><tr><th>特征</th><th>草地（真值区）</th><th>油棕（4 个对照区）</th><th>可分性</th></tr></thead>
+<tbody>
+<tr><td>ExG 绿度</td><td>83 ~ 95</td><td><b>1 ~ 112</b></td>
+<td><span class="tag t-bad">完全重叠</span></td></tr>
+<tr><td>纹理 std（5×5）</td><td>19.2 ~ 20.4</td><td>17.2 ~ 19.8</td>
+<td><span class="tag t-bad">重叠</span></td></tr>
+<tr><td>纹理 std（≈1 m）</td><td>29.1 ~ 34.2</td><td>23.5 ~ 36.2</td>
+<td><span class="tag t-bad">重叠</span></td></tr>
+<tr><td>梯度幅值</td><td>111.6 ~ 114.3</td><td>53.8 ~ <b>111.4</b></td>
+<td><span class="tag t-bad">重叠</span></td></tr>
+<tr><td>局部动态范围</td><td>156.0 ~ 164.7</td><td>119.3 ~ 172.3</td>
+<td><span class="tag t-bad">重叠</span></td></tr>
+<tr><td>径向功率谱 8.45 m 周期能量</td><td>8.7 ~ 15.1%</td><td>0 ~ 11.0%</td>
+<td><span class="tag t-bad">重叠</span></td></tr>
+</tbody></table>
+
+<div class="verdict v-no"><div class="vico">⛔</div><div>
+<b>根因：园区跨航带曝光差 3 倍。</b><br>
+油棕的 ExG 从 <b>1</b> 一直到 <b>112</b>（暗航带 vs 亮航带），
+这个区间<b>完整包住了</b>草地的 83~95。
+因此<b>不存在任何绝对阈值</b>能全局分开两者 —— 这不是调参问题，是原理问题。
+</div></div>
+
+<div class="q">
+<b>特别注意「油棕-南部」这个样本</b>：它的 ExG=112、饱和度 0.600、
+纹理 19.8、梯度 111.4、动态范围 157.0 ——
+与草地真值点的 83/0.410/19.2/111.6/156.0 <b>几乎逐项相同</b>。
+而按"草地更绿"的规则，ExG=112 的油棕反而会被判成草地（假阳性）。
+</div>
+
+<h2>二、方案总览</h2>
+<svg viewBox="0 0 680 330" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><defs><marker id="a2" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#7a8a7a"/></marker></defs><rect x="16" y="30" width="150" height="92" rx="9" fill="#2f6fa8" fill-opacity="0.12" stroke="#2f6fa8" stroke-width="1.6"/><text x="91.0" y="52" font-size="13" font-weight="700" fill="#1c2620" text-anchor="middle">① 人工标注（一次性）</text><text x="91.0" y="70" font-size="10.5" fill="#5b6b5f" text-anchor="middle">你在图上点几下</text><text x="91.0" y="84" font-size="10.5" fill="#5b6b5f" text-anchor="middle">SAM2 自动抠出轮廓</text><text x="91.0" y="98" font-size="10.5" fill="#5b6b5f" text-anchor="middle">→ 得到标注样本</text><rect x="196" y="30" width="150" height="92" rx="9" fill="#6b4fa8" fill-opacity="0.12" stroke="#6b4fa8" stroke-width="1.6"/><text x="271.0" y="52" font-size="13" font-weight="700" fill="#1c2620" text-anchor="middle">② 特征提取 + 训练</text><text x="271.0" y="70" font-size="10.5" fill="#5b6b5f" text-anchor="middle">多尺度归一化特征</text><text x="271.0" y="84" font-size="10.5" fill="#5b6b5f" text-anchor="middle">RandomForest 训练</text><text x="271.0" y="98" font-size="10.5" fill="#5b6b5f" text-anchor="middle">（秒级，无需 GPU）</text><rect x="376" y="30" width="150" height="92" rx="9" fill="#2f7d1f" fill-opacity="0.12" stroke="#2f7d1f" stroke-width="1.6"/><text x="451.0" y="52" font-size="13" font-weight="700" fill="#1c2620" text-anchor="middle">③ 集成进管线</text><text x="451.0" y="70" font-size="10.5" fill="#5b6b5f" text-anchor="middle">逐瓦片提特征</text><text x="451.0" y="84" font-size="10.5" fill="#5b6b5f" text-anchor="middle">分类器打分</text><text x="451.0" y="98" font-size="10.5" fill="#5b6b5f" text-anchor="middle">→ 草地掩膜</text><rect x="556" y="30" width="108" height="92" rx="9" fill="#c98a00" fill-opacity="0.12" stroke="#c98a00" stroke-width="1.6"/><text x="610.0" y="52" font-size="13" font-weight="700" fill="#1c2620" text-anchor="middle">④ 回归验证</text><text x="610.0" y="70" font-size="10.5" fill="#5b6b5f" text-anchor="middle">拿真值点复核</text><text x="610.0" y="84" font-size="10.5" fill="#5b6b5f" text-anchor="middle">对比修复前后</text><path d="M166 76 L194 76" stroke="#7a8a7a" stroke-width="1.7" marker-end="url(#a2)"/><path d="M346 76 L374 76" stroke="#7a8a7a" stroke-width="1.7" marker-end="url(#a2)"/><path d="M526 76 L554 76" stroke="#7a8a7a" stroke-width="1.7" marker-end="url(#a2)"/><text x="16" y="152" font-size="12.5" font-weight="700" fill="#26382c">为什么这样分工</text><text x="16" y="174" font-size="11.5" fill="#5b6b5f">SAM2 负责「把形状抠准」——它是通用分割器，不认识"草地"这个词，但抠图非常准；</text><text x="16" y="192" font-size="11.5" fill="#5b6b5f">分类器负责「判断这是不是草地」——它学的是特征与标签的关系，训练快、推理快、可解释。</text><rect x="16" y="212" width="648" height="100" rx="9" fill="#fffaf0" stroke="#f0dfb8" stroke-width="1.4"/><text x="30" y="234" font-size="12" font-weight="700" fill="#8a5a00">关键取舍：为什么不用端到端语义分割模型</text><text x="30" y="254" font-size="11" fill="#8a5a00">① 本项目已被预训练模型坑过一次（DeepForest 域偏移，见《方法对比》文档）</text><text x="30" y="272" font-size="11" fill="#8a5a00">② 本机 4 核无 GPU：SAM2 跑 528 个瓦片要数小时，而现有管线只要 31 分钟</text><text x="30" y="290" font-size="11" fill="#8a5a00">③ 真正的瓶颈是标注数据，不是模型容量 —— 先把数据攒起来，模型可以随时升级</text></svg>
+
+<h2>三、组件 1：SAM2 作为标注工具</h2>
+
+<h3>3.1 SAM2 是什么、不是什么</h3>
+<div class="grid2">
+<div class="card">
+<h4 style="margin-top:0;color:#2b6b1c">✅ 它是</h4>
+<p><b>可提示分割器</b>（promptable segmentation）。给它一个点或一个框，
+它就把那个"物体"的完整轮廓抠出来。</p>
+<p>已在 <code>models/sam2/sam2.1_hiera_base_plus.pt</code>
+（308 MB，Apache 2.0，可商用）。</p>
+</div>
+<div class="card">
+<h4 style="margin-top:0;color:#a32b1c">❌ 它不是</h4>
+<p><b>不是分类器。</b>它不知道"草地"和"油棕"是什么概念，
+只会把"看起来是一整块的东西"抠出来。</p>
+<p>所以它<b>不能直接用来做判别</b>，只能用来<b>快速产标注</b>。</p>
+</div>
+</div>
+
+<h3>3.2 为什么它是本项目最需要的工具</h3>
+<div class="verdict v-yes"><div class="vico">🎯</div><div>
+用户原话：「<b>我不知道怎么提供 polygon，我只好提供 2 个 point</b>」。<br><br>
+这正是 SAM2 解决的问题：<b>你只需要点一个点，它自动生成精确的多边形。</b>
+标注成本从"手描几十个顶点"降到"点一下"。
+</div></div>
+
+<h3>3.3 标注流程</h3>
+<ol>
+<li>在影像上找一个草地/油棕的代表性区域</li>
+<li>在中心点一下（可加 1~2 个负样本点排除干扰）</li>
+<li>SAM2 返回该区域的精确 mask → 存为一条标注记录（含类别标签）</li>
+<li>重复，直到每类积累 <b>20~50 个样本</b>（散布在不同航带、不同位置，覆盖曝光差异）</li>
+</ol>
+<div class="warn"><b>标注要点</b>：样本必须<b>跨航带分布</b>。
+如果全在亮航带采，模型学不到暗航带的情况 —— 而曝光差正是这个问题的核心。</div>
+
+<h3>3.4 成本</h3>
+<table>
+<thead><tr><th>项</th><th>数值</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>人工标注</td><td>约 1~2 小时</td><td>每类 20~50 个点，点选即可</td></tr>
+<tr><td>SAM2 推理（标注阶段）</td><td>每点 2~10 秒（CPU）</td><td>只跑几十次，完全可接受</td></tr>
+<tr><td>SAM2 推理（全图推理）</td><td class="num">数小时</td>
+<td><span class="tag t-bad">不可接受</span> → 所以全图推理不用 SAM2，用分类器</td></tr>
+</tbody></table>
+
+<h2>四、组件 2：特征工程（抗曝光是核心）</h2>
+
+<svg viewBox="0 0 680 210" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><text x="8" y="18" font-size="12.5" font-weight="700" fill="#26382c">核心思路：不看绝对值，看「比周围绿多少」</text><rect x="16" y="34" width="310" height="140" rx="8" fill="#3a4a38" stroke="#2b3a2b"/><text x="171" y="54" font-size="11.5" fill="#cfe0cf" text-anchor="middle">暗航带（整片偏暗）</text><rect x="46" y="72" width="110" height="80" rx="6" fill="#5a6b52"/><text x="101" y="118" font-size="11" fill="#e8f0e4" text-anchor="middle">草地 ExG=60</text><rect x="186" y="72" width="110" height="80" rx="6" fill="#4a5b42"/><text x="241" y="118" font-size="11" fill="#e8f0e4" text-anchor="middle">油棕 ExG=40</text><text x="171" y="166" font-size="10.5" fill="#cfe0cf" text-anchor="middle">绝对阈值 110 在这里全军覆没</text><rect x="354" y="34" width="310" height="140" rx="8" fill="#e8f0d8" stroke="#c8d8b8"/><text x="509" y="54" font-size="11.5" fill="#3a4a38" text-anchor="middle">亮航带（整片偏亮）</text><rect x="384" y="72" width="110" height="80" rx="6" fill="#b8e08a"/><text x="439" y="118" font-size="11" fill="#1c2620" text-anchor="middle">草地 ExG=140</text><rect x="524" y="72" width="110" height="80" rx="6" fill="#9ac86a"/><text x="579" y="118" font-size="11" fill="#1c2620" text-anchor="middle">油棕 ExG=120</text><text x="509" y="166" font-size="10.5" fill="#3a4a38" text-anchor="middle">绝对阈值 110 在这里把两者都判成草地</text><text x="8" y="196" font-size="11.5" fill="#2f7d1f" font-weight="600">归一化后：两边的「草地 − 周围中位」都 ≈ +20，而「油棕 − 周围中位」都 ≈ 0 → 一致可分</text></svg>
+
+<h3>4.1 特征清单</h3>
+<table>
+<thead><tr><th>特征组</th><th>具体特征</th><th>为什么选它</th></tr></thead>
+<tbody>
+<tr><td><b>归一化颜色</b><br><span class="tag t-ok">关键</span></td>
+<td>ExG、饱和度、亮度，各自减去<b>局部大窗口（约 100 m）中位数</b>；
+另加 ExG 在瓦片内的分位排名</td>
+<td>直接消掉航带曝光差 —— 第 1 节证明绝对值不可用</td></tr>
+<tr><td><b>多尺度纹理</b></td>
+<td>亮度标准差在 3 个尺度（≈0.15 m / 0.5 m / 1.5 m）；梯度幅值均值与 P90</td>
+<td>树冠有立体结构，草地平坦；单尺度区分不了，多尺度联合可能有信息</td></tr>
+<tr><td><b>格点残差</b><br><span class="tag t-info">本项目的独特信号</span></td>
+<td>到最近种植格点距离的<b>均值/中位/标准差</b>，以及该区域内树心密度</td>
+<td>这是唯一<b>对曝光不变</b>的强信号（第 1 节唯一没被证伪的方向）</td></tr>
+<tr><td><b>局部对比度</b></td>
+<td>该区域与其外围一圈环带的 ExG 差值</td>
+<td>草地常成片且与周围林分反差明显</td></tr>
+<tr><td><b>形状</b></td>
+<td>连通域面积、长宽比、周长面积比、填充率</td>
+<td>第 7 节的尺寸闸门已证明"面积"是强区分特征</td></tr>
+</tbody></table>
+
+<h2>五、组件 3：轻量分类器</h2>
+
+<h3>5.1 选型：随机森林（RandomForest）</h3>
+<table>
+<thead><tr><th>候选</th><th>评价</th></tr></thead>
+<tbody>
+<tr><td><b>RandomForest / 梯度提升</b></td>
+<td><span class="tag t-ok">推荐</span> 小样本友好（几十个样本即可起步）、
+训练秒级、CPU 推理极快、<b>可输出特征重要性</b>（能解释"到底靠什么判断"）</td></tr>
+<tr><td>逻辑回归</td><td>太简单，特征间非线性关系学不到</td></tr>
+<tr><td>小型 CNN</td><td>样本需求高（上千），且推理要 GPU</td></tr>
+<tr><td>端到端分割网络</td><td>见第 6 节，不推荐作为第一步</td></tr>
+</tbody></table>
+
+<h3>5.2 训练与推理成本</h3>
+<table>
+<thead><tr><th>环节</th><th>成本</th></tr></thead>
+<tbody>
+<tr><td>训练（20~50 样本 × 2 类）</td><td>秒级，纯 CPU</td></tr>
+<tr><td>全图推理（528 瓦片）</td><td>与现有管线同量级（特征提取是 numpy 运算，无深度网络）</td></tr>
+<tr><td>新增依赖</td><td><code>scikit-learn</code>（约 30 MB），已装 numpy/scipy 的环境可直接加</td></tr>
+</tbody></table>
+
+<h2>六、为什么不直接上端到端语义分割模型</h2>
+
+<table>
+<thead><tr><th>顾虑</th><th>具体说明</th></tr></thead>
+<tbody>
+<tr><td><b>域偏移风险已有前车之鉴</b></td>
+<td>项目第一阶段用 DeepForest（北美温带林训练）在油棕上<b>漏检严重</b>，
+直接导致放弃深度学习路线。现成的地表覆盖分割模型同样面临域不匹配。</td></tr>
+<tr><td><b>算力不划算</b></td>
+<td>本机 4 核 CPU、无 GPU；家用机 MX450 仅 2 GB 显存。
+SAM2 base_plus 跑 528 个 2048² 瓦片需<b>数小时</b>，
+而现有完整管线只要 <b>31 分钟</b>。</td></tr>
+<tr><td><b>瓶颈不在模型容量</b></td>
+<td>现在连"哪些像素是草地"的标注都还没有。
+先有 50 个样本，用 RandomForest 就能看出有没有希望；
+如果 RF 撞到天花板，再考虑上大模型 —— 那时也已经有了训练数据。</td></tr>
+<tr><td><b>可解释性</b></td>
+<td>补种决策要能向业务方解释"为什么这块算草地"。
+随机森林能给特征重要性，端到端网络给不了。</td></tr>
+</tbody></table>
+
+<h2>七、实施步骤</h2>
+
+<div class="card">
+<div class="step"><div class="stepno">1</div><div>
+<div class="steptitle">搭建 SAM2 标注工具（0.5 天）</div>
+<p>写一个本地脚本：读影像窗口 → 接收点提示 → 调 SAM2 出 mask →
+保存为标注记录（mask 的 UTM 坐标 + 类别 + 航带编号）。</p>
+<p><b>产出</b>：<code>scripts/sam2_label.py</code> + 标注数据目录</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">2</div><div>
+<div class="steptitle">人工标注（1~2 小时，需用户参与）</div>
+<p>每类 20~50 个样本，<b>必须跨航带分布</b>。
+建议：草地（鲜绿型）、草地（浅色型）、油棕（密林）、油棕（稀疏/幼林）
+四个子类各标一些 —— 因为第 1 节已证明"草地"和"油棕"内部都有多种表现。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">3</div><div>
+<div class="steptitle">特征提取 + 训练 + 留出验证（0.5 天）</div>
+<p>实现第 4 节的特征；训练随机森林；用<b>留出法</b>（按航带切分，
+不要随机切分 —— 随机切分会让同一航带的样本同时出现在训练和验证里，指标虚高）。</p>
+<p><b>验收</b>：在用户指认的真值点上，浅色草地应被正确识别。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">4</div><div>
+<div class="steptitle">集成进管线 + 回归（1 天）</div>
+<p>作为草地回检的<b>第三道闸</b>接在方案 A/B 之后，
+新增 <code>--grass-classifier</code> 开关（默认关，验证稳定后再默认开）。</p>
+<p><b>回归要求</b>：契约测试 95/95；纯油棕瓦片误报不增加；
+真值点检出率提升。然后重跑整幅对比。</p>
+</div></div>
+</div>
+
+<h2>八、风险与退路</h2>
+<table>
+<thead><tr><th>风险</th><th>概率</th><th>退路</th></tr></thead>
+<tbody>
+<tr><td>样本量不足，模型欠拟合</td><td>中</td>
+<td>扩大标注量；或用 SAM2 批量生成候选再人工筛</td></tr>
+<tr><td>归一化颜色仍不够，跨航带泛化差</td><td>中</td>
+<td>加大归一化窗口；引入"航带编号"作为分组特征</td></tr>
+<tr><td>特征区分度不足，RF 也到天花板</td><td>低</td>
+<td>才考虑微调小型分割网（U-Net/SegFormer-B0），此时已有训练数据</td></tr>
+<tr><td>模型过拟合到少数位置</td><td>中</td>
+<td>按航带切分做验证；保持"只从树冠中剔除"的保守策略，
+最终仍由人工复核把关</td></tr>
+</tbody></table>
+
+<div class="q"><b>保守性设计原则</b>：无论分类器多准，它都<b>只从树冠中剔除</b>候选，
+<b>不直接断言"这里可种植"</b>。最终是否补种仍由空地分类与人工复核决定 ——
+这样即使模型出错，也不会造成"把树当成空地"的严重后果。</div>
+
+<footer>
+生成时间：2026-10-14 &nbsp;·&nbsp; 对应代码版本 <span class="mono">682c995</span><br>
+本文所有"实测"数据均来自 WGR17.tif 上的真实测量<br>
+相关文档：《算法说明与演进史》《草地与油棕区分方案》《方法对比-DeepForest与结构法》
+</footer>
+
+</div>
+</body>
+</html>
