@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSM 高程辅助检测方案（小白版）</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--lime:#7dcc29;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;
+--amber:#c98a00;--violet:#6b4fa8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.78;font-size:15px}
+.wrap{max-width:1060px;margin:0 auto;padding:34px 24px 84px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:30px}
+h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:20px;margin:46px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:16px;margin:28px 0 10px;color:#26382c}
+h4{font-size:14.5px;margin:20px 0 8px;color:#37473c}
+p{margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:16.5px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.lead b{color:var(--green)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;
+vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px}
+.sw{display:inline-block;width:15px;height:15px;border-radius:3px;
+vertical-align:-3px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11.5px;
+font-weight:600;vertical-align:1px;white-space:nowrap}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.t-info{background:#dceaf7;color:#1f5c8a}
+.t-gray{background:#e8e8e8;color:#555}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+.warn{border-left:3px solid var(--amber);background:#fffaf0;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:#eef2ee;padding:1px 5px;border-radius:3px;
+font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:12.5px}
+.step{display:flex;gap:14px;align-items:flex-start;margin:0 0 4px}
+.stepno{flex:0 0 34px;height:34px;border-radius:50%;background:var(--green);
+color:#fff;display:flex;align-items:center;justify-content:center;
+font-weight:700;font-size:15px}
+.steptitle{font-weight:700;font-size:15.5px;padding-top:4px}
+.hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
+.verdict{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;
+border-radius:8px;margin:12px 0;border:1px solid}
+.v-yes{background:#f0f9ec;border-color:#bfe0b0}
+.v-no{background:#fdf1ef;border-color:#efc4bb}
+.v-part{background:#fffaf0;border-color:#f0dfb8}
+.vico{font-size:19px;line-height:1.25}
+.tl{position:relative;margin:22px 0 22px 8px;padding-left:30px;
+border-left:2px solid #d6e2d6}
+.tlitem{position:relative;margin:0 0 26px}
+.tlitem::before{content:"";position:absolute;left:-39px;top:6px;width:14px;
+height:14px;border-radius:50%;background:var(--green);border:3px solid #fff;
+box-shadow:0 0 0 1px #cfe0cf}
+.tlitem.bad::before{background:var(--red)}
+.tlitem.fix::before{background:var(--amber)}
+.tldate{font-size:12.5px;color:var(--sub);font-weight:600}
+.tlhead{font-size:15.5px;font-weight:700;margin:2px 0 6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>DSM 高程辅助检测方案（小白版）</h1>
+  <div class="sub">给非技术读者：为什么「量身高」能解决「看颜色」解决不了的问题</div>
+</header>
+
+<div class="lead">
+这份是人话版。一句话说清：<br><br>
+<b>之前我们一直靠"看颜色"分辨草地和油棕，但这条路走不通——
+因为照片有的地方拍得亮、有的地方拍得暗，差了 3 倍。<br>
+如果能量出"高度"，问题就迎刃而解：草很矮，树很高，跟亮度没关系。</b>
+</div>
+
+<h2>一、为什么"看颜色"不行，但"量身高"一定行？</h2>
+
+<p>打个比方。你要在一群人里找出"大人"和"小孩"：</p>
+
+<div class="grid2">
+<div class="card">
+<h4 style="margin-top:0;color:#a32b1c">❌ 靠"衣服颜色"</h4>
+<p>你发现大人多穿深色、小孩多穿浅色，于是定了条规则。</p>
+<p>但问题来了：<b>同一个教室，有的灯亮有的灯暗</b>。
+同一件深色衣服，在亮灯下看着是浅色，在暗灯下看着是深色。</p>
+<p>结果规则怎么调都不对——这正是我们现在的处境。</p>
+</div>
+<div class="card">
+<h4 style="margin-top:0;color:#2b6b1c">✅ 靠"量身高"</h4>
+<p>直接拿尺子量。大人 1.7 m，小孩 1.1 m。</p>
+<p><b>灯光怎么变，身高都不会变。</b>一刀切下去，干干净净。</p>
+</div>
+</div>
+
+<p>油棕园的道理一模一样：</p>
+<table>
+<thead><tr><th>地物</th><th>高度</th></tr></thead>
+<tbody>
+<tr><td>裸地 / 道路</td><td>基本是 0</td></tr>
+<tr><td><b>草地 / 蕨类</b>（就是要找的）</td><td><b>0.3 ~ 1.5 米</b></td></tr>
+<tr><td>小油棕树（1~3 年）</td><td>1.5 ~ 4 米</td></tr>
+<tr><td>成年油棕树</td><td>4 ~ 15 米</td></tr>
+</tbody></table>
+
+<div class="verdict v-yes"><div class="vico">🎯</div><div>
+<b>草地最高 1.5 米，油棕最低也有 2 米。</b>中间有一条清清楚楚的界线，
+而且这条线<b>永远不受拍照光线影响</b>。
+</div></div>
+
+<h2>二、好消息：这个"身高数据"你可能早就有了</h2>
+
+<p>你给我们的那张大照片，叫<b>正射影像</b>。</p>
+<p>它不是拿相机"啪"一下拍出来的，而是用无人机<b>飞了很多趟、拍了几千张照片，
+再用电脑拼出来的</b>（用的软件通常是 DJI Terra / Pix4D / Metashape）。</p>
+
+<div class="q"><b>关键点</b>：电脑在拼这张图的过程中，为了算准每张照片的位置，
+<b>本来就必须先算出整个园子的"立体形状"</b>——
+也就是每个点有多高。这个成果就叫 <b>DSM</b>（数字表面模型）。<br><br>
+所以：<b>DSM 很可能是现成的，只是当时导出时没勾选而已。</b>
+它通常和正射影像放在一起，文件名里可能带 <code>dsm</code>，
+或者你打开原来的航测工程重新导一次就有。</div>
+
+<h2>三、有了"身高数据"之后，流程怎么变</h2>
+
+<svg viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><defs><marker id="c1" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#9ab09a"/></marker></defs><text x="8" y="20" font-size="12.5" font-weight="700" fill="#a32b1c">旧流程（只有 RGB）—— 草地靠"猜"</text><rect x="8" y="30" width="88" height="40" rx="7" fill="#2f7d1f" fill-opacity="0.14" stroke="#2f7d1f" stroke-width="1.5"/><text x="52.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">树冠分割</text><path d="M97 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="102" y="30" width="88" height="40" rx="7" fill="#3f8f2a" fill-opacity="0.14" stroke="#3f8f2a" stroke-width="1.5"/><text x="146.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">空地分离</text><path d="M191 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="196" y="30" width="88" height="40" rx="7" fill="#5aa03a" fill-opacity="0.14" stroke="#5aa03a" stroke-width="1.5"/><text x="240.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">矢量化</text><path d="M285 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="290" y="30" width="88" height="40" rx="7" fill="#7dcc29" fill-opacity="0.14" stroke="#7dcc29" stroke-width="1.5"/><text x="334.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">网格估计</text><path d="M379 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="384" y="30" width="88" height="40" rx="7" fill="#c98a00" fill-opacity="0.14" stroke="#c98a00" stroke-width="1.5"/><text x="428.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">4类分类</text><path d="M473 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="478" y="30" width="88" height="40" rx="7" fill="#a8763f" fill-opacity="0.14" stroke="#a8763f" stroke-width="1.5"/><text x="522.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">不可种植</text><path d="M567 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="572" y="30" width="88" height="40" rx="7" fill="#c0392b" fill-opacity="0.14" stroke="#c0392b" stroke-width="1.5"/><text x="616.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">草地回检</text><text x="8" y="90" font-size="10.5" fill="#a32b1c">⚠ 第 7 步要"猜"：草地 ExG 83~95 与油棕 1~112 完全重叠，只能靠颜色+格点硬凑，浅色草地始终检不出</text><text x="8" y="130" font-size="12.5" font-weight="700" fill="#2b6b1c">新流程（加 DSM）—— 草地靠"量"</text><rect x="8" y="142" width="88" height="44" rx="7" fill="#1f5c8a" fill-opacity="0.15" stroke="#1f5c8a" stroke-width="1.6"/><text x="52.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">CHM 计算</text><path d="M97 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="102" y="142" width="88" height="44" rx="7" fill="#2f6fa8" fill-opacity="0.15" stroke="#2f6fa8" stroke-width="1.6"/><text x="146.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">高度分层</text><path d="M191 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="196" y="142" width="88" height="44" rx="7" fill="#2f7d1f" fill-opacity="0.15" stroke="#2f7d1f" stroke-width="1.6"/><text x="240.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">树冠分割</text><path d="M285 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="290" y="142" width="88" height="44" rx="7" fill="#3f8f2a" fill-opacity="0.15" stroke="#3f8f2a" stroke-width="1.6"/><text x="334.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">空地分离</text><path d="M379 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="384" y="142" width="88" height="44" rx="7" fill="#5aa03a" fill-opacity="0.15" stroke="#5aa03a" stroke-width="1.6"/><text x="428.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">矢量化</text><path d="M473 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="478" y="142" width="88" height="44" rx="7" fill="#7dcc29" fill-opacity="0.15" stroke="#7dcc29" stroke-width="1.6"/><text x="522.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">网格估计</text><path d="M567 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="572" y="142" width="88" height="44" rx="7" fill="#c98a00" fill-opacity="0.15" stroke="#c98a00" stroke-width="1.6"/><text x="616.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">分类</text><text x="616.0" y="175" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">低矮植被</text><text x="8" y="206" font-size="10.5" fill="#2b6b1c">✅ 高度是物理量，不受曝光影响：草 0.3~1.5 m vs 油棕 ≥4 m，一刀切开，不需要任何模型和标注</text><text x="8" y="240" font-size="12" font-weight="700" fill="#26382c">高度分层（示意）</text><rect x="8" y="252" width="60" height="26" fill="#c9a06a" fill-opacity="0.55" stroke="#c9a06a"/><text x="38.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">裸地/硬化</text><rect x="68" y="252" width="90" height="26" fill="#8fd14f" fill-opacity="0.55" stroke="#8fd14f"/><text x="113.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">低矮植被（草/蕨）</text><rect x="158" y="252" width="80" height="26" fill="#7dcc29" fill-opacity="0.55" stroke="#7dcc29"/><text x="198.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">幼树/灌木</text><rect x="238" y="252" width="410" height="26" fill="#2f7d1f" fill-opacity="0.55" stroke="#2f7d1f"/><text x="443.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">成熟油棕</text><text x="8" y="294" font-size="9.5" fill="#5b6b5f">0 m</text><text x="222" y="294" font-size="9.5" fill="#5b6b5f">0.3</text><text x="312" y="294" font-size="9.5" fill="#5b6b5f">1.5</text><text x="392" y="294" font-size="9.5" fill="#5b6b5f">4.0</text><text x="600" y="294" font-size="9.5" fill="#5b6b5f">≈15 m</text></svg>
+
+<h3>变简单了，不是变复杂了</h3>
+<p>你可能担心"是不是要搞很复杂的东西"。恰恰相反：</p>
+<table>
+<thead><tr><th></th><th>以前</th><th>现在</th></tr></thead>
+<tbody>
+<tr><td>怎么认草地</td><td>靠颜色+形状+种植格点硬凑，还老出错</td>
+<td><b>量高度，一句话的事</b></td></tr>
+<tr><td>要不要标注数据</td><td>要（要你花时间点图）</td><td><b>不要</b></td></tr>
+<tr><td>要不要训练 AI</td><td>要</td><td><b>不要</b></td></tr>
+<tr><td>要不要买显卡</td><td>可能要</td><td><b>不要</b></td></tr>
+<tr><td>结果受光线影响</td><td><b>严重</b></td><td><b>不受影响</b></td></tr>
+</tbody></table>
+<p>原来为对付草地问题写的那些复杂规则（颜色判据、格点回检）
+<b>全都可以退休了</b>。</p>
+
+<h2>四、新流程要做什么（7 步）</h2>
+
+<div class="card">
+<div class="step"><div class="stepno">1</div><div>
+<div class="steptitle">先确认"照片"和"身高图"对得上</div>
+<p>两份图必须是同一个坐标系、同一个位置。这一步纯粹是核对，
+花几分钟，但必须做——万一错位几米，高度就套到别的地物上了。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">2</div><div>
+<div class="steptitle">算出"地面在哪"</div>
+<p>身高图记的是<b>表面的高度</b>（树顶也算）。但我们想知道的是
+"东西高出地面多少"，所以得先估出<b>地面本身的高度</b>。</p>
+<p>办法：在每 30~50 米的范围里，<b>取最低的那批点</b>当作地面
+（因为范围内总会有空地或道路）。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">3</div><div>
+<div class="steptitle">相减，得到"东西有多高"</div>
+<p>表面高度 − 地面高度 = <b>东西本身的高度</b>。</p>
+<p>草 → 0.5 米左右；油棕 → 8 米左右。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">4</div><div>
+<div class="steptitle">按高度分档</div>
+<p>0.3 米以下 = 光地面；0.3~1.5 米 = <b>草地</b>；
+1.5~4 米 = 小树；4 米以上 = 成年油棕。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">5</div><div>
+<div class="steptitle">认树：高度说了算</div>
+<p>新规则：<b>长得高的就是树；长得矮的，不管多绿都不是树。</b></p>
+<p>这一条就把草地漏检的问题从根上解决了。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">6</div><div>
+<div class="steptitle">剩下的照旧</div>
+<p>把空地拆成一块块、算出坐标多边形、按种植网格分类型——
+这些跟以前一样，不用改。</p>
+<p><b>新增一类</b>：专门把"草地"标出来，你在地图上一眼就能看到
+"哪片草需要补种"。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">7</div><div>
+<div class="steptitle">顺带把水塘和道路也认得更准</div>
+<p>水面和路面在"身高图"上都是平的（高度约 0），
+比单靠颜色可靠得多。</p>
+</div></div>
+</div>
+
+<h2>五、需要你做什么</h2>
+<div class="card">
+<ol>
+<li><b>找 DSM</b>（最重要）：翻一下当初航测的文件夹，看有没有文件名带
+<code>dsm</code> 的 <code>.tif</code>；或者告诉我用的是什么航测软件，
+我帮你查怎么导</li>
+<li><b>确认一个判断</b>：<b>1~3 年的小油棕树，算"可种植"还是"已有树"？</b>
+这决定那条 1.5 米的分界线画在哪里</li>
+<li><b>标几个已知点</b>：给我几处你确定的地物坐标（比如"这里是老油棕"
+"这里是草地"），我读一下它们的高度，把三条分界线定准</li>
+</ol>
+<p>做完这三件事，剩下的我来。</p>
+</div>
+
+<div class="warn"><b>万一真找不到 DSM 怎么办？</b>
+那就只能回到"你花时间点图 + 训练 AI"的路子。
+但那种做法有个坑：如果特征不做特殊处理，
+AI 会把"照片亮不亮"当成判断依据，换一片区域就失灵。
+到时候我会专门处理这一点（详见专业版第七节）。</div>
+
+<footer>
+生成时间：2026-10-14 &nbsp;·&nbsp; 这是小白版；技术细节见《DSM 高程辅助检测方案》专业版<br>
+全部数字来自真实影像实测
+</footer>
+
+</div>
+</body>
+</html>

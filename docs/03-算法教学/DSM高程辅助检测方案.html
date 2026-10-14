@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSM 高程辅助检测方案</title>
+<style>
+:root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
+--green:#2f7d1f;--lime:#7dcc29;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;
+--amber:#c98a00;--violet:#6b4fa8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+line-height:1.78;font-size:15px}
+.wrap{max-width:1060px;margin:0 auto;padding:34px 24px 84px}
+header{border-bottom:3px solid var(--green);padding-bottom:20px;margin-bottom:30px}
+h1{font-size:27px;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--sub);font-size:14px}
+h2{font-size:20px;margin:46px 0 14px;padding-left:12px;border-left:4px solid var(--green)}
+h3{font-size:16px;margin:28px 0 10px;color:#26382c}
+h4{font-size:14.5px;margin:20px 0 8px;color:#37473c}
+p{margin:10px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:18px 20px;margin:16px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.lead{font-size:16.5px;background:linear-gradient(180deg,#eef7ea,#fff);
+border:1px solid #cfe4c6;border-radius:10px;padding:18px 22px;margin:20px 0}
+.lead b{color:var(--green)}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;
+vertical-align:top}
+th{background:#f0f5ef;font-weight:600;color:#2b3a2f;font-size:13px}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:"Cascadia Code",Consolas,monospace;font-size:12.5px}
+.sw{display:inline-block;width:15px;height:15px;border-radius:3px;
+vertical-align:-3px;margin-right:6px;border:1px solid rgba(0,0,0,.15)}
+.tag{display:inline-block;padding:1px 9px;border-radius:10px;font-size:11.5px;
+font-weight:600;vertical-align:1px;white-space:nowrap}
+.t-ok{background:#dff3d5;color:#2b6b1c}
+.t-warn{background:#fdecc8;color:#8a5a00}
+.t-bad{background:#fbdcd8;color:#a32b1c}
+.t-info{background:#dceaf7;color:#1f5c8a}
+.t-gray{background:#e8e8e8;color:#555}
+.q{border-left:3px solid var(--blue);background:#f4f9fd;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+.warn{border-left:3px solid var(--amber);background:#fffaf0;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
+ul,ol{margin:10px 0;padding-left:24px}
+li{margin:6px 0}
+code{background:#eef2ee;padding:1px 5px;border-radius:3px;
+font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+color:var(--sub);font-size:12.5px}
+.step{display:flex;gap:14px;align-items:flex-start;margin:0 0 4px}
+.stepno{flex:0 0 34px;height:34px;border-radius:50%;background:var(--green);
+color:#fff;display:flex;align-items:center;justify-content:center;
+font-weight:700;font-size:15px}
+.steptitle{font-weight:700;font-size:15.5px;padding-top:4px}
+.hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
+.verdict{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;
+border-radius:8px;margin:12px 0;border:1px solid}
+.v-yes{background:#f0f9ec;border-color:#bfe0b0}
+.v-no{background:#fdf1ef;border-color:#efc4bb}
+.v-part{background:#fffaf0;border-color:#f0dfb8}
+.vico{font-size:19px;line-height:1.25}
+.tl{position:relative;margin:22px 0 22px 8px;padding-left:30px;
+border-left:2px solid #d6e2d6}
+.tlitem{position:relative;margin:0 0 26px}
+.tlitem::before{content:"";position:absolute;left:-39px;top:6px;width:14px;
+height:14px;border-radius:50%;background:var(--green);border:3px solid #fff;
+box-shadow:0 0 0 1px #cfe0cf}
+.tlitem.bad::before{background:var(--red)}
+.tlitem.fix::before{background:var(--amber)}
+.tldate{font-size:12.5px;color:var(--sub);font-weight:600}
+.tlhead{font-size:15.5px;font-weight:700;margin:2px 0 6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>DSM 高程辅助检测方案</h1>
+  <div class="sub">Forest Gap Detection（油棕园空地智能检测）· 专业版 &nbsp;·&nbsp; 2026-10-14 &nbsp;·&nbsp; 对应代码版本 7440f0c</div>
+</header>
+
+<div class="lead">
+如果航测工程里能找到 <b>DSM（数字表面模型）</b>，草地与油棕的区分问题
+<b>基本可以在一天内结案</b> —— 因为高度是<b>物理量</b>，不受航带曝光影响。<br><br>
+本文给出完整的 DSM 全流程设计：新增哪几步、每步的参数与注意事项、
+怎么标定阈值、有什么风险、与旧流程的差异。<br><br>
+<b>前提</b>：需要拿到 DSM。本文假设能拿到；拿不到则走备用路线（见末节）。
+</div>
+
+<h2>一、为什么 DSM 能解决问题</h2>
+
+<div class="card">
+<p><b>问题回顾</b>：草地与油棕在 RGB 上不可分。实测证据——</p>
+<table>
+<thead><tr><th>特征</th><th>草地</th><th>油棕</th><th>结论</th></tr></thead>
+<tbody>
+<tr><td>ExG 绿度</td><td>83 ~ 95</td><td><b>1 ~ 112</b></td><td>❌ 完全重叠</td></tr>
+<tr><td>纹理 / 梯度 / 动态范围</td><td>—</td><td>—</td><td>❌ 重叠</td></tr>
+<tr><td>8.45 m 排列周期性</td><td>8.7~15.1%</td><td>0~11.0%</td><td>❌ 重叠</td></tr>
+<tr><td>DINOv2 深度特征（实测）</td><td>—</td><td>—</td><td>❌ 5 个区域只对 1 个</td></tr>
+</tbody></table>
+<p><b>根因</b>：跨航带曝光差 3 倍（同一片油棕 ExG 从 1 到 112），
+把草地的 83~95 <b>完整包住</b>。所以不是"特征不够强"，而是
+<b>RGB 这个观测维度本身不够</b>。</p>
+<div class="verdict v-yes"><div class="vico">✅</div><div>
+<b>高度是物理量。</b>草 0.3~1.5 m，油棕（哪怕 1 年幼树）也 ≥ 2 m，
+成熟油棕冠顶 7~15 m。<b>曝光怎么变，高度都不会变。</b>
+</div></div>
+<p>这一点项目自己的《可行性分析.md》早就写明了：</p>
+<div class="q">DSM / CHM（冠层高度模型）—— 区分低矮杂草 vs 高大树冠 |
+<b>高</b> | 从摄影测量点云/激光雷达可得；<b>大幅降低"杂草被误判为空地"</b></div>
+</div>
+
+<h2>二、新旧流程对比</h2>
+<svg viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><defs><marker id="c1" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#9ab09a"/></marker></defs><text x="8" y="20" font-size="12.5" font-weight="700" fill="#a32b1c">旧流程（只有 RGB）—— 草地靠"猜"</text><rect x="8" y="30" width="88" height="40" rx="7" fill="#2f7d1f" fill-opacity="0.14" stroke="#2f7d1f" stroke-width="1.5"/><text x="52.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">树冠分割</text><path d="M97 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="102" y="30" width="88" height="40" rx="7" fill="#3f8f2a" fill-opacity="0.14" stroke="#3f8f2a" stroke-width="1.5"/><text x="146.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">空地分离</text><path d="M191 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="196" y="30" width="88" height="40" rx="7" fill="#5aa03a" fill-opacity="0.14" stroke="#5aa03a" stroke-width="1.5"/><text x="240.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">矢量化</text><path d="M285 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="290" y="30" width="88" height="40" rx="7" fill="#7dcc29" fill-opacity="0.14" stroke="#7dcc29" stroke-width="1.5"/><text x="334.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">网格估计</text><path d="M379 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="384" y="30" width="88" height="40" rx="7" fill="#c98a00" fill-opacity="0.14" stroke="#c98a00" stroke-width="1.5"/><text x="428.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">4类分类</text><path d="M473 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="478" y="30" width="88" height="40" rx="7" fill="#a8763f" fill-opacity="0.14" stroke="#a8763f" stroke-width="1.5"/><text x="522.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">不可种植</text><path d="M567 50 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="572" y="30" width="88" height="40" rx="7" fill="#c0392b" fill-opacity="0.14" stroke="#c0392b" stroke-width="1.5"/><text x="616.0" y="55" font-size="11.5" font-weight="600" fill="#1c2620" text-anchor="middle">草地回检</text><text x="8" y="90" font-size="10.5" fill="#a32b1c">⚠ 第 7 步要"猜"：草地 ExG 83~95 与油棕 1~112 完全重叠，只能靠颜色+格点硬凑，浅色草地始终检不出</text><text x="8" y="130" font-size="12.5" font-weight="700" fill="#2b6b1c">新流程（加 DSM）—— 草地靠"量"</text><rect x="8" y="142" width="88" height="44" rx="7" fill="#1f5c8a" fill-opacity="0.15" stroke="#1f5c8a" stroke-width="1.6"/><text x="52.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">CHM 计算</text><path d="M97 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="102" y="142" width="88" height="44" rx="7" fill="#2f6fa8" fill-opacity="0.15" stroke="#2f6fa8" stroke-width="1.6"/><text x="146.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">高度分层</text><path d="M191 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="196" y="142" width="88" height="44" rx="7" fill="#2f7d1f" fill-opacity="0.15" stroke="#2f7d1f" stroke-width="1.6"/><text x="240.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">树冠分割</text><path d="M285 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="290" y="142" width="88" height="44" rx="7" fill="#3f8f2a" fill-opacity="0.15" stroke="#3f8f2a" stroke-width="1.6"/><text x="334.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">空地分离</text><path d="M379 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="384" y="142" width="88" height="44" rx="7" fill="#5aa03a" fill-opacity="0.15" stroke="#5aa03a" stroke-width="1.6"/><text x="428.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">矢量化</text><path d="M473 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="478" y="142" width="88" height="44" rx="7" fill="#7dcc29" fill-opacity="0.15" stroke="#7dcc29" stroke-width="1.6"/><text x="522.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">网格估计</text><path d="M567 164 l4 0" stroke="#9ab09a" stroke-width="1.6" marker-end="url(#c1)"/><rect x="572" y="142" width="88" height="44" rx="7" fill="#c98a00" fill-opacity="0.15" stroke="#c98a00" stroke-width="1.6"/><text x="616.0" y="162" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">分类</text><text x="616.0" y="175" font-size="11" font-weight="600" fill="#1c2620" text-anchor="middle">低矮植被</text><text x="8" y="206" font-size="10.5" fill="#2b6b1c">✅ 高度是物理量，不受曝光影响：草 0.3~1.5 m vs 油棕 ≥4 m，一刀切开，不需要任何模型和标注</text><text x="8" y="240" font-size="12" font-weight="700" fill="#26382c">高度分层（示意）</text><rect x="8" y="252" width="60" height="26" fill="#c9a06a" fill-opacity="0.55" stroke="#c9a06a"/><text x="38.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">裸地/硬化</text><rect x="68" y="252" width="90" height="26" fill="#8fd14f" fill-opacity="0.55" stroke="#8fd14f"/><text x="113.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">低矮植被（草/蕨）</text><rect x="158" y="252" width="80" height="26" fill="#7dcc29" fill-opacity="0.55" stroke="#7dcc29"/><text x="198.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">幼树/灌木</text><rect x="238" y="252" width="410" height="26" fill="#2f7d1f" fill-opacity="0.55" stroke="#2f7d1f"/><text x="443.0" y="269" font-size="10" fill="#1c2620" text-anchor="middle">成熟油棕</text><text x="8" y="294" font-size="9.5" fill="#5b6b5f">0 m</text><text x="222" y="294" font-size="9.5" fill="#5b6b5f">0.3</text><text x="312" y="294" font-size="9.5" fill="#5b6b5f">1.5</text><text x="392" y="294" font-size="9.5" fill="#5b6b5f">4.0</text><text x="600" y="294" font-size="9.5" fill="#5b6b5f">≈15 m</text></svg>
+
+<h2>三、新流程逐步详解</h2>
+
+<div class="card">
+<div class="step"><div class="stepno">0</div><div>
+<div class="steptitle">数据准备与对齐检查</div>
+<p><b>做什么</b>：拿到 DSM 后，先确认它和正射影像<b>同一坐标系、同一范围、像素对齐</b>。</p>
+<p><b>检查方法</b>：</p>
+<ul>
+<li>两者 CRS 是否一致（预期 EPSG:4326 或同工程投影系）</li>
+<li>尺寸 / 分辨率是否一致 —— <b>摄影测量 DSM 的 GSD 常与正射不同</b>，
+若不同需重采样到正射的网格</li>
+<li>抽查几个明显地物（如道路交叉口）在两者中的像素位置是否吻合</li>
+</ul>
+<p><b>为什么要查</b>：DSM 与正射若错位几米，高度信息就会套到错误的地物上，
+后面全部失效。同一工程导出的通常已对齐，但<b>必须验证</b>。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">1</div><div>
+<div class="steptitle">DTM 估算 —— 从 DSM 里"抠出"地面</div>
+<p><b>问题</b>：DSM 是<b>地表表面</b>（含树冠顶），不是<b>地面</b>。
+树冠下面的地形看不见，而我们要算的是"地物高出地面多少"。</p>
+<p><b>做法</b>：滑动窗口低分位数滤波</p>
+<ol>
+<li>在滑动窗口（<b>建议 30~50 m</b>，约 4~6 个株距）内取<b>低分位数</b>（5%~10%）</li>
+<li>窗口内总会有空地/道路 → 低分位数近似该窗口的地面高程</li>
+<li>对结果做中值滤波 + 平滑，得到连续的 DTM</li>
+</ol>
+<p><b>关键参数：窗口大小</b>。必须<b>大于最大树冠直径</b>（油棕冠幅 6~8 m），
+否则窗口里全是树冠，低分位数也会取到树冠高度。
+建议 30 m 起步，用结果直方图验证（DTM 应明显低于 DSM 的众数）。</p>
+<div class="warn"><b>密林区的天然局限</b>：如果某片区域完全被树冠覆盖（无空地/道路），
+窗口内取不到真正的地面点，DTM 只能靠邻域插值 → 该处高度会被低估。
+但本园区有空地、道路、水塘作为地面控制点，<b>整体可控</b>。</div>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">2</div><div>
+<div class="steptitle">CHM 计算 —— 得到"地物高度"</div>
+<p><code>CHM = DSM − DTM</code></p>
+<p>结果含义：每个像素上"东西高出地面多少米"。这是后续所有判断的基础。</p>
+<p><b>必须做的后处理</b>：</p>
+<ul>
+<li><b>中值滤波</b>（3~5 px）—— 摄影测量 DSM 在树冠边缘有"毛刺"（立体匹配伪影），
+不清掉会造出假的"高矮边界"</li>
+<li><b>截断负值</b>：CHM &lt; 0 是噪声（DSM 略低于 DTM），置 0</li>
+<li><b>空洞填补</b>：立体匹配失败处会是 NoData，需插值填补</li>
+</ul>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">3</div><div>
+<div class="steptitle">高度分层 —— 一刀切开草地与油棕</div>
+<p><b>初始阈值（待标定）</b>：</p>
+<table>
+<thead><tr><th>高度区间</th><th>判为</th><th>后续处理</th></tr></thead>
+<tbody>
+<tr><td>&lt; 0.3 m</td><td>裸地 / 硬化地面</td><td>空地候选</td></tr>
+<tr><td><b>0.3 ~ 1.5 m</b></td><td><b>低矮植被（草 / 蕨）</b></td>
+<td><b>空地候选 ← 这就是要补种的绿地</b></td></tr>
+<tr><td>1.5 ~ 4 m</td><td>幼树 / 灌木</td><td>需人工判读</td></tr>
+<tr><td>≥ 4 m</td><td>成熟油棕</td><td>树冠，排除</td></tr>
+</tbody></table>
+<div class="q"><b>阈值必须标定，不能照搬。</b>标定方法：取若干<b>已知点</b>
+（你指认的草地真值点、明显的老油棕、明显的小树），读它们的 CHM 值，
+据此定出 0.3 / 1.5 / 4 三条线。特别是 <b>1.5 m 这条线</b>——
+它决定"幼树算不算可种植"，需要你的领域判断。</div>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">4</div><div>
+<div class="steptitle">树冠分割 —— 高度与绿度双证据融合</div>
+<p><b>旧判据</b>：<code>树冠 = 平滑ExG &gt; 阈值</code>（单证据，会被草地骗）</p>
+<p><b>新判据</b>：</p>
+<div class="q"><code>树冠 = (CHM ≥ 4 m) 或 (平滑ExG &gt; 阈值 且 CHM ≥ 1.5 m)</code></div>
+<p><b>逻辑</b>：</p>
+<ul>
+<li>高度够高 → <b>一定是树</b>（不管绿不绿、亮不亮）</li>
+<li>高度中等 + 绿度高 → <b>可能是树</b>（幼树、受光冠层）</li>
+<li><b>高度低 → 不管多绿都不是树</b> ← 这一条直接解决草地问题</li>
+</ul>
+<p>原来的 ExG 判据<b>保留但降级</b>：只在高度模糊的中间带起作用。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">5-7</div><div>
+<div class="steptitle">空地分离 → 矢量化 → 网格估计（沿用旧流程）</div>
+<p>这三步<b>逻辑不变</b>，直接复用现有实现：</p>
+<ul>
+<li><b>空地分离</b>：圆盘开运算断开窄缝（<code>min_gap_width_m = 1.6</code>，
+距离变换实现，1.95 s/瓦片）</li>
+<li><b>矢量化</b>：简化 + 面积门槛（<code>simplify_m = 0.3</code>，<code>min_area = 30 m²</code>）</li>
+<li><b>网格估计</b>：株距 8.35 m / 行距 7.23 m / 错行角 60°（实测，质量 0.734）</li>
+</ul>
+<p>唯一变化：分割的输入掩膜来自新的双证据判据。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">8</div><div>
+<div class="steptitle">空地分类 —— 新增「低矮植被」独立类别</div>
+<p>在原有 4 类之外，用 CHM <b>再拆一类</b>：</p>
+<table>
+<thead><tr><th>类别</th><th>判据</th><th>语义</th></tr></thead>
+<tbody>
+<tr><td>株位空缺</td><td>贴格点、形状规整、CHM 低</td><td>补 1 株</td></tr>
+<tr><td>林间空隙</td><td>细长、远离格点</td><td>无需补种</td></tr>
+<tr><td>连片空地</td><td>跨多株位、面积大</td><td>整片补种</td></tr>
+<tr><td><b>低矮植被</b> <span class="tag t-ok">新</span></td>
+<td><b>CHM 0.3~1.5 m 且成片</b></td>
+<td><b>草地/蕨类，需补种（就是之前漏掉的那类）</b></td></tr>
+<tr><td>不确定</td><td>证据不足</td><td>人工复核</td></tr>
+</tbody></table>
+<p><b>好处</b>：你可以直接在 ArcGIS 里把"低矮植被"单独成层，
+一眼看到"哪些草地需要补种"——这正是原来做不到的。</p>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">9</div><div>
+<div class="steptitle">不可种植地物检测（沿用 + 增强）</div>
+<p>道路 / 水体 / 办公区三类沿用现有实现（<code>landcover.py</code>）。</p>
+<p><b>DSM 带来的增强</b>：</p>
+<ul>
+<li><b>水体</b>：水面在 DSM 上是一个"平面"，且 CHM ≈ 0（甚至为负）。
+原来的蓝度规则容易误报，现在可加一条"CHM 近 0 且极平滑"的强判据</li>
+<li><b>道路</b>：CHM ≈ 0 且亮 → 比单靠亮度可靠得多</li>
+</ul>
+</div></div>
+</div>
+
+<div class="card">
+<div class="step"><div class="stepno">10</div><div>
+<div class="steptitle">草地回检 —— 退役（或降级为兜底）</div>
+<div class="verdict v-yes"><div class="vico">🎉</div><div>
+原来为解决草地问题而做的<b>方案 A（颜色+形态）</b>和
+<b>方案 B（株行距网格周期性回检）</b>，在 DSM 到位后<b>都不再需要</b>。<br><br>
+建议保留代码但<b>默认关闭</b>（<code>--grass-recheck</code> 改为 opt-in），
+作为"DSM 缺失/质量差"时的兜底。
+</div></div>
+<p>顺带说：方案 B 里那个尺寸闸门（今天刚修的 bug）也一并退休——
+它本来就是为在没有高度信息时硬凑判据而打的补丁。</p>
+</div></div>
+</div>
+
+<h2>四、与旧流程的差异总表</h2>
+<table>
+<thead><tr><th>环节</th><th>旧流程</th><th>新流程（有 DSM）</th></tr></thead>
+<tbody>
+<tr><td>树冠判据</td><td>单证据：ExG &gt; 阈值</td><td><b>双证据：高度 + 绿度</b></td></tr>
+<tr><td>草地识别</td><td>颜色 + 形态 + 格点回检（脆弱）</td>
+<td><b>高度 0.3~1.5 m（直接、稳定）</b></td></tr>
+<tr><td>类别数</td><td>7 类</td><td><b>8 类（+低矮植被）</b></td></tr>
+<tr><td>需要标注/训练</td><td>否</td><td>否</td></tr>
+<tr><td>需要 GPU</td><td>否</td><td>否</td></tr>
+<tr><td>受航带曝光影响</td><td><b>严重</b>（根因）</td><td><b>不影响</b></td></tr>
+<tr><td>一次性准备成本</td><td>—</td><td>找 DSM + 标定阈值（约 2 小时）</td></tr>
+<tr><td>单次运行额外开销</td><td>—</td><td>可忽略（多读一个栅格）</td></tr>
+<tr><td>水体/道路可靠性</td><td>中（易误报）</td><td><b>高</b>（加高度判据）</td></tr>
+</tbody></table>
+
+<h2>五、风险与注意事项</h2>
+<table>
+<thead><tr><th>风险</th><th>影响</th><th>对策</th></tr></thead>
+<tbody>
+<tr><td>DSM 与正射错位</td><td>高度套错地物，全盘失效</td>
+<td><b>开工前必查对齐</b>（第 0 步）</td></tr>
+<tr><td>DTM 估算窗口不当</td><td>高度整体偏移</td>
+<td>窗口 30~50 m；用结果直方图验证</td></tr>
+<tr><td>密林区 DTM 失真</td><td>该处高度被低估</td>
+<td>园区有空地/道路做控制点，整体可控；局部标注"不确定"</td></tr>
+<tr><td>摄影测量 DSM 毛刺</td><td>假的"高矮边界"</td>
+<td>中值滤波 + 形态学清理</td></tr>
+<tr><td>幼树 vs 草地的 1.5 m 边界</td><td>边界附近混淆</td>
+<td><b>需你标定</b>：幼树到底算不算可种植？</td></tr>
+<tr><td>DSM 分辨率低于正射</td><td>高度边界变模糊</td>
+<td>重采样到正射网格；注意不要过度插值</td></tr>
+</tbody></table>
+
+<h2>六、实施清单</h2>
+<ol>
+<li><b>【你】</b>找出航测工程里的 DSM（`.dsm.tif` / `.tif` 后缀带 dsm / 打开原工程导出）
+或点云（`.laz` / `.las`）</li>
+<li><b>【你】</b>确认当初航测软件（DJI Terra / Pix4D / Metashape）——
+便于我判断 DSM 的生成参数与可靠性</li>
+<li><b>【我】</b>写 CHM 生成模块 + 对齐检查</li>
+<li><b>【你】</b>标定三条高度阈值（我给出读值脚本，你只需确认几个已知点）</li>
+<li><b>【我】</b>改造树冠分割为双证据判据，新增「低矮植被」类别</li>
+<li><b>【我】</b>全幅重跑 + 对比新旧结果</li>
+<li><b>【你】</b>目视验收（重点看原来的草地漏检区）</li>
+</ol>
+
+<h2>七、如果拿不到 DSM（备用路线）</h2>
+<p>那就回到"标注 + 训练分类器"，但必须做两处关键改造
+（这是另一个 AI 提出的、且我认同的批评）：</p>
+<table>
+<thead><tr><th>改造</th><th>原因</th></tr></thead>
+<tbody>
+<tr><td><b>特征必须局部归一化</b></td>
+<td>跨航带曝光差 3 倍，任何<b>绝对值</b>特征（原始 RGB / ExG / 未归一化的深度特征）
+直接喂随机森林，决策树会把分裂阈值绑死在特定航带的亮度上 →
+训练集 99%，一换航带就崩。<br>
+对策：在 10~12 m（约 1.2~1.5 倍株距）窗口内做<b>局部 Z-score 归一化</b>，
+或先做 CLAHE 再提特征。</td></tr>
+<tr><td><b>按树冠尺度池化，而非逐像素</b></td>
+<td>油棕与草地的区别不在单片叶子（局部都是亮绿），而在
+<b>8.35 m 尺度上的"放射状树心 + 叶片阴影交替"</b>。<br>
+对策：按网格单元 / 超像素聚合后再提特征；若用 DINOv2，
+必须在归一化后的图上提取，并在 ~4 m 半径上做特征池化。</td></tr>
+</tbody></table>
+<div class="warn"><b>算力提醒</b>：本机是 <b>CPU 版 torch</b>（4 核、无独显）。
+全幅跑 DINOv2 / SAM2 会慢到难以忍受。若无 GPU，
+备用路线应优先用<b>纯 numpy/scipy 的局部归一化特征</b>，分类器用随机森林 / LightGBM。</div>
+
+<footer>
+生成时间：2026-10-14 &nbsp;·&nbsp; 对应代码版本 <span class="mono">7440f0c</span><br>
+本文的"实测"数据均来自 WGR17.tif 上的真实测量<br>
+相关文档：《算法说明与演进史》《草地识别方案-SAM2标注与轻量分类器》
+《草地与油棕区分方案》《可行性分析》（第 241 行已预判 DSM 价值）
+</footer>
+
+</div>
+</body>
+</html>
