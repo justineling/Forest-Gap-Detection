@@ -108,8 +108,14 @@ class LandcoverParams:
     # 物理原因：油棕是「立体的绿」——冠层内部阴影把绿度打折；草地是「平面的绿」，
     # 无阴影、更黄更亮。所以 **ExG 过高反而说明这里不是树**。
     # 为排除油棕受光面（亮绿小斑块）的误伤，再用形态学开运算只保留**连片**区域。
-    grass_exg_min: float = 130.0    # ExG 下限（油棕实测上限约 102，留足余量）
-    grass_sat_min: float = 0.60     # 饱和度下限（油棕实测上限约 0.53）
+    # ⚠️ 阈值 2026-10-14 由 130/0.60 放宽到 110/0.50 —— 依据用户指认的草地真值点：
+    #    点1 那片草地局部 ExG 中位 133 能过旧阈值，但**整片**（含边缘过渡带）
+    #    过不了，命中率仅 8.59%；放宽到 110/0.50 后升到 13.08%，
+    #    而两个纯油棕对照瓦片仍为 **0.00% 误报**（按 detect_grass 真实预处理链
+    #    ——1/4 降采样 + 1m 高斯平滑——做的 A/B 验证）。
+    #    再往下放（100/0.45 开 1m）草地 19.26%，但油棕开始出现 0.22~0.23% 误报。
+    grass_exg_min: float = 110.0    # ExG 下限（实测最优工作点，见上）
+    grass_sat_min: float = 0.50     # 饱和度下限
     grass_open_m: float = 2.0       # 开运算半径（米）：只保留成片草地，滤掉零散受光斑
 
     # --- 草地回检的第二道判据：株行距网格周期性（方案 B，见方案文档 §4）---
@@ -134,6 +140,21 @@ class LandcoverParams:
     grass_grid_pitch_m: float = 8.45     # 种植间距先验（grid_prior.DEFAULT_PRIOR_PITCH_M）
     grass_grid_min_quality: float = 0.15  # 网格质量门槛（与 grid_prior.is_usable 一致）
     grass_grid_node_tol_m: float = 3.5    # 斑块像素距最近格点的中位上限（约半个冠幅）
+
+    # --- 尺寸闸门（2026-10-14 新增，修复真值校验发现的误剔 bug）---
+    # 背景：格点回检的判据是「连通域像素到最近格点距离的**中位数** ≤ 3.5 m」。
+    # 但株距 8.45 m 的三角网格下，**任意均匀分布的大片区域**到最近格点的中位
+    # 距离本来就 ≈ 3~4 m —— 于是该判据对"大块连片区域"必然命中，与它是不是
+    # 树无关。实测：用户指认的草地真值区本可检出 305 m²，被此判据 100% 剔除。
+    #
+    # 修法：面积超过 grass_grid_max_blob_cells 个单位格的连通域**不做剔除**。
+    # 单棵树的受光面不可能横跨两个以上种植单元。
+    #
+    # 实测依据（判据 ExG>110 & S>0.50，2048² 瓦片）：
+    #   纯油棕候选斑块 max 面积 = 1.6 / 9.9 / 70.9 / 6.1 m²（仅 1 个 >60 m²）
+    #   草地真值区候选斑块 max = **365.3 m²**
+    # 取 2 个单位格 ≈ 122 m² 作闸门：油棕零误伤（max 70.9 < 122），草地保留。
+    grass_grid_max_blob_cells: float = 2.0
 
 
 # ----------------------------------------------------------------------------
@@ -389,13 +410,19 @@ def detect_grass(rgb: np.ndarray, valid: np.ndarray, px_m: float,
          如草荒区）→ 保留为草地。
          前三层管"颜色像不像草"，这一层管"位置像不像树"。
 
-    ⚠️ 已知局限（2026-10-14 实测确认，待真值坐标验证）：
-       1. 若"树没了的大片草荒"与密林同瓦片，且网格质量达标，草荒斑块
-          可能因"坐在格点上"被误剔——本判据分的不是"树在不在"，
-          而是"斑块是否压住种植几何位置"。南部草荒区因树心稀散
-          （24 株/ha）触发质量门槛而幸免，但更密的情况需要用户指认
-          真值坐标后做最终校验；
-       2. 若某片油棕恰好整体处于强光下且无阴影（如极陡的向阳坡），
+    ⚠️ 已知局限（2026-10-14 实测确认）：
+       1. ~~若"树没了的大片草荒"与密林同瓦片，且网格质量达标，草荒斑块
+          可能因"坐在格点上"被误剔~~ —— **已在 2026-10-14 修复**：
+          用户指认真值点后定位到该缺陷（草地 305 m² 被 100% 剔除），
+          原因是格点距离中位数判据对"大块连片区域"必然命中。
+          现加**尺寸闸门**（`grass_grid_max_blob_cells`，超 2 个单位格不剔除）。
+       2. **浅色草地仍检不出**：实测本园区油棕 ExG 跨 1~112（跨航带曝光差 3 倍），
+          与草地 ExG 83~95 **区间完全重叠**；纹理/梯度/局部动态范围也重叠
+          （油棕-南部 tex5 19.8 / 梯度 111.4 vs 草地-点2 tex5 19.2 / 梯度 111.6）。
+          用户指认的点2 就属这类，局部 ExG 仅 87，**任何颜色阈值都救不了**。
+          径向功率谱的 8.45 m 周期性同样重叠（草地 8.7~15.1% vs 油棕 0~11.0%）。
+          → 需要学习型方法，见 `docs/03-算法教学/草地与油棕区分方案.html`。
+       3. 若某片油棕恰好整体处于强光下且无阴影（如极陡的向阳坡），
           仍可能被误判为草地。因此该步骤默认**只从树冠中剔除**，
           不直接断言「可种植」，最终仍由空地分类与人工复核把关。
     """
@@ -525,7 +552,11 @@ def _grid_period_filter(opened: np.ndarray, raw: np.ndarray, rgb: np.ndarray,
         return np.hypot(X - nx, Y - ny)
 
     kept = opened.copy()
-    removed = kept_area = 0
+    removed = removed_area = 0
+    skipped_big = skipped_big_area = 0
+    # 尺寸闸门：单位格面积 = 株距 × 行距（三角网格下即一个种植单元）
+    cell_sqm = max(plant * row, 1e-6)
+    max_blob_sqm = p.grass_grid_max_blob_cells * cell_sqm
     for i in range(1, n + 1):
         sl = objs[i - 1]
         if sl is None:
@@ -534,20 +565,28 @@ def _grid_period_filter(opened: np.ndarray, raw: np.ndarray, rgb: np.ndarray,
         ys, xs = np.nonzero(sub)
         if ys.size == 0:
             continue
+        area = float(ys.size) * px_m * px_m
+        # ⚠️ 尺寸闸门必须放在"算格点距离"之前：大块连片区域的格点距离中位数
+        #    天然落在 3~4 m，必然触发剔除，与它是不是树无关（详见参数注释）。
+        if area > max_blob_sqm:
+            skipped_big += 1
+            skipped_big_area += area
+            continue
         d = _node_dist(xs + sl[1].start, ys + sl[0].start)
         dmed = float(np.median(d))
-        area = float(ys.size) * px_m * px_m
         if dmed <= p.grass_grid_node_tol_m:
             kept[sl][sub] = False
             removed += 1
-            kept_area += area
+            removed_area += area
 
     if log:
         log(f"grass-grid: 网格质量 {grid.quality:.2f}，株距 "
             f"{grid.plant_pitch_m:.2f} m / 行距 {grid.row_pitch_m:.2f} m / "
             f"错行角 {grid.skew_angle_deg:.0f}°，树心 {grid.node_count} 个；"
-            f"剔除 {removed} 个压在种植格上的候选连通域"
-            f"（{kept_area:.1f} m²），其余 {n - removed} 个保留为草地")
+            f"剔除 {removed} 个压在种植格上的候选连通域（{removed_area:.1f} m²），"
+            f"尺寸闸门放行 {skipped_big} 个超 {max_blob_sqm:.0f} m² 的大块"
+            f"（{skipped_big_area:.1f} m²，跨多株不可能是一棵树的受光面），"
+            f"其余 {n - removed - skipped_big} 个保留为草地")
     return kept
 
 
