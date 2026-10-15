@@ -70,7 +70,7 @@ padding:10px 14px;margin:10px 0;font-size:13.5px;color:#7a2418}
 
 <header>
   <h1>空地检测成果 · ArcGIS 导入指南</h1>
-  <div class="sub">专业版（面向已会使用 ArcGIS 的技术人员）&nbsp;·&nbsp;成果：1,048 个空地多边形，分 4 类&nbsp;·&nbsp;
+  <div class="sub">专业版（面向已会使用 ArcGIS 的技术人员）&nbsp;·&nbsp;成果：1,655 个空地多边形，分 7 类&nbsp;·&nbsp;
   影像：WGR17.tif（EPSG:4326，3.5 GB）&nbsp;·&nbsp;日期：2026-10-13</div>
 </header>
 
@@ -92,7 +92,7 @@ padding:10px 14px;margin:10px 0;font-size:13.5px;color:#7a2418}
 <div class="verdict v-yes">
 <div class="vico">✅</div>
 <div><b>几何自动画：一定能。</b>任选一个 <code>gaps-all-*</code> 文件导入，ArcGIS 即自动生成
-<b>1,442 个 Polygon 要素</b>（连片空地 381 + 不确定 426 + 株位空缺 233 + 林间空隙 210
+<b>1,655 个 Polygon 要素</b>（连片空地 489 + 不确定 466 + 株位空缺 283 + 林间空隙 225
 + 道路 180 + 水体 8 + 办公生活区 4），
 无需手动画任何一个多边形。</div>
 </div>
@@ -216,27 +216,27 @@ ring 闭合、88 个顶点、宽高比 1:1、跨度 0.01315°×0.01318° ≈ 146
 <thead><tr><th style="width:34%">文件</th><th class="num" style="width:9%">大小</th>
 <th style="width:17%">坐标系</th><th>用途</th></tr></thead>
 <tbody>
-<tr><td class="mono">gaps-all-utm49n-shp.zip</td><td class="num">671 KB</td><td class="mono">EPSG:32649（米）</td>
+<tr><td class="mono">gaps-all-utm49n-shp.zip</td><td class="num">699 KB</td><td class="mono">EPSG:32649（米）</td>
 <td><span class="tag t-ok">ArcGIS 首选</span> 与 TIF 叠加最稳，.prj 必被识别，零手动指定</td></tr>
-<tr><td class="mono">gaps-all-wgs84-shp.zip</td><td class="num">1,021 KB</td><td class="mono">EPSG:4326</td>
+<tr><td class="mono">gaps-all-wgs84-shp.zip</td><td class="num">1,051 KB</td><td class="mono">EPSG:4326</td>
 <td>ArcGIS 备选，与 TIF 同 CRS</td></tr>
-<tr><td class="mono">gaps-all-wgs84.geojson</td><td class="num">9,414 KB</td><td class="mono">EPSG:4326</td>
+<tr><td class="mono">gaps-all-wgs84.geojson</td><td class="num">9,798 KB</td><td class="mono">EPSG:4326</td>
 <td>ArcGIS Pro / ArcMap 10.5+ 直接拖入</td></tr>
-<tr><td class="mono">gaps-all-utm49n.geojson</td><td class="num">7,252 KB</td><td class="mono">EPSG:32649</td>
+<tr><td class="mono">gaps-all-utm49n.geojson</td><td class="num">7,560 KB</td><td class="mono">EPSG:32649</td>
 <td>导入后手动指定 CRS 用</td></tr>
-<tr><td class="mono">gaps-all.kml</td><td class="num">3,596 KB</td><td>WGS84（强制）</td>
+<tr><td class="mono">gaps-all.kml</td><td class="num">3,772 KB</td><td>WGS84（强制）</td>
 <td>Google Earth（已验证清晰），按 7 类分文件夹</td></tr>
 <tr><td colspan="4" style="padding-top:14px"><b>按类别拆分（共 7 类，UTM 49N，便于分层控制符号）</b></td></tr>
-<tr><td class="mono">by-class/gaps-open_patch-utm49n-shp.zip</td><td class="num">294 KB</td><td class="mono">EPSG:32649</td>
-<td>381 块连片空地单独成层（重点核查对象）</td></tr>
+<tr><td class="mono">by-class/gaps-open_patch-utm49n-shp.zip</td><td class="num">346 KB</td><td class="mono">EPSG:32649</td>
+<td>489 块连片空地单独成层（重点核查对象）</td></tr>
 <tr><td class="mono">by-class/gaps-road-utm49n-shp.zip</td><td class="num">193 KB</td><td class="mono">EPSG:32649</td>
 <td>180 块道路 <span class="tag t-info">不可种植</span></td></tr>
-<tr><td class="mono">by-class/gaps-uncertain-utm49n-shp.zip</td><td class="num">128 KB</td><td class="mono">EPSG:32649</td>
-<td>426 块不确定，需人工判读</td></tr>
-<tr><td class="mono">by-class/gaps-vacant_slot-utm49n-shp.zip</td><td class="num">60 KB</td><td class="mono">EPSG:32649</td>
-<td>233 个株位空缺</td></tr>
-<tr><td class="mono">by-class/gaps-alley_gap-utm49n-shp.zip</td><td class="num">48 KB</td><td class="mono">EPSG:32649</td>
-<td>210 个林间空隙</td></tr>
+<tr><td class="mono">by-class/gaps-uncertain-utm49n-shp.zip</td><td class="num">114 KB</td><td class="mono">EPSG:32649</td>
+<td>466 块不确定，需人工判读</td></tr>
+<tr><td class="mono">by-class/gaps-vacant_slot-utm49n-shp.zip</td><td class="num">57 KB</td><td class="mono">EPSG:32649</td>
+<td>283 个株位空缺</td></tr>
+<tr><td class="mono">by-class/gaps-alley_gap-utm49n-shp.zip</td><td class="num">43 KB</td><td class="mono">EPSG:32649</td>
+<td>225 个林间空隙</td></tr>
 <tr><td class="mono">by-class/gaps-office-utm49n-shp.zip</td><td class="num">6 KB</td><td class="mono">EPSG:32649</td>
 <td>4 块办公生活区 <span class="tag t-info">不可种植</span></td></tr>
 <tr><td class="mono">by-class/gaps-water-utm49n-shp.zip</td><td class="num">5 KB</td><td class="mono">EPSG:32649</td>
@@ -312,7 +312,7 @@ ArcGIS 会自动执行 <b>on-the-fly 动态投影</b>，直接叠在一起——
   <rect x="18" y="36" width="12" height="10" fill="#a8763f"/>
   <path d="M18 36 L24 32 L30 36" fill="none" stroke="#a8763f" stroke-width="1.5"/>
   <text x="38" y="45" font-family="Cascadia Code,Consolas,monospace" font-size="12.5" font-weight="700" fill="#223">output/arcgis/</text>
-  <text x="460" y="45" font-size="11.5" fill="#5b6b5f">全部 9 个文件 · 1,048 个多边形</text>
+  <text x="460" y="45" font-size="11.5" fill="#5b6b5f">全部 12 个文件 · 1,655 个多边形</text>
 
   <text x="24" y="70" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
   <text x="60" y="70" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-all-utm49n-shp.zip</text>
@@ -430,7 +430,7 @@ Build Pyramids and Statistics</b>。只额外生成缩放级别的缓存、不�
 检测成果：1,048 个空地多边形（连片空地 380 / 不确定 318 / 株位空缺 180 / 林间空隙 170）<br>
 配套文档：《地物光谱特征实测报告》《地物光谱特征报告-小白版》《ArcGIS 导入指南-小白版》<br>
 本页面所有示意图均为手写内联 SVG，无任何外部资源引用，可单文件离线分发。
-</footer>
+<br>2026-10-15 更新：接入 DSM 高程 + DJI 语义分割双证据，空地由 1,442 增至 1,655（草地漏检修复）</footer>
 
 </div>
 </body>
