@@ -133,6 +133,7 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     "survey_samples":   (int,   7),
     # 不可种植地物（2026-10-13 新增）
     "landcover_unplantable": (bool, True),
+    "target_density_per_ha": (float, 150.0),
     "unplantable_overlap": (float, 0.5),
     # 草地回检：把「过于鲜绿且连片」的区域从树冠中剔除（修正草地被误判成油棕）
     "grass_recheck":  (bool,  True),
@@ -278,6 +279,8 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     # 不可种植地物（语义取反：landcover_unplantable=True → no_landcover=False）
     args.no_landcover = not bool(values["landcover_unplantable"])
     args.unplantable_overlap = values["unplantable_overlap"]
+    # 用户给定的设计密度（株/公顷），用于交叉校验网格估计
+    args.target_density = values["target_density_per_ha"]
     args.no_grass_recheck = not bool(values["grass_recheck"])
     args.no_grass_grid = not bool(values["grass_grid"])
     args.quiet = bool(values["quiet"])
@@ -326,6 +329,7 @@ def params_echo(args: SimpleNamespace) -> dict:
         "survey_samples": args.survey_samples,
         "landcover_unplantable": not args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
+        "target_density_per_ha": args.target_density,
         "grass_recheck": not args.no_grass_recheck,
         "grass_grid": not args.no_grass_grid,
         "progress_every": args.progress_every,
@@ -440,6 +444,7 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         "min_valid_ratio": args.min_valid_ratio,
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
+        "target_density_per_ha": args.target_density,
         "no_grass_recheck": args.no_grass_recheck,
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,

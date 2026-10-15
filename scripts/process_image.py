@@ -106,6 +106,7 @@ from grid_prior import (  # noqa: E402
     estimate_grid, gap_geometry, classify_gaps, GridModel,
     CLASS_VACANT_SLOT, CLASS_ALLEY_GAP, CLASS_OPEN_PATCH, CLASS_UNCERTAIN,
     CLASS_LABEL_CN, METHOD_PRIOR_FALLBACK, summarize_classes,
+    check_density_consistency, DEFAULT_TARGET_DENSITY_PER_HA,
     summarize_unplantable, UNPLANTABLE_CLASSES, CLASS_SEMANTICS,
     DEFAULT_PRIOR_PITCH_M,
 )
@@ -301,6 +302,7 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
                 exg_lo: float = DEFAULT_EXG_LO,
                 exg_hi: float = DEFAULT_EXG_HI,
                 n_valid_hint: int | None = None,
+                target_density_per_ha: float | None = None,
                 verbose: bool = True) -> tuple[GridModel, dict]:
     """在若干均匀分布的采样瓦片上估计网格，取中位数得全局网格。
 
@@ -496,14 +498,26 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
               + ("（三角形/错行种植）" if is_tri else "（正方形/对齐种植）"),
     )
 
+    # 与用户给定的设计密度交叉校验（独立于影像的强先验）
+    dens_ok, dens_ratio, dens_msg = check_density_consistency(
+        global_grid, target_density_per_ha)
+
     if verbose:
         log(f"全局网格：株距 {plants:.2f} m  行距 {rows:.2f} m  "
             f"错行角 {global_grid.skew_angle_deg:.1f}°  方位 {azimuth:.1f}°  "
             f"密度 {global_grid.density_per_ha:.0f} 株/ha  质量 {quality:.3f}")
         log(f"  （探测 {n_tried} 块，成功采样 {len(results)}/{n_want}"
             f"{'，已回落先验' if quality < 0.15 else ''}）")
+        log(f"  密度校验：{dens_msg}")
 
     return global_grid, {
+        "density_check": {
+            "target_density_per_ha": target_density_per_ha,
+            "estimated_density_per_ha": round(global_grid.density_per_ha, 1),
+            "ratio": round(dens_ratio, 4),
+            "ok": bool(dens_ok),
+            "message": dens_msg,
+        },
         "samples": reports,
         "used": len(results),
         "requested": n_want,
@@ -853,6 +867,10 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--min-coverage-for-slot", type=float, default=0.15)
     ap.add_argument("--survey-samples", type=int, default=7,
                     help="网格勘察的采样瓦片数，默认 7")
+    ap.add_argument("--target-density", type=float,
+                    default=DEFAULT_TARGET_DENSITY_PER_HA,
+                    help="园区**设计**密度（株/公顷），用于交叉校验网格估计。\n油棕园常规设计至多 150 株/ha。传 0 表示不校验。默认 "
+                         f"{DEFAULT_TARGET_DENSITY_PER_HA:g}")
 
     # --- 不可种植地物参数（2026-10-13 用户要求）---
     ap.add_argument("--no-landcover", action="store_true",
@@ -919,6 +937,7 @@ def main() -> int:
         "min_valid_ratio": args.min_valid_ratio,
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
+        "target_density_per_ha": args.target_density,
         "no_grass_recheck": args.no_grass_recheck,
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,
@@ -965,6 +984,7 @@ def main() -> int:
                                use_saturation=args.use_saturation,
                                exg_lo=args.exg_lo, exg_hi=args.exg_hi,
                                n_valid_hint=len(good),
+                               target_density_per_ha=args.target_density,
                                verbose=not args.quiet)
     atomic_write_json(job_dir / "grid-survey.json", {
         "fingerprint": fp, "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1110,6 +1130,23 @@ def _reload_from_disk(tiles_dir: Path, tiles: list[Tile], fp: str
     return feats, counts, area
 
 
+def _density_check_payload(grid, args) -> dict:
+    """把「网格估计密度 vs 用户设计密度」的校验结果整理成可导出的结构。
+
+    单独抽成函数是因为 summary 与 survey_grid 在两个不同的调用栈里，
+    而这是一个无副作用的纯计算，直接重算比透传参数更清晰。
+    """
+    target = getattr(args, "target_density", None)
+    ok, ratio, msg = check_density_consistency(grid, target)
+    return {
+        "target_density_per_ha": target,
+        "estimated_density_per_ha": round(float(grid.density_per_ha), 1),
+        "ratio_est_over_target": round(float(ratio), 4),
+        "ok": bool(ok),
+        "message": msg,
+    }
+
+
 def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
                        grid: GridModel, report: dict,
                        features: list[dict], counts: dict, area_total: float,
@@ -1141,6 +1178,7 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "method": "median_of_samples",
             "samples_used": report.get("used", 0),
             "samples_requested": report.get("requested", 0),
+            "density_check": report.get("density_check"),
             "fallback": report.get("fallback", False),
             "per_tile": report.get("samples", []),
         },
@@ -1161,6 +1199,7 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "separate_gaps": not args.no_separate,
             "landcover_unplantable": not args.no_landcover,
             "unplantable_overlap": args.unplantable_overlap,
+            "target_density_per_ha": args.target_density,
             "node_tol_ratio": args.node_tol_ratio,
             "elongate_ratio": args.elongate_ratio,
         },
@@ -1188,6 +1227,8 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
                 "min": round(float(areas.min()), 2),
             },
             "planting_density_per_ha": round(grid.density_per_ha, 1),
+            # 设计密度交叉校验（独立于影像的强先验，由桌面端配置）
+            "density_check": _density_check_payload(grid, args),
         },
     }
 

@@ -148,6 +148,13 @@ METHOD_PRIOR_FALLBACK = "prior_fallback"    # 先验回落（兜底）
 
 # 实测先验（WGR17.tif，跨 8 区中位值）
 DEFAULT_PRIOR_PITCH_M = 8.45        # 种植间距（三角形边长 / 正方形边长）
+
+
+# 用户给定的**设计密度**（株/公顷）。油棕园常规设计：1 ha 至多 150 株。
+# 该值由用户在桌面端（Tauri）配置，用途：
+#   ① 交叉校验网格估计结果 —— 估计密度若显著偏离设计值，说明拟合可能出错；
+#   ② 为「株位空缺」判定提供单位格面积的独立参照。
+DEFAULT_TARGET_DENSITY_PER_HA = 150.0
 DEFAULT_PRIOR_DENSITY = 140.0       # 株/公顷
 DEFAULT_METHOD_VERSION = "v0.2"
 
@@ -1550,6 +1557,39 @@ def build_grid_and_classify(canopy: np.ndarray, affine, px_m: float,
     labels = classify_gaps(geoms, grid,
                            **{k: v for k, v in kwargs.items() if k in cls_keys})
     return grid, labels
+
+
+def check_density_consistency(grid, target_density_per_ha, tol: float = 0.10):
+    """把网格**估计**出的密度与用户给定的**设计**密度做交叉校验。
+
+    返回 (ok: bool, ratio: float, message: str)。
+
+    为什么需要这一步：网格是从树心反推拟合出来的，可能因为
+      · 树心检测漏检/误检
+      · 影像分辨率或曝光导致的间距偏差
+      · 该园区实际种植密度本就与设计值不同
+    而出现系统性偏差。设计密度是一个**独立于影像**的强先验，
+    拿它做交叉校验能及时暴露拟合错误，避免把「株位空缺」判错。
+
+    ⚠️ 注意本函数只**报警**，不自动改参数 —— 因为设计密度也可能与
+    实际不符（补种过的园区、非标准种植区）。最终以用户确认为准。
+    """
+    est = float(grid.density_per_ha)
+    if not target_density_per_ha or target_density_per_ha <= 0:
+        return True, 1.0, f"未提供设计密度；网格估计密度 {est:.1f} 株/ha"
+    ratio = est / float(target_density_per_ha)
+    ok = abs(ratio - 1.0) <= tol
+    implied_cell = 1e4 / float(target_density_per_ha)
+    msg = (f"网格估计密度 {est:.1f} 株/ha  vs  设计密度 "
+           f"{float(target_density_per_ha):.0f} 株/ha  （比值 {ratio:.2f}）")
+    if not ok:
+        msg += (f"\n    ⚠️ 偏差超过 ±{tol * 100:.0f}%。按设计密度反推，"
+                f"单位格面积应为 {implied_cell:.1f} m²，"
+                f"而网格给出 {grid.unit_cell_area_sqm:.1f} m²"
+                f"（株距 {grid.plant_pitch_m:.2f} m × 行距 {grid.row_pitch_m:.2f} m）。"
+                f"\n    可能原因：网格拟合偏差 / 树心漏检 / 该园区实际密度与设计值不同。"
+                f"\n    建议：用已知的株距或行距实测值校正，或确认该园区是否补种过。")
+    return ok, ratio, msg
 
 
 def summarize_classes(labels: Sequence[dict[str, Any]]) -> dict[str, int]:
