@@ -551,11 +551,21 @@ gap    = 去 &lt;200px 碎块</code></pre>
   <h2><span class="num">08</span>当前状态</h2>
   <p class="lede">算法链路已端到端跑通并验证，桌面端应用尚未开始。</p>
 
+  <div class="note info">
+    <span class="ic">🔄</span>
+    <div>
+      <p><strong>2026-10-15 更新</strong></p>
+      <p>算法已从「纯 RGB 判据」升级为「<b>DSM 高程 + 语义分割双证据融合</b>」。原因是草地与油棕在纯 RGB 上被实测证明<b>不可分</b>（ExG 区间完全重叠、跨航带曝光差 3 倍、纹理/梯度/周期性全部重叠、连 DINOv2 深度特征也只对 1/5）。</p>
+      <p>引入高度（物理量）与语义分割后，5 个真值点<b>分离度 +85.3 个百分点</b>，复核 <b>5/5 全部正确</b>。需补种面积由 309,792 增至 <b>399,344 m²</b>（+28.9%），多出的基本是此前漏检的草地。</p>
+      <p>详细算法与演进史见 <code>docs/03-算法教学/算法说明与演进史.html</code>（含小白版）。</p>
+    </div>
+  </div>
+
   <div class="kpi">
-    <div><b style="color:var(--green)">1048</b><span>检出空地（块）</span></div>
-    <div><b style="color:var(--cyan)">285,424</b><span>空地总面积（m²）</span></div>
-    <div><b style="color:var(--pink)">12.46%</b><span>占园区面积</span></div>
-    <div><b style="color:var(--amber)">1172</b><span>整幅耗时（秒）</span></div>
+    <div><b style="color:var(--green)">1655</b><span>检出空地（块）</span></div>
+    <div><b style="color:var(--cyan)">399,344</b><span>需补种面积（m²）</span></div>
+    <div><b style="color:var(--pink)">17.43%</b><span>占园区面积</span></div>
+    <div><b style="color:var(--amber)">1973</b><span>整幅耗时（秒）</span></div>
   </div>
 
   <h3>已完成</h3>
@@ -566,6 +576,10 @@ gap    = 去 &lt;200px 碎块</code></pre>
     <li><span class="tag t-ok">完成</span> 株行距网格先验 + 四类分类（含人造园自检 30/30）</li>
     <li><span class="tag t-ok">完成</span> 整幅分块处理 + 断点续跑 + 参数指纹</li>
     <li><span class="tag t-ok">完成</span> 结果可视化与人工核对（原生分辨率抽查真实空地）</li>
+    <li><span class="tag t-ok">完成</span> 不可种植三类检测（道路/水体/办公区），按像素几何差集扣除</li>
+    <li><span class="tag t-ok">完成</span> <b>CHM 冠层高度模型</b>（DSM → 去尖峰 → mask 水体 → DTM → CHM）</li>
+    <li><span class="tag t-ok">完成</span> <b>海拔证据融合</b>：语义分割 + CHM 双证据，解决草地/油棕在纯 RGB 上不可分的问题（真值点 5/5 全对）</li>
+    <li><span class="tag t-ok">完成</span> 设计密度交叉校验（对比用户给定的 ≤150 株/ha）</li>
   </ul>
 
   <h3>未开始 / 待办</h3>
@@ -576,7 +590,7 @@ gap    = 去 &lt;200px 碎块</code></pre>
     <li><span class="tag t-todo">待办</span> 任务编排 / IPC / 瓦片服务 / 导出</li>
     <li><span class="tag t-todo">待办</span> 前端 UI（MapLibre 影像渲染 + 空地编辑）</li>
     <li><span class="tag t-todo">待办</span> KML 地块切分（P1，当前整幅视为单 block）</li>
-    <li><span class="tag t-p1">待定</span> 是否排除「道路/排水保留带」——属业务定义，需产品拍板</li>
+    <li><span class="tag t-ok">已解决</span> ~~是否排除「道路/排水保留带」~~ —— 已实现 road/water/office 三类检测并按像素扣除</li>
   </ul>
 
   <div class="note info">
@@ -584,7 +598,7 @@ gap    = 去 &lt;200px 碎块</code></pre>
     <div>
       <p><strong>下一步的技术优先级建议</strong></p>
       <ol style="margin:8px 0 0">
-        <li><strong>先定"道路保留带"的业务口径</strong>——它影响 380 块 / 23.6 万 m² 的输出，越早定越省返工</li>
+        <li><s>先定"道路保留带"的业务口径</s> —— <b>已完成</b>（road/water/office 三类已实现并扣除）</li>
         <li>把现有 Python 链路封装成 sidecar 契约（输入输出 JSON 化）</li>
         <li>搭 Tauri 骨架，先用固定结果打通 IPC 与渲染</li>
         <li>最后接 Rust 地理内核替换掉 Python 侧的栅格 I/O</li>

@@ -545,6 +545,66 @@ footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--border);color
   </div>
 </section>
 
+<section id="more" style="margin-top:56px">
+  <h2 style="font-size:20px;margin:0 0 14px;padding-left:12px;border-left:4px solid var(--green)">
+    09&nbsp;&nbsp;后续：又走了五步（2026-10-14 ~ 10-15）</h2>
+  <p>上面这「七次转折」记录到分类补全为止。之后项目又经历了五个阶段，
+  最终解决了全项目最大的缺陷。完整版见
+  <code>docs/03-算法教学/算法说明与演进史.html</code>（含小白版）。</p>
+
+  <div class="card" style="border-top:3px solid var(--amber)">
+    <h4>转折 ⑧ · 草地回检（方案 A/B）</h4>
+    <p>用户指出「绿地也是可种植的土地」。实测证实<b>草地 ExG 比油棕高 54%</b>，
+    现有判据把草地当成了树 → 漏检。于是加了两道草地判据。</p>
+  </div>
+
+  <div class="card" style="border-top:3px solid var(--red)">
+    <h4>转折 ⑨ · 真值校验：用户指认的草地一个都没检出</h4>
+    <p>用户提供两个草地真值坐标，核对后发现<b>两处都不在检出空地里</b>。
+    查下去是两个独立原因：一是我们自己写的判据有 bug；二是浅色草地与油棕在 RGB 上真的不可分。</p>
+  </div>
+
+  <div class="card" style="border-top:3px solid var(--amber)">
+    <h4>转折 ⑩ · 尺寸闸门修复</h4>
+    <p>格点回检的判据对「大块连片区域」必然命中（与它是不是树无关）。
+    加尺寸闸门后，真值点1 的草地从 0 恢复到 <b>446 m²</b>，同时消除了另一处误报。<b>双赢。</b></p>
+  </div>
+
+  <div class="card" style="border-top:3px solid var(--red)">
+    <h4>转折 ⑪ · 穷举特征：证明纯 RGB 走不通</h4>
+    <p>把所有手工特征（绿度/纹理/梯度/动态范围/排列周期性）和最新的深度特征
+    （DINOv2）都试了一遍，<b>全部重叠、无一可用</b>。</p>
+    <p>根因：跨航带曝光差 3 倍，同一片油棕的绿度从 1 跨到 112，
+    <b>把草地的范围完整包住</b>。这不是调参能解决的 —— <b>RGB 这个观测维度不够</b>。</p>
+  </div>
+
+  <div class="card" style="border-top:3px solid var(--cyan)">
+    <h4>转折 ⑫ · 引入 DSM 高程 + 语义分割 —— 问题解决</h4>
+    <p>用户翻出航测工程的原产物（立体高度图 DSM + 航测软件 AI 的语义分割），
+    两条证据交叉验证：</p>
+    <ul>
+      <li><b>高度</b>是物理量，不受光照影响（草 1 m / 油棕 8 m）</li>
+      <li><b>语义分割</b>能看整株树冠形状，实测在真值点上全判对</li>
+      <li>两者<b>严格互补</b>：高度救回语义分割漏检的树，也否决它的误判</li>
+    </ul>
+    <p><b>结果：5 个真值点全部判对</b>（项目首次），与语义分割独立交叉验证一致性 <b>95%</b>。</p>
+    <p>顺带解开一个悬案：我们一直以为「有片油棕怎么都分不开」，
+    真相是<b>那个参考点本身标错了</b>——它是树间空地，不是树。
+    两套算法其实都判对了。<b>验证算法的"标准答案"本身也可能是错的。</b></p>
+  </div>
+
+  <div class="note good">
+    <span class="ic">🎯</span>
+    <div>
+      <p><strong>这五步教了我们什么</strong></p>
+      <p>当所有「在同一个观测维度里想办法」的努力都失败时，
+      答案往往不在参数里，而在<b>换一个观测维度</b>。
+      颜色不行就用量高度，手工特征不行就用学习特征 ——
+      但每一步都必须用实测数据验证，而不是相信"它应该有效"。</p>
+    </div>
+  </div>
+</section>
+
 <footer>
   <span>Forest Gap Detection · 项目进展历程</span>
   <span>配套阅读：项目全过程（专业版 / 零基础版）</span>

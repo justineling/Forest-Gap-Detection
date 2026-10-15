@@ -7,7 +7,7 @@
 <style>
 :root{--bg:#f7f9f7;--card:#fff;--ink:#1c2620;--sub:#5b6b5f;--line:#e2e8e2;
 --green:#2f7d1f;--lime:#7dcc29;--brown:#a8763f;--blue:#2f6fa8;--red:#c0392b;
---amber:#c98a00;--violet:#6b4fa8}
+--amber:#c98a00;--violet:#6b4fa8;--teal:#1f7a7a}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
 font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
@@ -44,6 +44,8 @@ font-weight:600;vertical-align:1px;white-space:nowrap}
 margin:14px 0;border-radius:0 8px 8px 0}
 .warn{border-left:3px solid var(--amber);background:#fffaf0;padding:12px 16px;
 margin:14px 0;border-radius:0 8px 8px 0}
+.good{border-left:3px solid var(--green);background:#f2faf0;padding:12px 16px;
+margin:14px 0;border-radius:0 8px 8px 0}
 ul,ol{margin:10px 0;padding-left:24px}
 li{margin:6px 0}
 code{background:#eef2ee;padding:1px 5px;border-radius:3px;
@@ -53,7 +55,7 @@ color:var(--sub);font-size:12.5px}
 .step{display:flex;gap:14px;align-items:flex-start;margin:0 0 4px}
 .stepno{flex:0 0 34px;height:34px;border-radius:50%;background:var(--green);
 color:#fff;display:flex;align-items:center;justify-content:center;
-font-weight:700;font-size:15px}
+font-weight:700;font-size:14px}
 .steptitle{font-weight:700;font-size:15.5px;padding-top:4px}
 .hl{background:#fff8dc;padding:1px 4px;border-radius:3px;font-weight:600}
 .verdict{display:flex;gap:12px;align-items:flex-start;padding:13px 16px;
@@ -70,10 +72,15 @@ height:14px;border-radius:50%;background:var(--green);border:3px solid #fff;
 box-shadow:0 0 0 1px #cfe0cf}
 .tlitem.bad::before{background:var(--red)}
 .tlitem.fix::before{background:var(--amber)}
+.tlitem.win::before{background:var(--teal)}
 .tldate{font-size:12.5px;color:var(--sub);font-weight:600}
 .tlhead{font-size:15.5px;font-weight:700;margin:2px 0 6px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+.big{font-size:26px;font-weight:700;color:var(--green);line-height:1.2}
+.kv{display:flex;justify-content:space-between;padding:7px 0;
+border-bottom:1px dashed var(--line)}
+.kv:last-child{border-bottom:0}
 </style>
 </head>
 <body>
@@ -87,51 +94,69 @@ box-shadow:0 0 0 1px #cfe0cf}
 这份是<b>人话版</b>。讲两件事：<br>
 ① 现在这套程序是<b>怎么一步步看出</b>哪些地该补种；<br>
 ② 这套做法是<b>怎么试出来的</b>——包括走过的弯路。<br><br>
-读完你会明白：为什么不能简单地"看颜色"，以及为什么"树排得整齐"这件事这么重要。
+读完你会明白：为什么"只看颜色"注定失败，以及为什么"量身高"能一击解决。
 </div>
 
 <h2>一、想象你在给 229 公顷的园子做一次"体检"</h2>
 
 <p>你手上有一张 3.5 GB 的航拍大图（相当于把整个园子从上往下拍了一张超高清照片），
-还有一张 KML 范围文件（告诉电脑"只关心这一圈里面"）。</p>
+还有一个 DSM（可以理解成"园子的立体身高图"）。</p>
 <p>程序要做的事，说白了就一句话：</p>
 <div class="q"><b>把照片里"该有树、但是没树"的地方，一块块圈出来，交给工人去补种。</b></div>
-<p>听起来简单，做起来要闯 7 道关。</p>
+<p>听起来简单，做起来要闯 8 道关。</p>
 
-<svg viewBox="0 0 680 220" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><rect x="8" y="40" width="88" height="106" rx="9" fill="#2f7d1f" fill-opacity="0.14" stroke="#2f7d1f" stroke-width="1.6"/><circle cx="52.0" cy="60" r="12" fill="#2f7d1f"/><text x="52.0" y="65" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">1</text><text x="52.0" y="88" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">找树</text><text x="52.0" y="104" font-size="9.5" fill="#5b6b5f" text-anchor="middle">看绿度</text><text x="52.0" y="117" font-size="9.5" fill="#5b6b5f" text-anchor="middle">自适应分数线</text><path d="M97 93 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="102" y="40" width="88" height="106" rx="9" fill="#3f8f2a" fill-opacity="0.14" stroke="#3f8f2a" stroke-width="1.6"/><circle cx="146.0" cy="60" r="12" fill="#3f8f2a"/><text x="146.0" y="65" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">2</text><text x="146.0" y="88" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">擦断缝隙</text><text x="146.0" y="104" font-size="9.5" fill="#5b6b5f" text-anchor="middle">把一张网</text><text x="146.0" y="117" font-size="9.5" fill="#5b6b5f" text-anchor="middle">擦成一块块</text><path d="M191 93 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="196" y="40" width="88" height="106" rx="9" fill="#5aa03a" fill-opacity="0.14" stroke="#5aa03a" stroke-width="1.6"/><circle cx="240.0" cy="60" r="12" fill="#5aa03a"/><text x="240.0" y="65" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">3</text><text x="240.0" y="88" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">变多边形</text><text x="240.0" y="104" font-size="9.5" fill="#5b6b5f" text-anchor="middle">像素 → 坐标</text><text x="240.0" y="117" font-size="9.5" fill="#5b6b5f" text-anchor="middle">（给地图用）</text><path d="M285 93 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="290" y="40" width="88" height="106" rx="9" fill="#7dcc29" fill-opacity="0.14" stroke="#7dcc29" stroke-width="1.6"/><circle cx="334.0" cy="60" r="12" fill="#7dcc29"/><text x="334.0" y="65" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">4</text><text x="334.0" y="88" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">铺虚拟方格纸</text><text x="334.0" y="104" font-size="9.5" fill="#5b6b5f" text-anchor="middle">反推种植规律</text><text x="334.0" y="117" font-size="9.5" fill="#5b6b5f" text-anchor="middle">8.35 m 株距</text><path d="M379 93 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="384" y="40" width="88" height="106" rx="9" fill="#c98a00" fill-opacity="0.14" stroke="#c98a00" stroke-width="1.6"/><circle cx="428.0" cy="60" r="12" fill="#c98a00"/><text x="428.0" y="65" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">5</text><text x="428.0" y="88" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">分 4 类</text><text x="428.0" y="104" font-size="9.5" fill="#5b6b5f" text-anchor="middle">株位/空隙</text><text x="428.0" y="117" font-size="9.5" fill="#5b6b5f" text-anchor="middle">连片/不确定</text><path d="M473 93 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="478" y="40" width="88" height="106" rx="9" fill="#a8763f" fill-opacity="0.14" stroke="#a8763f" stroke-width="1.6"/><circle cx="522.0" cy="60" r="12" fill="#a8763f"/><text x="522.0" y="65" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">6</text><text x="522.0" y="88" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">扣掉不该种的</text><text x="522.0" y="104" font-size="9.5" fill="#5b6b5f" text-anchor="middle">白路/水塘</text><text x="522.0" y="117" font-size="9.5" fill="#5b6b5f" text-anchor="middle">办公区</text><path d="M567 93 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="572" y="40" width="88" height="106" rx="9" fill="#6b4fa8" fill-opacity="0.14" stroke="#6b4fa8" stroke-width="1.6"/><circle cx="616.0" cy="60" r="12" fill="#6b4fa8"/><text x="616.0" y="65" font-size="13" font-weight="700" fill="#fff" text-anchor="middle">7</text><text x="616.0" y="88" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">找回草地</text><text x="616.0" y="104" font-size="9.5" fill="#5b6b5f" text-anchor="middle">草地比树还绿</text><text x="616.0" y="117" font-size="9.5" fill="#5b6b5f" text-anchor="middle">别漏了</text><text x="8" y="24" font-size="13" font-weight="700" fill="#26382c">程序闯的 7 道关</text><text x="8" y="172" font-size="11.5" fill="#5b6b5f">前 3 关：把"哪里没树"找出来　·　第 4~5 关：判断每块空地是什么性质</text><text x="8" y="192" font-size="11.5" fill="#5b6b5f">第 6 关：把你说的"本来就不该种"的地方扣掉　·　第 7 关：把被认错的草地找回来</text></svg>
+<svg viewBox="0 0 680 258" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;font-family:system-ui,sans-serif"><rect x="8" y="52" width="82" height="106" rx="8" fill="#1f5c8a" fill-opacity="0.13" stroke="#1f5c8a" stroke-width="1.6"/><text x="49.0" y="73" font-size="11" font-weight="700" fill="#1f5c8a" text-anchor="middle">S0</text><text x="49.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">CHM 生成</text><text x="49.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">DSM → 去尖峰</text><text x="49.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">→ mask 水 → DTM</text><path d="M91 104 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="96" y="52" width="82" height="106" rx="8" fill="#2f7d1f" fill-opacity="0.13" stroke="#2f7d1f" stroke-width="1.6"/><text x="137.0" y="73" font-size="11" font-weight="700" fill="#2f7d1f" text-anchor="middle">S1</text><text x="137.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">树冠分割</text><text x="137.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">ExG + seg</text><text x="137.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">+ CHM 融合</text><path d="M179 104 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="184" y="52" width="82" height="106" rx="8" fill="#3f8f2a" fill-opacity="0.13" stroke="#3f8f2a" stroke-width="1.6"/><text x="225.0" y="73" font-size="11" font-weight="700" fill="#3f8f2a" text-anchor="middle">S2</text><text x="225.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">空地分离</text><text x="225.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">圆盘开运算</text><text x="225.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">断开窄缝</text><path d="M267 104 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="272" y="52" width="82" height="106" rx="8" fill="#5aa03a" fill-opacity="0.13" stroke="#5aa03a" stroke-width="1.6"/><text x="313.0" y="73" font-size="11" font-weight="700" fill="#5aa03a" text-anchor="middle">S3</text><text x="313.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">矢量化</text><text x="313.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">简化 + 面积门槛</text><text x="313.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">→ 多边形</text><path d="M355 104 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="360" y="52" width="82" height="106" rx="8" fill="#7dcc29" fill-opacity="0.13" stroke="#7dcc29" stroke-width="1.6"/><text x="401.0" y="73" font-size="11" font-weight="700" fill="#7dcc29" text-anchor="middle">S4</text><text x="401.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">网格估计</text><text x="401.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">株距/行距</text><text x="401.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">+ 错行角</text><path d="M443 104 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="448" y="52" width="82" height="106" rx="8" fill="#c98a00" fill-opacity="0.13" stroke="#c98a00" stroke-width="1.6"/><text x="489.0" y="73" font-size="11" font-weight="700" fill="#c98a00" text-anchor="middle">S5</text><text x="489.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">空地分类</text><text x="489.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">4 类</text><text x="489.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">（株位/空隙/连片/不确定）</text><path d="M531 104 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="536" y="52" width="82" height="106" rx="8" fill="#a8763f" fill-opacity="0.13" stroke="#a8763f" stroke-width="1.6"/><text x="577.0" y="73" font-size="11" font-weight="700" fill="#a8763f" text-anchor="middle">S6</text><text x="577.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">不可种植</text><text x="577.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">道路/水体</text><text x="577.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">/办公区</text><path d="M619 104 l4 0" stroke="#9ab09a" stroke-width="1.8"/><rect x="624" y="52" width="82" height="106" rx="8" fill="#6b4fa8" fill-opacity="0.13" stroke="#6b4fa8" stroke-width="1.6"/><text x="665.0" y="73" font-size="11" font-weight="700" fill="#6b4fa8" text-anchor="middle">S7</text><text x="665.0" y="91" font-size="12" font-weight="700" fill="#1c2620" text-anchor="middle">密度校验</text><text x="665.0" y="107" font-size="9.5" fill="#5b6b5f" text-anchor="middle">对比设计密度</text><text x="665.0" y="120" font-size="9.5" fill="#5b6b5f" text-anchor="middle">±10% 告警</text><text x="8" y="30" font-size="12.5" font-weight="700" fill="#26382c">输入：正射影像 + DSM + 语义分割 → 输出：空地多边形 + 7 类标签</text><text x="8" y="200" font-size="11.5" fill="#5b6b5f">S1 是核心：把「绿度」与「高度/语义」两类证据融合，解决草地与油棕在纯 RGB 上不可分的问题</text><text x="8" y="220" font-size="11.5" fill="#5b6b5f">「需补种面积」= 全部空地 − 不可种植（S6）</text><text x="8" y="240" font-size="11.5" fill="#c0392b">注：原「草地回检」判据已退役，仅在缺少 DSM 时作为兜底</text></svg>
 
-<h3>第 1 关：哪些像素是树？</h3>
-<p>树是绿的，所以先算一个"有多绿"的分数（专业上叫 ExG）。分数高的地方大概是树。</p>
-<div class="warn"><b>麻烦来了</b>：这架飞机飞了很多趟，每趟的光照都不一样。
-有的地方拍得亮，有的地方拍得暗，<b>亮度差了 3 倍</b>。
-如果用一条固定的分数线去卡，亮的地方会把普通地面当成树，暗的地方会把树当成地面。</div>
-<p><b>解法</b>：不用固定分数线，而是"看这张照片里最绿的那批大概在哪"，
-再给这个分数线加个上限和下限防止走极端。这叫<b>自适应</b>。</p>
+<h3>第 1 关：先量出"东西有多高"</h3>
+<p>航测软件给了一张"表面高度图"（DSM），记的是<b>每个点有多高</b>——树顶也算。</p>
+<p>但我们想知道的是"东西<b>高出地面</b>多少"，所以得先估出地面在哪。</p>
+<div class="warn"><b>两个坑要填</b>：<br>
+① 这张高度图有<b>假的尖刺</b>（立体匹配出错造成），要先削掉；<br>
+② 水面上算不出高度（水面反光、没有纹理），会冒出几十米的假山峰，得先挖掉。</div>
+<p>做完这两步，相减就得到"东西本身有多高"：草 1 米左右，油棕 8 米左右。</p>
 
-<h3>第 2 关：把"一张网"拆成"一块块"</h3>
-<p>树和树之间的空隙是<b>全都连在一起</b>的，像一张网。
-直接拿去统计，会得到一张巨大的蜘蛛网，没法用。</p>
-<p><b>解法</b>：拿一个"橡皮擦"沿缝隙擦一遍，把细窄的连接处擦断，
-剩下的就变成一块块独立的空地了。</p>
+<h3>第 2 关：认出哪些是树（关键的一关）</h3>
+<p>我们用了<b>两条独立的线索</b>：</p>
+<div class="grid2">
+<div class="card">
+<h4 style="margin-top:0;color:#1f5c8a">线索一：量身高</h4>
+<p>草很矮（1 米），树很高（8 米）。</p>
+<p><b>光线的明暗怎么变，身高都不会变</b>——这是最可靠的一条。</p>
+</div>
+<div class="card">
+<h4 style="margin-top:0;color:#2f6fa8">线索二：请助手帮忙</h4>
+<p>航测软件自带一个 AI 助手，已经在全图圈出了"哪些是树"。</p>
+<p>它圈得挺准，但会漏掉约两成的树（它是认柑橘、香蕉那些树训练的，
+没学过油棕）。</p>
+</div>
+</div>
+<div class="good"><b>两条线索交叉验证，结果就稳了：</b>
+量出身高够高的一定是树（把助手漏掉的救回来）；
+身高明确很矮的一律不是树（把助手认错的否掉）。
+<b>5 个已知点全部判对。</b></div>
+
+<h3>第 3 关：把"一张网"拆成"一块块"</h3>
+<p>树和树之间的空隙是<b>全都连在一起</b>的，像一张网，没法用。
+拿个"橡皮擦"沿缝隙擦一遍，把细窄的连接处擦断，剩下的就变成一块块独立的空地。</p>
 <div class="q"><b>这里踩过一个性能坑</b>：一开始的擦除方法很笨，
 一块地要擦 <b>11.7 秒</b>，占了整个程序 85% 的时间。
 后来换了个聪明算法，降到 <b>1.95 秒</b>，快了 6 倍。</div>
 
-<h3>第 3 关：把像素变成多边形</h3>
+<h3>第 4 关：把像素变成多边形</h3>
 <p>照片上是像素点，但工人需要的是"坐标多边形"（能导进地图软件画出来）。
 这一步把一块块像素转成一个个多边形，顺便把太小的碎块丢掉。</p>
+<div class="warn"><b>这里有个隐蔽的坑</b>：照片存的是"经纬度"，
+但算面积必须换成"米"。忘了换算，算出来的面积会是 0 —— 我们踩过。</div>
 
-<h3>第 4 关：看出树的"排队规律"</h3>
-<p>这是整个项目<b>最关键的一步</b>。油棕是人工种的，排得非常整齐：
+<h3>第 5 关：看出树的"排队规律"</h3>
+<p>这是很关键的一步。油棕是人工种的，排得非常整齐：
 每棵树之间 8.35 米，行与行之间 7.23 米，而且是"三角形"交错排列的。</p>
-<p>程序从照片里反推出这套规律（株距、行距、角度），
-得到一个"虚拟网格"——就像给整个园子铺了一张看不见的方格纸。</p>
-<div class="q"><b>为什么这一步这么重要？</b>
-因为"树排得整齐"这件事，<b>不管光照怎么变都不会变</b>。
-这是整个项目里最可靠的一条线索。</div>
+<p>程序从照片里反推出这套规律，得到一张"虚拟方格纸"。</p>
+<div class="good"><b>两个独立方法互相印证</b>：除了从照片反推，
+我们还用航测软件给出的 1.5 万个树心算了一遍间距，结果是 <b>8.25 米</b>——
+和 8.35 米几乎一样。<b>说明这个测量是可靠的。</b></div>
 
-<h3>第 5 关：给每块空地分个类</h3>
-<p>有了那张"方格纸"，就能判断每块空地的性质了：</p>
+<h3>第 6 关：给每块空地分个类</h3>
 <table>
 <thead><tr><th>类别</th><th>大白话</th></tr></thead>
 <tbody>
@@ -141,33 +166,22 @@ box-shadow:0 0 0 1px #cfe0cf}
 <tr><td><b>不确定</b></td><td>电脑拿不准 —— 让人去现场看</td></tr>
 </tbody></table>
 
-<h3>第 6 关：扣掉"根本不该种"的地</h3>
+<h3>第 7 关：扣掉"根本不该种"的地</h3>
 <p>你告诉了我们一条关键信息：<b>道路是白色的</b>，
-园子里还有河流水塘，办公区周围也是白色土地。这些地方<b>本来就不该种树</b>，
-不能算进"要补种"里。</p>
-<p>程序按你说的去找：</p>
+园子里还有河流水塘，办公区周围也是白色土地。这些地方<b>本来就不该种树</b>。</p>
 <ul>
-<li><b>白色道路</b>：又亮又不鲜艳，而且形状是<b>细长条</b>（像蛛网），不是一大块</li>
+<li><b>白色道路</b>：又亮又不鲜艳，而且形状是<b>细长条</b>（像蛛网）</li>
 <li><b>水体</b>：蓝色比绿色多，或者很暗很平滑</li>
 <li><b>办公区</b>：又亮又不鲜艳，但是<b>一大坨</b>（跟道路正好相反）</li>
 </ul>
-<p>找到之后，从"要补种"的面积里扣掉。</p>
 
-<h3>第 7 关：把被认错的草地找回来</h3>
-<p>这是最近才发现的问题，也最反直觉。</p>
-<div class="verdict v-no"><div class="vico">😮</div><div>
-你指出"绿地也是可以种的地"。我们一量才发现：
-<b>草地的"绿度"比油棕树还高 54%</b>！<br>
-因为树是立体的，树冠里面有阴影，平均下来绿度反而被拉低了；
-草皮是平平的一片，没有阴影，所以特别绿。<br>
-结果电脑就把草地当成了树，<b>把该补种的地漏掉了</b>。
-</div></div>
-<p><b>解法</b>：教电脑两条新规则——</p>
-<ol>
-<li>特别绿、又成片的，可能是草地（树受光的部分是零散小斑块，草是成片的）</li>
-<li>再看"是不是坐在网格上"：坐在虚拟方格纸格点上的，多半是树的受光面；
-不在格点上的，才可能是草</li>
-</ol>
+<h3>第 8 关：核对"一公顷该种多少棵"</h3>
+<p>你告诉我们：油棕园一公顷<b>最多 150 棵</b>。程序会拿这个数字去核对算出来的株距。</p>
+<div class="q"><b>对不上，但查清楚原因了</b>：程序算出来相当于一公顷 165 棵，
+比 150 多。但这不是算错了 ——
+<b>165 是"如果一棵不缺、铺满整个园子"的密度</b>，
+而 150 是<b>扣掉道路、水沟之后实际能种的数</b>。
+两者的差，正好就是园子里的空位率。</div>
 
 <h2>二、这套算法是怎么试出来的（走过的弯路）</h2>
 <p>下面按时间顺序讲。<b>弯路比成功更有意思</b>，因为每条弯路都留下了一条经验。</p>
@@ -181,33 +195,20 @@ box-shadow:0 0 0 1px #cfe0cf}
 <p>结果下载的那个模型是在<b>北美温带森林</b>上训练的，
 它认识的树跟东南亚油棕完全不是一回事，在咱们的图上<b>几乎认不出来</b>。</p>
 <div class="q"><b>教训</b>：别人训练好的模型，换个场景可能完全不能用。
-这条经验后来直接影响了"要不要上 AI 分割模型"的决定。</div>
+这条经验后来救了我们一次（见第 11 次）。</div>
 </div>
 
 <div class="tlitem">
-<div class="tldate">第 2 次尝试</div>
+<div class="tldate">第 2 次</div>
 <div class="tlhead">改用"看绿度 + 看形状"的笨办法 —— 成功了</div>
-<p>不再依赖 AI，改用能解释清楚的规则：算绿度分数、平滑一下、再看形状。
-不需要训练数据，参数也能调，换一张照片也能重新标定。</p>
+<p>不再依赖 AI，改用能解释清楚的规则。不需要训练数据，参数也能调。</p>
 </div>
 
 <div class="tlitem">
-<div class="tldate">第 3 次</div>
-<div class="tlhead">发现"空地是一张网"，于是发明了橡皮擦</div>
-<p>把树挖掉之后，剩下的空地是连成一整片的，没法用。于是有了第 2 关那个"橡皮擦"。</p>
-</div>
-
-<div class="tlitem">
-<div class="tldate">第 4 次</div>
-<div class="tlhead">发现"树是排队的"，于是铺了一张虚拟方格纸</div>
-<p>这是最漂亮的一步。从照片里反推出种植的规律，之后所有的分类都建立在这张方格纸上。</p>
-</div>
-
-<div class="tlitem">
-<div class="tldate">第 5 次</div>
-<div class="tlhead">大图装不下，切成 528 块分批处理</div>
-<p>3.5 GB 的照片电脑一次读不进来，切成小块一块块处理，再把结果拼起来。</p>
-<p>顺便还修了一个隐蔽的 bug：程序如果中途失败，之前失败的那块会被"当成已完成"
+<div class="tldate">第 3~5 次</div>
+<div class="tlhead">发明橡皮擦、铺虚拟方格纸、把大图切块</div>
+<p>这三步都挺顺利：擦断缝隙、反推种植规律、把 3.5 GB 大图切成 528 块分批处理。</p>
+<p>顺便修了一个隐蔽的 bug：程序如果中途失败，之前失败的那块会被"当成已完成"
 永远不再重试——现在会检查状态了。</p>
 </div>
 
@@ -226,51 +227,106 @@ box-shadow:0 0 0 1px #cfe0cf}
 <div class="tlitem">
 <div class="tldate">第 7 次</div>
 <div class="tlhead">你告诉了我们"道路是白的"，于是补了三类"不用种的地"</div>
-<p>这三条是你提供的领域知识，电脑自己看不出来。补上之后，
-"要补种多少"这个数字才真正靠谱。</p>
+<p>这三条是你提供的领域知识，电脑自己看不出来。</p>
 </div>
 
 <div class="tlitem">
 <div class="tldate">第 8 次</div>
 <div class="tlhead">你提醒"绿地也能种"，才发现草地比树还绿</div>
-<p>于是加了两条新规则专门找草地（见第 7 关）。</p>
+<p>一量吓一跳：<b>草地的"绿度"比油棕树还高 54%</b>！
+因为树是立体的，树冠里有阴影，平均下来绿度反而被拉低了；
+草皮是平平的一片，没有阴影，所以特别绿。</p>
+<p>结果电脑把草地当成了树，<b>把该补种的地漏掉了</b>。
+于是加了两条新规则专门找草地。</p>
 </div>
 
-<div class="tlitem fix">
-<div class="tldate">第 9 次 · 最新</div>
-<div class="tlhead">你给了两个草地坐标做验证 —— 又抓出一个 bug</div>
-<p>你把两处草地的经纬度给了我们，我们拿去核对，结果<b>两处都没被认出来</b>。</p>
+<div class="tlitem bad">
+<div class="tldate">第 9 次</div>
+<div class="tlhead">你给了两个草地坐标做验证 —— 一个都没认出来</div>
+<p>你把两处草地的经纬度给了我们，拿去核对，结果<b>两处都没被认出来</b>。</p>
 <p>查下去发现两个不同的原因：</p>
 <ol>
 <li><b>一个是我们自己写错了（已修）</b>：判断"是不是坐在格点上"时，
-忘了考虑"一大片地"和"一棵树"的区别。一大片地本来就会横跨好几个格点，
-于是被整片误删了。<b>修复后那 446 平方米的草地回来了，
-顺带还消除了另一处油棕的误报。</b></li>
+忘了考虑"一大片地"和"一棵树"的区别，把整片草地误删了。
+修复后那 446 平方米的草地回来了。</li>
 <li><b>另一个是真难</b>：另一处草地颜色比较浅，和油棕的颜色范围
-<b>完全重叠</b>——不管用什么颜色规则都分不开。
-这需要换一套思路，见配套文档《草地识别方案》。</li>
+<b>完全重叠</b>——不管用什么颜色规则都分不开。</li>
 </ol>
 </div>
 
+<div class="tlitem">
+<div class="tldate">第 10 次</div>
+<div class="tlhead">我们把所有"看颜色"的办法都试了一遍 —— 全军覆没</div>
+<table>
+<thead><tr><th>看什么</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>有多绿</td><td>❌ 草 83~95，油棕 1~112，完全混在一起</td></tr>
+<tr><td>表面粗不粗糙</td><td>❌ 混在一起</td></tr>
+<tr><td>边缘多不多</td><td>❌ 混在一起</td></tr>
+<tr><td>是不是按 8.35 米排队</td><td>❌ 混在一起</td></tr>
+<tr><td>连最新的大模型特征也试了</td><td>❌ 5 个区域只对 1 个</td></tr>
+</tbody></table>
+<div class="verdict v-no"><div class="vico">⛔</div><div>
+<b>为什么全都失败？因为园子里"光照差 3 倍"。</b><br>
+同一片油棕，在暗的地方拍出来绿度只有 <b>1</b>，在亮的地方能到 <b>112</b>。
+这个范围<b>把草地的 83~95 整个包住了</b>。<br>
+<b>这不是调参数的问题，是这条路本身走不通。</b>
+</div></div>
 </div>
 
-<h2>三、一句话总结</h2>
+<div class="tlitem win">
+<div class="tldate">第 11 次 · 突破</div>
+<div class="tlhead">换一条路：不"看颜色"了，改成"量身高"</div>
+<p>你翻出了当初航拍的原始工程文件，里面有<b>立体高度图</b>（DSM），
+还有一个航测软件自带 AI 已经圈好的"哪些是树"。</p>
+<p>用这两样东西，问题一下就解开了：</p>
+<ul>
+<li><b>身高</b>：草 1 米，油棕 8 米，跟光线没关系</li>
+<li><b>助手的判断</b>：虽然它没学过油棕，但在 5 个已知点上居然全判对了</li>
+<li><b>两者互补</b>：助手漏掉的树，身高能救回来；助手认错的，身高能否掉</li>
+</ul>
+<div class="verdict v-yes"><div class="vico">🎯</div><div>
+<b>5 个已知点全部判对</b>——这是项目开始以来第一次。<br>
+而且我们拿"结果里的空地"和助手的判断做了交叉核对：
+<b>95% 是一致的</b>。
+</div></div>
+</div>
+
+</div>
+
+<h2>三、顺便解开了一个困扰我们好几天的谜团</h2>
+<div class="card">
+<p>我们一直以为有片油棕"怎么都分不开"，反复怀疑算法有问题。</p>
+<p><b>真相是：那个点其实是两棵树之间的空地，不是树。</b></p>
+<p>它的高度只有 2.32 米（草的高度），助手也说"这里没有树"——
+<b>两样都判对了，是我们自己标错了位置。</b></p>
+<p>把它改对之后，5 个已知点全部正确。</p>
+<div class="q"><b>教训</b>：验证算法的"标准答案"本身也可能是错的。
+后来我们规定：<b>油棕的标准点必须取在树的正中心</b>，不能随便找个坐标。</div>
+</div>
+
+<h2>四、一句话总结</h2>
 <div class="card">
 <p><b>现在这套算法的核心思路是：</b></p>
 <ol>
-<li>先看<b>绿度</b>找出树（用自适应分数线，抵抗光照差异）</li>
-<li>再<b>擦断</b>缝隙，把空地拆成一块块</li>
-<li>用<b>种植网格</b>给空地区分类型（这是最可靠的线索）</li>
+<li>先<b>量出每个地方的高度</b>（把假尖刺和水面挖掉）</li>
+<li>用<b>"高度"和"助手的判断"两条线索</b>交叉验证，认出哪些是树</li>
+<li>把<b>缝隙擦断</b>，把空地拆成一块块</li>
+<li>用<b>种植方格纸</b>给空地区分类型</li>
 <li>把你告诉我们的<b>道路/水塘/办公区</b>扣掉</li>
-<li>最后把被误认成树的<b>草地</b>找回来</li>
+<li>核对一下<b>密度对不对</b></li>
 </ol>
-<p><b>还没解决的</b>：浅色草地和油棕在所有简单特征上都无法区分，
-需要请"更聪明的办法"帮忙（见配套文档）。</p>
+<p><b>还没完全解决的</b>：紧挨着油棕的草地，因为高度图被"抹平"过，
+周围树的高度会渗到草地上，还有一小部分会判错——这部分需要人工再看一眼。</p>
 </div>
 
+<div class="q"><b>这次的结果</b>：全园找出 <b>1,655 块</b>空地，其中需补种
+<b>1,463 块 / 399,344 平方米</b>（约占 17.4%）。
+比只用照片的版本多找出约 <b>29%</b>——多出来的基本都是以前漏掉的草地。</div>
+
 <footer>
-生成时间：2026-10-14 &nbsp;·&nbsp; 这是小白版；技术细节见《算法说明与演进史》专业版<br>
-全部数字来自真实影像实测，不是估计值
+生成时间：2026-10-15 &nbsp;·&nbsp; 这是小白版；技术细节见《算法说明与演进史》专业版<br>
+全部数字来自真实影像实测
 </footer>
 
 </div>
