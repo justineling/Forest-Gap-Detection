@@ -112,6 +112,8 @@ from grid_prior import (  # noqa: E402
 )
 from landcover import (detect_unplantable, detect_grass,  # noqa: E402
                        LandcoverParams)
+from elevation import (ElevationEvidence, ElevationParams,  # noqa: E402
+                       fuse_canopy)
 
 
 def shp_transform(func, geom):
@@ -531,7 +533,8 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
 # 单瓦片处理
 # ============================================================================
 def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
-                 args, out_dir: Path) -> dict:
+                 args, out_dir: Path, elevation=None,
+                 elev_params=None) -> dict:
     """处理一个瓦片，返回该瓦片的结果字典（也写盘）。
 
     流程与 detect.py 一致，差别在于：
@@ -564,13 +567,36 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                                use_saturation=args.use_saturation,
                                exg_lo=args.exg_lo, exg_hi=args.exg_hi) & valid
 
+    # --- 海拔证据融合（2026-10-15）-----------------------------------------
+    # 为什么需要：草地与油棕在**纯 RGB** 上被实测证明不可分 —— ExG 区间完全重叠
+    # （草地 83~95 vs 油棕 1~112，跨航带曝光差 3 倍）、纹理/梯度/动态范围/排列
+    # 周期性全部重叠、连 DINOv2 深度特征留一验证也只对 1/5。
+    #
+    # 引入两类**非 RGB** 证据后，5 个真值点的分离度从「不可分」提升到 +85.3 个百分点：
+    #   · CHM 冠层高度 —— 物理量，不受航带曝光影响
+    #   · DJI Terra 语义分割 —— 端到端学习，能看整株树冠形状
+    # 两者严格互补（实测）：
+    #   seg 判 other 但 CHM>=5.2 的占 other 的 19.2%  → CHM 救回 seg 漏检的树
+    #   seg 判 tree  但 CHM<1.2  的占 tree  的  2.7%  → CHM 否决 seg 的误判
+    #
+    # 详见 scripts/elevation.py 与 docs/03-算法教学/DSM高程辅助检测方案.html
+    use_elev = (elevation is not None and elevation.available
+                and elev_params is not None and elev_params.enabled)
+    elev_stats: dict = {}
+    if use_elev:
+        chm_w, seg_w = elevation.read(win_buf, canopy.shape)
+        canopy, elev_stats = fuse_canopy(canopy, chm_w, seg_w, elev_params)
+        canopy = canopy & valid
+        elev_stats["chm_used"] = chm_w is not None
+        elev_stats["seg_used"] = seg_w is not None
+
     # --- 草地回检（2026-10-13）---------------------------------------------
-    # 全项目最大的算法缺陷：现有判据「ExG > 阈值 = 树冠」会把**草地**也算成树，
-    # 因为实测草地的 ExG（159）反而比油棕（64~102）高 54% —— 油棕是「立体的绿」，
-    # 冠层内部阴影把绿度打折了。草地因此被从空地候选中扣掉，造成**漏检**。
-    # 这里把「过于鲜绿 + 高饱和 + 连片」的区域从树冠里剔除，让它们回到空地。
-    # 详见 docs/03-算法教学/草地与油棕区分方案.html
-    if not args.no_grass_recheck:
+    # ⚠️ 这是**没有高度信息时**的兜底判据（颜色 + 开运算 + 株行距格点回检）。
+    #    启用海拔证据后默认跳过 —— 实测那套判据远不如高度可靠：
+    #    · 方案 B 的「尺寸闸门」bug 曾把真值点1 的 305 m² 草地 100% 剔除；
+    #    · 它无法处理紧邻油棕的草地（被 DSM 平滑"渗高"之处）。
+    #    仅当没有 CHM/语义分割时才回退到它。
+    if not use_elev and not args.no_grass_recheck:
         # LandcoverParams 统一承载草地判据开关：grid=False 时只跑
         # 颜色 + 开运算（2026-10-14 前的行为），便于 A/B 对比与回退。
         grass_params = LandcoverParams(grass_grid=not args.no_grass_grid)
@@ -772,6 +798,7 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
             "valid_ratio": round(float(valid.mean()), 4),
             "by_class": counts,
             "unplantable": unplantable,
+            "elevation": elev_stats,
         },
     }
 
@@ -886,6 +913,17 @@ def build_argparser() -> argparse.ArgumentParser:
                          "默认开启：树心按 8.45 m 规则排列的候选区判为油棕林并剔除，"
                          "只保留无空间周期的真草地（见 docs/03-算法教学/草地与油棕区分方案.html 方案 B）")
 
+    # --- 海拔证据参数（2026-10-15）---
+    ap.add_argument("--chm", default="output/chm.tif",
+                    help="冠层高度模型（scripts/build_chm.py 产出）。文件不存在则自动退化为纯 RGB 判据。默认 output/chm.tif")
+    ap.add_argument("--segment", default="",
+                    help="DJI Terra 语义分割栅格（segment.tif）。留空则不使用语义证据")
+    ap.add_argument("--no-elevation", action="store_true",
+                    help="关闭海拔证据融合，退化为纯 RGB + 草地回检")
+    ap.add_argument("--core-chm", type=float, default=5.2,
+                    help="高度救援阈值（米）：CHM ≥ 此值无条件判为树冠。本项目实测标定值 5.2，默认 %(default)s")
+    ap.add_argument("--veto-chm", type=float, default=1.2,
+                    help="高度否决阈值（米）：CHM < 此值无条件非树冠。本项目实测标定值 1.2，默认 %(default)s")
     ap.add_argument("--quiet", action="store_true", help="精简日志")
     return ap
 
@@ -938,6 +976,11 @@ def main() -> int:
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
         "target_density_per_ha": args.target_density,
+        "chm": args.chm or "",
+        "segment": args.segment or "",
+        "elevation_enabled": not args.no_elevation,
+        "elevation_core_chm": args.core_chm,
+        "elevation_veto_chm": args.veto_chm,
         "no_grass_recheck": args.no_grass_recheck,
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,
@@ -1000,6 +1043,29 @@ def main() -> int:
         log(f"⚠ 全局网格质量 {grid.quality:.3f} < 0.15，本次所有空地都会被标为"
             f"「不确定」并交人工复核。建议检查影像是否确为规整种植园。")
 
+    # --- 海拔证据（CHM + 语义分割，2026-10-15）---
+    elev_params = ElevationParams(
+        enabled=not args.no_elevation,
+        core_chm=args.core_chm,
+        veto_chm=args.veto_chm,
+    )
+    elevation = None
+    if elev_params.enabled:
+        chm_p = args.chm if args.chm else None
+        seg_p = args.segment if args.segment else None
+        if chm_p or seg_p:
+            elevation = ElevationEvidence(chm_p, seg_p,
+                                          ortho_transform=ds.transform)
+            if not elevation.available:
+                elevation = None
+            else:
+                log(f"海拔证据：CHM={'有' if elevation.has_chm() else '无'}  "
+                    f"语义分割={'有' if elevation.has_segment() else '无'}  "
+                    f"救援阈值 {elev_params.core_chm:g} m / "
+                    f"否决阈值 {elev_params.veto_chm:g} m")
+                if elevation.available and not args.no_grass_recheck:
+                    log("  （已启用海拔证据 → 自动跳过草地回检）")
+
     # --- 逐瓦片处理 ---
     done = skipped = failed = 0
     all_features: list[dict] = []
@@ -1031,7 +1097,9 @@ def main() -> int:
             continue
 
         try:
-            res = process_tile(ds, tile, px_m, grid, args, tiles_dir)
+            res = process_tile(ds, tile, px_m, grid, args, tiles_dir,
+                               elevation=elevation,
+                               elev_params=elev_params)
             res["fingerprint"] = fp
             res["generated_at"] = datetime.now(timezone.utc).isoformat()
             atomic_write_json(tf, res)
@@ -1200,6 +1268,10 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "landcover_unplantable": not args.no_landcover,
             "unplantable_overlap": args.unplantable_overlap,
             "target_density_per_ha": args.target_density,
+            "chm_path": args.chm or None,
+            "segment_path": args.segment or None,
+            "elevation_core_chm": args.core_chm,
+            "elevation_veto_chm": args.veto_chm,
             "node_tol_ratio": args.node_tol_ratio,
             "elongate_ratio": args.elongate_ratio,
         },

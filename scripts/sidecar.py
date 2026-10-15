@@ -134,6 +134,11 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     # 不可种植地物（2026-10-13 新增）
     "landcover_unplantable": (bool, True),
     "target_density_per_ha": (float, 150.0),
+    "chm_path": (str, ""),
+    "segment_path": (str, ""),
+    "elevation_enabled": (bool, True),
+    "elevation_core_chm": (float, 5.2),
+    "elevation_veto_chm": (float, 1.2),
     "unplantable_overlap": (float, 0.5),
     # 草地回检：把「过于鲜绿且连片」的区域从树冠中剔除（修正草地被误判成油棕）
     "grass_recheck":  (bool,  True),
@@ -281,6 +286,13 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     args.unplantable_overlap = values["unplantable_overlap"]
     # 用户给定的设计密度（株/公顷），用于交叉校验网格估计
     args.target_density = values["target_density_per_ha"]
+    # 海拔证据（CHM + DJI 语义分割）：草地/油棕在纯 RGB 上不可分，
+    # 引入高度与语义后分离度 +85.3 个百分点（见 scripts/elevation.py）
+    args.chm = values["chm_path"]
+    args.segment = values["segment_path"]
+    args.no_elevation = not bool(values["elevation_enabled"])
+    args.core_chm = values["elevation_core_chm"]
+    args.veto_chm = values["elevation_veto_chm"]
     args.no_grass_recheck = not bool(values["grass_recheck"])
     args.no_grass_grid = not bool(values["grass_grid"])
     args.quiet = bool(values["quiet"])
@@ -330,6 +342,11 @@ def params_echo(args: SimpleNamespace) -> dict:
         "landcover_unplantable": not args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
         "target_density_per_ha": args.target_density,
+        "chm_path": args.chm or None,
+        "segment_path": args.segment or None,
+        "elevation_enabled": not args.no_elevation,
+        "elevation_core_chm": args.core_chm,
+        "elevation_veto_chm": args.veto_chm,
         "grass_recheck": not args.no_grass_recheck,
         "grass_grid": not args.no_grass_grid,
         "progress_every": args.progress_every,
@@ -445,6 +462,11 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
         "target_density_per_ha": args.target_density,
+        "chm_path": args.chm or None,
+        "segment_path": args.segment or None,
+        "elevation_enabled": not args.no_elevation,
+        "elevation_core_chm": args.core_chm,
+        "elevation_veto_chm": args.veto_chm,
         "no_grass_recheck": args.no_grass_recheck,
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,
