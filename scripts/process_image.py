@@ -1289,8 +1289,10 @@ def _apply_forest_mask(features: list[dict], mask_path: str,
             pr["class"] = CLASS_UNDEVELOPED
             pr["class_label"] = CLASS_LABEL_CN[CLASS_UNDEVELOPED]
             pr["class_semantics"] = CLASS_SEMANTICS[CLASS_UNDEVELOPED]
+            # 后缀保持短（dbf 的 class_method 字段宽 24 字节，
+            # "planting_grid_prior+forest_mask" 会被静默截断）
             pr["class_method"] = (
-                (pr.get("class_method", "") + "+forest_mask").lstrip("+"))
+                (pr.get("class_method", "") + "+mask").lstrip("+"))
             pr["class_reason"] = ("落在非种植区掩膜内（未开发林等），"
                                   "不计入补种范围")
             n_masked += 1
