@@ -25,6 +25,8 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   const drawRef = useRef<TerraDraw | null>(null)
   const loadedGapIdRef = useRef<string | null>(null)
   const [mapReady, setMapReady] = useState(false)
+  /** Terra Draw 初始化失败时的提示（只影响手绘/编辑，不影响看图） */
+  const [drawError, setDrawError] = useState<string | null>(null)
 
   const meta = useAppStore((s) => s.meta)
   const backendOnline = useAppStore((s) => s.backendOnline)
@@ -41,6 +43,9 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   // ---------- 1. 初始化地图（只做一次） ----------
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
+
+    // Terra Draw 实例：**必须在 style 加载完成之后**才能创建并 start（见下方注释）
+    let draw: TerraDraw | null = null
 
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -145,35 +150,48 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
         map.getCanvas().style.cursor = ''
       })
 
+      // —— Terra Draw：只负责"画/改"，渲染仍由上面自己的图层承担 ——
+      //
+      // ⚠️ 必须在 style 加载完成后才 `start()`。
+      // MapLibre adapter 在 start 时会向地图注册自己的 source / layer，
+      // 此时若 style 尚未就绪，会抛 `Style is not done loading.` ——
+      // 而这发生在 React 的 effect 里，**未捕获会让 React 18 卸载整棵组件树**，
+      // 用户看到的是整页空白（实测：headless 截图只剩一个纯背景色）。
+      // 用户网络稍慢时同样会踩到，所以这里既延后到 load 之后，也加了兜底。
+      try {
+        draw = new TerraDraw({
+          adapter: new TerraDrawMapLibreGLAdapter<maplibregl.Map>({ map }),
+          modes: [
+            new TerraDrawPolygonMode(),
+            new TerraDrawSelectMode({
+              flags: {
+                polygon: {
+                  feature: {
+                    draggable: true,
+                    coordinates: {
+                      midpoints: true,
+                      draggable: true,
+                      deletable: true,
+                    },
+                  },
+                },
+              },
+            }),
+          ],
+        })
+        draw.start()
+        drawRef.current = draw
+      } catch (err) {
+        // 降级而不是崩溃：只失去"手绘/编辑"能力，地图与其他面板照常可用
+        console.error('[MapCanvas] Terra Draw 初始化失败，绘制与编辑功能不可用', err)
+        setDrawError(err instanceof Error ? err.message : String(err))
+      }
+
       setMapReady(true)
     })
 
-    // —— Terra Draw：只负责"画/改"，渲染仍由上面自己的图层承担 ——
-    const draw = new TerraDraw({
-      adapter: new TerraDrawMapLibreGLAdapter<maplibregl.Map>({ map }),
-      modes: [
-        new TerraDrawPolygonMode(),
-        new TerraDrawSelectMode({
-          flags: {
-            polygon: {
-              feature: {
-                draggable: true,
-                coordinates: {
-                  midpoints: true,
-                  draggable: true,
-                  deletable: true,
-                },
-              },
-            },
-          },
-        }),
-      ],
-    })
-    draw.start()
-    drawRef.current = draw
-
     return () => {
-      draw.stop()
+      if (draw) draw.stop()
       map.remove()
       mapRef.current = null
       drawRef.current = null
@@ -368,6 +386,13 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
             <code>.venv/Scripts/python.exe scripts/tile_server.py</code>
           </span>
           <span className="dim">（当前仍可查看 / 编辑多边形，数据来自本地结果文件）</span>
+        </div>
+      )}
+      {drawError && (
+        <div className="map-hint map-hint-warn">
+          <b>绘制 / 编辑功能不可用</b>
+          <span className="dim">{drawError}</span>
+          <span className="dim">看图、筛选、估算、导出仍可正常使用。</span>
         </div>
       )}
       {drawIntent !== 'none' && (

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import MapCanvas, { type DrawIntent } from './components/MapCanvas'
+import ErrorBoundary from './components/ErrorBoundary'
 import TopToolbar from './components/TopToolbar'
 import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
@@ -86,20 +87,31 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopToolbar
-        drawIntent={drawIntent}
-        setDrawIntent={setDrawIntent}
-        onLoadGaps={loadGaps}
-        onExport={onExport}
-        loadingGaps={loadingGaps}
-        exporting={exporting}
-      />
+      {/* 每个区域各自兜底：地图挂了，工具栏 / 图层面板 / 状态栏仍可用 */}
+      <ErrorBoundary area="工具栏">
+        <TopToolbar
+          drawIntent={drawIntent}
+          setDrawIntent={setDrawIntent}
+          onLoadGaps={loadGaps}
+          onExport={onExport}
+          loadingGaps={loadingGaps}
+          exporting={exporting}
+        />
+      </ErrorBoundary>
       <main className="body">
-        <LeftPanel />
-        <MapCanvas drawIntent={drawIntent} onDrawDone={() => setDrawIntent('none')} />
-        <RightPanel />
+        <ErrorBoundary area="图层面板">
+          <LeftPanel />
+        </ErrorBoundary>
+        <ErrorBoundary area="地图">
+          <MapCanvas drawIntent={drawIntent} onDrawDone={() => setDrawIntent('none')} />
+        </ErrorBoundary>
+        <ErrorBoundary area="属性面板">
+          <RightPanel />
+        </ErrorBoundary>
       </main>
-      <StatusBar />
+      <ErrorBoundary area="状态栏">
+        <StatusBar />
+      </ErrorBoundary>
     </div>
   )
 }

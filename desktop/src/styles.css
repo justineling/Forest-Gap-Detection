@@ -284,6 +284,11 @@ kbd {
   top: 12px;
   max-width: 520px;
 }
+.map-hint-warn {
+  border-color: var(--warn);
+  top: auto;
+  bottom: 66px;
+}
 .map-drawing {
   bottom: 14px;
   border-color: var(--accent);
@@ -423,6 +428,35 @@ kbd {
 }
 .log-line {
   white-space: pre-wrap;
+}
+
+/* ---------- 错误边界 ---------- */
+.crash {
+  margin: 12px;
+  padding: 14px 16px;
+  background: rgba(224, 82, 82, 0.08);
+  border: 1px solid rgba(224, 82, 82, 0.45);
+  border-radius: 8px;
+  font-size: 12.5px;
+  overflow: auto;
+}
+.crash h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #ff9c9c;
+}
+.crash pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 6px;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.crash p {
+  margin: 0 0 10px;
+  line-height: 1.5;
 }
 
 /* MapLibre 控件配色对齐深色主题 */
