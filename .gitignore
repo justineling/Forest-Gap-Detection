@@ -20,6 +20,12 @@ models/*
 output/
 *.log
 
+# ---- 原始航测数据（2026-10-16 家里电脑加入）----
+# drone data/ 放的是 D:/WGR/ 四件套：WGR17-002.tif(3.7 GB) + dsm.tif(934 MB)
+# + segment.tif + tree_info.json，另有 .ovr/.tfw/.prj 等附属文件，合计约 5.6 GB。
+# 体积远超 git 的合理范围，按跨机器协同约定走 Google Drive（同 output/）。
+drone data/
+
 # ---- 编辑器 / 系统 ----
 # .workbuddy-ai/ 自 2026-10-14 起纳入版本管理，以便项目记忆随 git 跨机器同步。
 # 但 tmp/ 必须排除：它是临时诊断脚本与大体积中间图（实测 129 文件 / 53 MB），
