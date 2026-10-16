@@ -44,11 +44,37 @@ DJI Terra 果树模式输出的 `tree_info.json`（树心表）本质是在找**
   高密度种植区块（≥110 株/ha）的命中数均为 0**，即不会误吞正常油棕林；
   真正无法自动判别的只是**「稀疏油棕林 vs 未开发林」这个中间带**。
 
+⚠️ 只查「有没有油棕树」会漏掉「推平待种裸地」——必须加绿度闸门（2026-10-16 修正）
+----------------------------------------------------------------------------
+用户目视发现：园区西南角（50m 块 (26,13)~(28,11) 一带）大片**已推平清芭、
+修好林道与排灌沟的待种空地**被本脚本误判成「未开发林」，在 ArcGIS 里
+显示为「不可种植」。
+
+根因：原判据只有「密度<70 且 规律性<25%」，而**推平的裸地同样是 0 棵树**
+（密度 8~23、规律性 0%），完美触发掩膜 —— 但它根本不是森林。
+
+实测指纹（50 m 块级中位数）：
+| 类型 | 密度 | CHM_P50 | seg树% | **ExG 中位** |
+|---|---|---|---|---|
+| 健康油棕 | 141~167 | 6.2~8.3 | 67~80 | **65~70** |
+| 未开发林（用户确认点 (26,19)） | 44 | 3.4 | 6 | **116** |
+| 推平待种裸地（被误判的块） | 8~23 | 0.4~1.5 | 0~15 | **−5 ~ 12** |
+
+→ **ExG（=2G−R−B）是唯一可靠的分界**：裸地为负值，植被 ≥65。
+→ ⚠️ **`seg==tree` 不能用作判据**：实测 (27,12) 块 seg 判树 **76%**，
+   但 ExG=−5（是裸地）—— DJI 语义分割在该区域完全失效。
+→ ⚠️ **CHM 也不能单独用**：(26,21) 块 CHM_P50=5.27 m 却 ExG=12。
+
+修正：新增 `--exg-min`（默认 60）绿度闸门 —— 区块 ExG 中位数低于阈值者
+判为推平裸地，从掩膜剔除、释放回可种植。实测释放 26,858 m²
+（占 ② 掩膜影响 53.1%、占需补种 6.73%）。
+
 用法
 ----
-  python scripts/build_forest_mask.py                     # 默认：原始密度<70，≥3 ha
+  python scripts/build_forest_mask.py                     # 默认：密度<70，≥3 ha
   python scripts/build_forest_mask.py --threshold 90 --smooth 1.5
   python scripts/build_forest_mask.py --out output/forest-mask.geojson
+  python scripts/build_forest_mask.py --block-m 50 --nnd-max-frac 25 --exg-min 60
 """
 from __future__ import annotations
 
@@ -78,7 +104,7 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
                out_path: str, threshold: float = 70.0, block_m: float = 100.0,
                smooth_sigma: float = 0.0, min_ha: float = 3.0,
                dedupe_m: float = 4.5, nnd_window: tuple[float, float] = (7.5, 9.2),
-               nnd_max_frac: float = -1.0) -> dict:
+               nnd_max_frac: float = -1.0, exg_min: float = 60.0) -> dict:
     """按「区块树心密度」生成非种植区掩膜，返回统计信息。
 
     参数
@@ -89,7 +115,10 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
                     **最近邻间距落在 nnd_window 的比例低于此值**（%）才算非种植。
                     目的：防止把「缺株严重的稀疏油棕林」误判为未开发林。
                     ⚠️ 实测该判据**判别力有限**（见下方 docstring 说明），
-                    默认关闭（-1）。"""
+                    默认关闭（-1）。
+    exg_min       : >0 时启用「绿度闸门」—— 区块 ExG（=2G−R−B）中位数低于
+                    此值者判为**推平待种裸地**，从掩膜剔除（0 = 关闭）。
+                    裸地 ExG 为负值，健康油棕 65~70，未开发林 95~127。"""
     with rasterio.open(chm_path) as c:
         chm = c.read(1)
         T, H, W = c.transform, c.height, c.width
@@ -97,8 +126,17 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
     log(f"参考网格 {W}x{H} @ {px*100:.0f} cm/px")
 
     with rasterio.open(ortho_path) as o:
-        vo = o.read(1, out_shape=(H, W)) > 0
+        b_r = o.read(1, out_shape=(H, W)).astype(np.float32)
+        b_g = o.read(2, out_shape=(H, W)).astype(np.float32)
+        b_b = o.read(3, out_shape=(H, W)).astype(np.float32)
+        vo = b_r > 0
     valid = vo & np.isfinite(chm)
+    # 绿度指数 ExG = 2G - R - B：区分「推平裸地」与「野生植被」的唯一可靠维度
+    exg = 2.0 * b_g - b_r - b_b
+    if exg_min > 0:
+        ev = exg[valid]
+        log(f"绿度 ExG：P10={np.percentile(ev,10):.1f} "
+            f"P50={np.percentile(ev,50):.1f} P90={np.percentile(ev,90):.1f}")
 
     a = np.array(json.loads(Path(tree_info_path).read_text(encoding="utf-8"))
                  ["center_list"], float)
@@ -132,13 +170,17 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
                    np.clip((pts[:, 0] // blk).astype(int), 0, nx - 1)), 1)
     area = np.zeros((ny, nx))
     reg = np.full((ny, nx), np.nan)
+    exg_blk = np.full((ny, nx), np.nan)
     blk_ok = np.zeros((ny, nx), bool)
     for r in range(ny):
         for c in range(nx):
             r1, c1 = min((r + 1) * blk, H), min((c + 1) * blk, W)
-            nv = int(valid[r * blk:r1, c * blk:c1].sum())
+            vv = valid[r * blk:r1, c * blk:c1]
+            nv = int(vv.sum())
             blk_ok[r, c] = nv > blk * blk * 0.30
             area[r, c] = nv * px * px / 1e4
+            if nv:
+                exg_blk[r, c] = float(np.median(exg[r * blk:r1, c * blk:c1][vv]))
             sel = ((met[:, 0] >= c * blk * px) & (met[:, 0] < c1 * px) &
                    (met[:, 1] >= r * blk * px) & (met[:, 1] < r1 * px))
             reg[r, c] = float(grid_ok[sel].mean() * 100) if sel.any() else 0.0
@@ -172,6 +214,17 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
     if not ids:
         log("⚠️ 未找到任何符合条件的低密度连通域")
     mb = np.isin(lab, ids)
+    # ⚠️ 绿度闸门必须放在**连通域判定之后**：
+    # 先在整片低密度区里圈出「非种植区」范围，再在其中剔除「推平待种裸地」。
+    # 若放在之前，裸地被剔除会把相邻的高绿度小块切断成孤立碎片（< min_ha）
+    # 而整体丢弃 —— 实测会误释放 (24,16)(ExG=127) / (25,16)(71) / (26,17)(87)
+    # 三个**真有植被**的块。
+    if exg_min > 0:
+        veg = np.nan_to_num(exg_blk, nan=-999.0) >= exg_min
+        removed = int((mb & ~veg).sum())
+        mb = mb & veg
+        log(f"已启用绿度闸门：在非种植区范围内剔除 {removed} 个低绿度区块"
+            f"（ExG<{exg_min:g}，判为推平待种裸地，释放回可种植）")
 
     mask = np.zeros((H, W), bool)
     for r in range(ny):
@@ -184,13 +237,19 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
     log(f"掩膜合计 {mask.sum()*px*px/1e4:.1f} ha")
 
     # 导出多边形（WGS84）
+    # ⚠️ 面积门槛必须 < 一个区块的面积（50m 块 = 0.25 ha），否则孤立区块会丢：
+    # `rio_shapes` 按 **4-连通** 提取多边形，而上面的 `ndi.label` 用 **8-连通**。
+    # 只与邻块**对角**相邻的区块（如 (24,16) 仅与 (25,17) 对角）在像素级不算连通，
+    # 会成为一个 0.25 ha 的独立碎片；门槛若设 0.5 ha 就被静默丢弃
+    # —— 实测导致 (24,16)(ExG=127) 被误释放。故取 0.2 ha。
+    min_poly_ha = max(0.05, block_m * block_m / 1e4 * 0.4)
     to_utm = pyproj.Transformer.from_crs(
         "EPSG:4326", "EPSG:32649", always_xy=True).transform
     feats = []
     for geom, _val in rio_shapes(mask.astype(np.uint8), mask=mask, transform=T):
         g = shp_shape(geom)
         ar = shp_transform(to_utm, g).area / 1e4
-        if ar >= 0.5:
+        if ar >= min_poly_ha:
             feats.append({"type": "Feature",
                           "properties": {"area_ha": round(ar, 2)},
                           "geometry": geom})
@@ -205,7 +264,7 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
 
     return {"threshold": threshold, "smooth_sigma": smooth_sigma,
             "block_m": block_m, "n_polygons": len(feats),
-            "nnd_max_frac": nnd_max_frac,
+            "nnd_max_frac": nnd_max_frac, "exg_min": exg_min,
             "area_ha": round(tot, 2)}
 
 
@@ -235,13 +294,20 @@ def main() -> int:
                     "比例低于此值(%%)」的区块判为非种植，用于防止误吞"
                     "「缺株严重的稀疏油棕林」。⚠️ 实测判别力有限"
                     "（DJI 树心抖动 σ≈1.8 m 使分布重叠），默认关闭(-1)")
+    ap.add_argument("--exg-min", type=float, default=60.0,
+                    help="绿度闸门：区块 ExG(=2G-R-B) 中位数低于此值者判为"
+                    "「推平待种裸地」并从掩膜剔除（0 = 关闭）。"
+                    "实测裸地为负值、健康油棕 65~70、未开发林 95~127，"
+                    "默认 %(default)s。⚠️ 不可用 seg==tree 替代："
+                    "(27,12) 块 seg 判树 76%% 但 ExG=-5（实为裸地）")
     args = ap.parse_args()
 
     w = tuple(float(x) for x in args.nnd_window.split(","))
     build_mask(args.chm, args.tree_info, args.ortho, args.out,
                threshold=args.threshold, block_m=args.block_m,
                smooth_sigma=args.smooth, min_ha=args.min_ha,
-               nnd_window=(w[0], w[1]), nnd_max_frac=args.nnd_max_frac)
+               nnd_window=(w[0], w[1]), nnd_max_frac=args.nnd_max_frac,
+               exg_min=args.exg_min)
     log("")
     log("⚠️ 本掩膜为**候选**，对阈值敏感（实测影响区间 4%~26%）。")
     log("   请在 ArcGIS 里沿真实边界复核/修正后，再用于：")

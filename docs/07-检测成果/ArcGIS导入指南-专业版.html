@@ -92,8 +92,8 @@ padding:10px 14px;margin:10px 0;font-size:13.5px;color:#7a2418}
 <div class="verdict v-yes">
 <div class="vico">✅</div>
 <div><b>几何自动画：一定能。</b>任选一个 <code>gaps-all-*</code> 文件导入，ArcGIS 即自动生成
-<b>1,655 个 Polygon 要素</b>（连片空地 466 + 不确定 460 + 株位空缺 277 + 林间空隙 225
-+ 道路 180 + 水体 8 + 办公生活区 4 + <b>非种植区 35</b>），
+<b>1,655 个 Polygon 要素</b>（连片空地 474 + 不确定 461 + 株位空缺 277 + 林间空隙 225
++ 道路 180 + 水体 8 + 办公生活区 4 + <b>非种植区 26</b>），
 无需手动画任何一个多边形。</div>
 </div>
 
@@ -237,7 +237,7 @@ ring 闭合、88 个顶点、宽高比 1:1、跨度 0.01315°×0.01318° ≈ 146
 <td>277 个株位空缺</td></tr>
 <tr><td class="mono">by-class/gaps-alley_gap-utm49n-shp.zip</td><td class="num">43 KB</td><td class="mono">EPSG:32649</td>
 <td>225 个林间空隙</td></tr>
-<tr><td class="mono">by-class/gaps-undeveloped-utm49n-shp.zip</td><td class="num">31 KB</td><td class="mono">EPSG:32649</td><td><b>35 块「非种植区」</b>（南部未开发林内，不计入需补种，单独成层便于复核）</td></tr>
+<tr><td class="mono">by-class/gaps-undeveloped-utm49n-shp.zip</td><td class="num">20 KB</td><td class="mono">EPSG:32649</td><td><b>26 块「非种植区」</b>（南部未开发林内，不计入需补种，单独成层便于复核）</td></tr>
 <tr><td class="mono">by-class/gaps-office-utm49n-shp.zip</td><td class="num">6 KB</td><td class="mono">EPSG:32649</td>
 <td>4 块办公生活区 <span class="tag t-info">不可种植</span></td></tr>
 <tr><td class="mono">by-class/gaps-water-utm49n-shp.zip</td><td class="num">5 KB</td><td class="mono">EPSG:32649</td>
@@ -431,7 +431,7 @@ Build Pyramids and Statistics</b>。只额外生成缩放级别的缓存、不�
 检测成果：1,048 个空地多边形（连片空地 380 / 不确定 318 / 株位空缺 180 / 林间空隙 170）<br>
 配套文档：《地物光谱特征实测报告》《地物光谱特征报告-小白版》《ArcGIS 导入指南-小白版》<br>
 本页面所有示意图均为手写内联 SVG，无任何外部资源引用，可单文件离线分发。
-<br>2026-10-15 更新：接入 DSM 高程 + DJI 语义分割双证据，空地由 1,442 增至 1,655（草地漏检修复）<br>2026-10-16 更新：新增第 8 类「非种植区」（undeveloped）—— 南部未开发林内的 35 块 / 50,589 m² 空地改判为该类，不计入需补种。需补种由 399,344 降至 <b>348,755 m²</b>（1,428 块）。掩膜文件：<span class="mono">forest-mask-50m.geojson</span></footer>
+<br>2026-10-15 更新：接入 DSM 高程 + DJI 语义分割双证据，空地由 1,442 增至 1,655（草地漏检修复）<br>2026-10-16 更新：新增第 8 类「非种植区」（undeveloped）—— 南部未开发林内的 35 块 / 50,589 m² 空地改判为该类，不计入需补种。需补种由 399,344 降至 <b>348,755 m²</b>（1,428 块）。掩膜文件：<span class="mono">forest-mask-50m.geojson</span><br><b>2026-10-16 二次修正（绿度闸门）</b>：用户目视发现西南角「已推平清芭、修好林道与排灌沟的待种空地」被误判为非种植区。根因是原判据只有「密度&lt;70 且 规律性&lt;25%」，而<b>推平的裸地同样是 0 棵树</b>（密度 8~23、规律性 0%），完美触发掩膜。实测指纹：健康油棕 ExG 65~70 / 未开发林 116 / 推平裸地 <b>−5~12</b>（裸地为负值）。新增「绿度闸门」（区块 ExG 中位 &lt; 60 判为推平裸地）后：非种植区 <b>35 块 / 50,589 m² → 26 块 / 23,159 m²</b>，需补种 <b>348,755 → 376,185 m²</b>（1,437 块），<b>释放 27,430 m² 待种空地</b>。掩膜文件：<span class="mono">forest-mask-50m-exg60.geojson</span>（⚠️ 不可用 <code>seg==tree</code> 替代判据：区块 (27,12) 语义分割判树 76% 但 ExG=−5）</footer>
 
 </div>
 </body>

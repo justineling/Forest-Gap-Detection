@@ -87,7 +87,7 @@ border-bottom:1px dashed var(--line)}
 <div class="wrap">
 <header>
   <h1>算法说明与演进史</h1>
-  <div class="sub">Forest Gap Detection（油棕园空地智能检测）· 专业版 &nbsp;·&nbsp; 2026-10-15 更新（接入 DSM 高程 + 语义分割）&nbsp;·&nbsp; 对应代码版本 d0e368b</div>
+  <div class="sub">Forest Gap Detection（油棕园空地智能检测）· 专业版 &nbsp;·&nbsp; 2026-10-16 更新（新增「绿度闸门」，修正推平待种裸地误判）&nbsp;·&nbsp; 基于 d0e368b + 后续修正</div>
 </header>
 
 <div class="lead">
@@ -96,7 +96,7 @@ border-bottom:1px dashed var(--line)}
 第 3 节是实测数据速查。<br><br>
 全部数字均来自 <code>WGR17.tif</code>（47,130×44,686 px，3.3 cm/px，
 229 公顷油棕园）及其配套 DSM / 语义分割上的真实测量，非估计值。<br>
-<b>最后更新：2026-10-15</b>（接入 DSM 高程 + 语义分割双证据）
+<b>最后更新：2026-10-16</b>（新增「绿度闸门」，修正推平待种裸地误判）
 </div>
 
 <h2>一、当前处理链（8 步）</h2>
@@ -241,7 +241,7 @@ O(r²) 暴力卷积，在 2304² 上要 <b>11.7 秒</b>，占整条流水线 85%
 </div></div>
 </div>
 
-<h2>二、技术演进史（12 个阶段）</h2>
+<h2>二、技术演进史（13 个阶段）</h2>
 <p>下面按时间顺序记录每一次路线转折。<b>弯路和结论同样重要</b>——
 它们解释了为什么现在是这套算法。</p>
 
@@ -366,7 +366,7 @@ weecology/deepforest-tree 权重，123 MB）。</p>
 </div>
 
 <div class="tlitem win">
-<div class="tldate">阶段 12 · 最新</div>
+<div class="tldate">阶段 12</div>
 <div class="tlhead">引入 DSM 高程 + 语义分割 —— 问题解决</div>
 <p>用户提供 DJI Terra 完整工程输出（含 <code>dsm.tif</code>、
 <code>segment.tif</code>、<code>tree_info.json</code>）。</p>
@@ -384,6 +384,45 @@ weecology/deepforest-tree 权重，123 MB）。</p>
 <p>同时解开了长期悬案：原「油棕-南部」参考点<b>其实是树间空地</b>
 （CHM 仅 2.32 m、语义分割判 0% tree，两者都正确），
 此前一直误以为是"草地与油棕混淆"。</p>
+</div>
+
+<div class="tlitem win">
+<div class="tldate">阶段 13 · 最新</div>
+<div class="tlhead">「推平待种裸地」误判修正 —— 绿度闸门</div>
+<p>用户在 ArcGIS 交付图上目视发现：园区西南角大片<b>已推平清芭、修好外围林道
+与平行排灌沟的待种空地（翻种准备区）</b>被标成「不可种植（非种植区）」。</p>
+<p><b>根因</b>：非种植区掩膜的判据只有「树心密度 &lt; 70 且 株距规律性 &lt; 25%」，
+而<b>推平的裸地同样是 0 棵树</b>（密度 8~23、规律性 0%），完美触发掩膜 ——
+但它根本不是森林。</p>
+<p><b>实测指纹</b>（50 m 块级中位数）：</p>
+<table>
+<thead><tr><th>类型</th><th class="num">密度</th><th class="num">CHM_P50</th>
+<th class="num">seg 判树%</th><th class="num">ExG 中位</th></tr></thead>
+<tbody>
+<tr><td>健康油棕</td><td class="num">141~167</td><td class="num">6.2~8.3</td>
+<td class="num">67~80</td><td class="num">65~70</td></tr>
+<tr><td>未开发林（用户确认点）</td><td class="num">44</td><td class="num">3.4</td>
+<td class="num">6</td><td class="num">116</td></tr>
+<tr><td><b>推平待种裸地</b></td><td class="num">8~23</td><td class="num">0.4~1.5</td>
+<td class="num">0~15</td><td class="num"><b>−5~12</b></td></tr>
+</tbody></table>
+<p><b>两个被实测否决的替代判据</b>：</p>
+<ol>
+<li><b>不能用 <code>seg==tree</code></b>：区块 (27,12) 语义分割判树高达 <b>76%</b>，
+但 ExG = <b>−5</b>（实为裸地）—— DJI 语义分割在该区域完全失效。</li>
+<li><b>不能只用 CHM</b>：区块 (26,21) 的 CHM_P50 = <b>5.27 m</b> 却 ExG = 12。</li>
+</ol>
+<div class="verdict v-yes"><div class="vico">🎯</div><div>
+<b>唯一可靠的分界是绿度 ExG（= 2G − R − B）</b>：裸地为<b>负值</b>、
+健康油棕 65~70、未开发林 95~127。<br>
+新增「绿度闸门」（区块 ExG 中位 &lt; 60 判为推平裸地）后：
+非种植区 <b>35 块 / 50,589 m² → 26 块 / 23,159 m²</b>，
+需补种 <b>348,755 → 376,185 m²</b>，<b>释放 27,430 m² 待种空地</b>。
+</div></div>
+<p><b>顺带修掉一个隐蔽 bug</b>：<code>rio_shapes</code> 按 <b>4-连通</b> 提取多边形，
+而块级标记用 <b>8-连通</b>；只与邻块<b>对角</b>相邻的区块会变成 0.25 ha 的孤立碎片，
+被 0.5 ha 面积门槛<b>静默丢弃</b>（实测误释放区块 (24,16)，ExG = 127）。
+门槛改为「0.4 × 单个区块面积」。</p>
 </div>
 
 </div>
@@ -428,23 +467,27 @@ weecology/deepforest-tree 权重，123 MB）。</p>
 </tbody></table>
 <p>树冠点均值 <b>92.8%</b> vs 非树冠点 <b>7.5%</b>，分离度 <b>+85.3 个百分点</b>。</p>
 
-<h3>3.4 当前检测结果（7 类）</h3>
+<h3>3.4 当前检测结果（8 类）</h3>
 <table>
 <thead><tr><th>类别</th><th class="num">块数</th><th class="num">面积 m²</th><th>是否计入需补种</th></tr></thead>
 <tbody>
-<tr><td><span class="sw" style="background:#e74c3c"></span>株位空缺</td><td class="num">283</td><td class="num">17,421.6</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#e74c3c"></span>株位空缺</td><td class="num">277</td><td class="num">17,049.8</td><td>✅ 计入</td></tr>
 <tr><td><span class="sw" style="background:#f1c40f"></span>林间空隙</td><td class="num">225</td><td class="num">12,444.7</td><td>✅ 计入</td></tr>
-<tr><td><span class="sw" style="background:#e67e22"></span>连片空地</td><td class="num">489</td><td class="num">328,999.8</td><td>✅ 计入</td></tr>
-<tr><td><span class="sw" style="background:#95a5a6"></span>不确定</td><td class="num">466</td><td class="num">40,478.1</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#e67e22"></span>连片空地</td><td class="num">474</td><td class="num">306,602.0</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#95a5a6"></span>不确定</td><td class="num">461</td><td class="num">40,089.0</td><td>✅ 计入</td></tr>
 <tr><td><span class="sw" style="background:#8a8a8a"></span>道路</td><td class="num">180</td><td class="num">34,357.3</td><td>❌ 不可种植</td></tr>
 <tr><td><span class="sw" style="background:#4a90d9"></span>水体</td><td class="num">8</td><td class="num">605.4</td><td>❌ 不可种植</td></tr>
 <tr><td><span class="sw" style="background:#c9a06a"></span>办公生活区</td><td class="num">4</td><td class="num">2,597.2</td><td>❌ 不可种植</td></tr>
+<tr><td><span class="sw" style="background:#9b59b6"></span>非种植区（未开发林）</td><td class="num">26</td><td class="num">23,158.8</td><td>❌ 不可种植</td></tr>
 <tr><td colspan="2"><b>合计 1,655 块</b></td><td class="num"><b>436,904</b></td>
-<td>需补种 <b>399,344 m²</b>（占 17.43%）</td></tr>
+<td>需补种 <b>376,185 m²</b>（占 16.42%）</td></tr>
 </tbody></table>
-<div class="q"><b>与纯 RGB 版本的对比</b>：需补种 309,792 → <b>399,344 m²</b>（+28.9%）。
+<div class="q"><b>与纯 RGB 版本的对比</b>：需补种 309,792 → <b>376,185 m²</b>（+21.4%）。
 增幅主要来自此前被 ExG 误判为树冠的草地 ——
-新增 1036 块中 84.1% 落于 DJI 的 other 类，面积加权一致性 95%。</div>
+新增 1036 块中 84.1% 落于 DJI 的 other 类，面积加权一致性 95%。
+<br><b>绿度闸门修正（阶段 13）</b>：非种植区 35 块 / 50,589 m² →
+<b>26 块 / 23,158.8 m²</b>，把西南角推平待种裸地 <b>27,430 m²</b>
+释放回「连片空地」。</div>
 
 <h2>四、已知局限</h2>
 <ol>
@@ -462,7 +505,7 @@ weecology/deepforest-tree 权重，123 MB）。</p>
 </ol>
 
 <footer>
-生成时间：2026-10-15 &nbsp;·&nbsp; 对应代码版本 <span class="mono">d0e368b</span><br>
+生成时间：2026-10-16 &nbsp;·&nbsp; 对应代码版本 <span class="mono">fd28d9f</span> + 绿度闸门修正<br>
 数据来源：WGR17.tif 真实影像实测 + DSM/语义分割实测 + 项目 git 提交历史<br>
 相关文档：《DSM高程辅助检测方案》《算法说明与演进史-小白版》
 《分割判据说明》《空地分离算法讲解》《方法对比-DeepForest与结构法》
