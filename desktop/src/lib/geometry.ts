@@ -3,19 +3,27 @@ import type { GapGeometry, MultiPolygonGeometry, PolygonGeometry, Position } fro
 /**
  * 极简几何工具（零依赖）。
  *
- * ⚠️ 适用范围说明：这些函数把经纬度按「等距圆柱近似」换算成米
- * （1° 纬度 ≈ 111320 m，1° 经度 ≈ 111320·cos(lat) m）。
- * 本园区外接矩形约 2.2 km × 1.5 km，在该尺度下误差 < 0.1%，原型阶段够用。
+ * ⚠️ 适用范围说明：这些函数把经纬度按「局部等距近似」换算成米。
+ * 本园区外接矩形约 1.55 km × 1.48 km，在该尺度下误差 < 0.1%。
  * **正式版应由 Python 侧在 UTM 49N 投影坐标下计算**（`scripts/grid_prior.py`
  * 已有成熟的 UTM 处理），前端只做即时反馈。
+ *
+ * ⚠️ 换算系数必须用**大地测量曲率半径**，不能用「1° ≈ 111320 m」这个常数：
+ * 在纬度 1.18° 处，子午圈（纬度方向）每度只有 **110,577 m**，
+ * 用 111,320 会让面积系统性偏大 **+0.67%**（实测 TS 合计比 Python/UTM 大 0.75%）。
  */
-
-const M_PER_DEG_LAT = 111320
+const A_WGS84 = 6378137.0
+const E2_WGS84 = 0.00669437999014
 
 export function metersPerDeg(latDeg: number): { x: number; y: number } {
-  const y = M_PER_DEG_LAT
-  const x = M_PER_DEG_LAT * Math.cos((latDeg * Math.PI) / 180)
-  return { x, y }
+  const phi = (latDeg * Math.PI) / 180
+  const sin2 = Math.sin(phi) * Math.sin(phi)
+  const denom = 1 - E2_WGS84 * sin2
+  // 子午圈曲率半径 M（纬度方向）；卯酉圈曲率半径 N（经度方向）
+  const m = (A_WGS84 * (1 - E2_WGS84)) / Math.pow(denom, 1.5)
+  const n = A_WGS84 / Math.sqrt(denom)
+  const k = Math.PI / 180
+  return { y: m * k, x: n * Math.cos(phi) * k }
 }
 
 /** 经纬度 → 以 (lon0, lat0) 为原点的局部米制坐标 */

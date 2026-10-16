@@ -1,6 +1,13 @@
 import type { EstimateResult, GapFeature, GapClass, PlantingPoint } from '../types'
 import { CLASS_STYLES } from './classes'
-import { distToBoundaryM, geometryOrigin, metersPerDeg, pointInGeometry, polygonAreaM2 } from './geometry'
+import {
+  centroid,
+  distToBoundaryM,
+  geometryOrigin,
+  metersPerDeg,
+  pointInGeometry,
+  polygonAreaM2,
+} from './geometry'
 
 /**
  * 可种植数量估算 —— 双口径（对应 PRD 附录 C · R-P1-7）。
@@ -95,18 +102,25 @@ function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, num
   }
   jMin = Math.floor(jMin) - 1
   jMax = Math.ceil(jMax) + 1
-  const iMin = Math.floor(uMin / pitch) - 2
-  const iMax = Math.ceil(uMax / pitch) + 2
 
-  // 护栏：极端形状下别把主线程拖死
+  // ⚠️ i 的范围必须**逐 j 计算**：格点沿 u 轴的投影是
+  //     alongU = i*pitch + j*skew，反解 i = (du - j*skew)/pitch。
+  //     `j*skew` 这一项在离原点较远的要素上可达 ±50 个格位；
+  //     若用「全局 iMin/iMax」一次算死，远处的要素会一个格点都取不到
+  //     —— 实测症状：5,771 m² 的连片空地排坑得 0 株，全园只有 286 株
+  //     （面积折算口径是 4,267 株，差异 93%）。
+  const iSpan = Math.ceil((uMax - uMin) / pitch) + 4
   const MAX_CANDIDATES = 60_000
-  if ((jMax - jMin + 1) * (iMax - iMin + 1) > MAX_CANDIDATES) {
+  if ((jMax - jMin + 1) * iSpan > MAX_CANDIDATES) {
     return []
   }
 
   const out: PlantingPoint[] = []
   for (let j = jMin; j <= jMax; j++) {
-    for (let i = iMin; i <= iMax; i++) {
+    const shift = j * skew
+    const iLo = Math.floor((uMin - shift) / pitch) - 1
+    const iHi = Math.ceil((uMax - shift) / pitch) + 1
+    for (let i = iLo; i <= iHi; i++) {
       const alongU = i * pitch + j * skew
       const x = alongU * ux + j * row * vx
       const y = alongU * uy + j * row * vy
@@ -165,7 +179,33 @@ export function estimate(
 
   for (const f of target) {
     const area = f.properties.area_sqm ?? polygonAreaM2(f.geometry)
-    const pts = gridPointsInFeature(f, grid, origin)
+    const cls = f.properties.class
+    const isSlot = cls === 'vacant_slot'
+
+    // ⚠️ 按类别分口径（实测驱动的修正）：
+    // `vacant_slot`（株位空缺）本身就是**一个种植单元**里少了 1 棵树
+    // （实测 253 块 / 16,043 m² ≈ 63 m²/块，接近一个单元 60.37 m²），
+    // 它的形状是"树冠大小的洞"，宽约 6~8 m。两个问题：
+    //   ① 用 2 m 退让去铺 8.45 m 间距的格点会大量落空（实测 196 个窄块得 0）；
+    //   ② 面积口径 floor(63/66.67) = 0，但语义上它就是 **1 株**。
+    // 因此株位空缺两个口径都记 1（点位取质心）；连片空地/人工新增走网格排坑。
+    const byArea = isSlot ? 1 : estimateByArea(area)
+
+    let pts: PlantingPoint[]
+    if (isSlot) {
+      const c = centroid(f.geometry)
+      pts = [
+        {
+          lon: c[0],
+          lat: c[1],
+          gap_id: f.properties.gap_id,
+          edge_dist_m: Math.round(distToBoundaryM(c, f.geometry) * 100) / 100,
+        },
+      ]
+    } else {
+      pts = gridPointsInFeature(f, grid, origin)
+    }
+
     // 跨多边形去重（重叠区域不应重复计数）
     let n = 0
     for (const p of pts) {
@@ -175,10 +215,9 @@ export function estimate(
       points.push(p)
       n++
     }
-    const byArea = estimateByArea(area)
     per_gap.push({
       gap_id: f.properties.gap_id,
-      class: f.properties.class,
+      class: cls,
       area_sqm: Math.round(area * 10) / 10,
       by_area: byArea,
       by_grid: n,
