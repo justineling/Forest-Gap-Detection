@@ -110,6 +110,7 @@ from grid_prior import (  # noqa: E402
     summarize_unplantable, UNPLANTABLE_CLASSES, CLASS_SEMANTICS,
     CLASS_UNDEVELOPED,
     DEFAULT_PRIOR_PITCH_M,
+    summarize_priority, PRIORITY_LABEL_CN, PRIORITY_GROUPS,
 )
 from landcover import (detect_unplantable, detect_grass,  # noqa: E402
                        LandcoverParams)
@@ -441,16 +442,48 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
     rows = med([g.row_pitch_m for g, _, _ in results])
     azimuths = [g.row_azimuth_deg for g, _, _ in results]
 
-    # 方位角是模 180 的量，用 2θ 折叠后求圆均值（直接取中位数会在 0/180 边界出错）
-    th2 = np.radians(np.array(azimuths) * 2.0)
-    az_c = float(np.cos(th2).mean())
-    az_s = float(np.sin(th2).mean())
-    azimuth = float(np.degrees(np.arctan2(az_s, az_c)) / 2.0 % 180.0)
-
     # 错行偏移：三角形 → plant/2；正方形 → 0。用采样块的多数决定
     tri_votes = sum(1 for g, _, _ in results if g.is_triangular)
     is_tri = tri_votes * 2 >= len(results)
     skew_off = plants / 2.0 if is_tri else 0.0
+
+    # --- 方位角合成（2026-10-17 修正：60° 角度别名 bug）---------------------
+    # 等边三角形种植（8.45 m 株距 / 60° 错行）的格点具有 **60° 旋转对称**，
+    # 因此 0.7° / 59° / 61° / 179° 描述的是**同一个格子**，而 90° 是它的对偶轴。
+    # 旧代码按"模 180°（2θ）"折叠求圆均值 —— 实测 7 个采样块
+    # [3, 61, 1, 61, 90, 179, 179] 被合成成 **21.2°**，而用 tree_info 树心
+    # 在 300 m 窗口局部细扫定出的真值是 **59.0°（≡ −1.0°）**，**偏了 20°**，
+    # 直接导致 vacant_slot / alley_gap / uncertain 的归属在两次全量之间抖动
+    # （实测林间空隙 +19 块 / +9.5%，而要素数与总面积逐位一致）。
+    # 修法：三角形按 **6θ（模 60°）** 折叠求圆均值；非三角形只有 180° 对称，仍用 2θ。
+    # ⚠️ 禁止"先 angle % 60 再取算术中位数"：真值恰好卡在 0/60 边界时
+    #    （−1° → 59°，+1° → 1°）中位数会算出 30° 这种离谱值 —— 必须用圆统计量。
+    def _circ_mean(degs: list[float], fold_n: float) -> float:
+        th = np.radians(np.asarray(degs, dtype=float) * fold_n)
+        c, s = float(np.cos(th).mean()), float(np.sin(th).mean())
+        if abs(c) < 1e-12 and abs(s) < 1e-12:
+            return 0.0
+        return float(np.degrees(np.arctan2(s, c)) / fold_n)
+
+    fold = 6.0 if is_tri else 2.0
+    azimuth = _circ_mean(azimuths, fold) % (60.0 if is_tri else 180.0)
+
+    # 剔除对偶轴离群块（90° ≡ 30° mod 60°，偏离主方向 30°）后重新合成。
+    # 实测本机 7 个采样块里有 1 块是 90°：剔除后 0.67°、不剔除 0.80°——
+    # 两者都远好于旧值 21.2°，剔除更稳。
+    az_kept = list(azimuths)
+    if is_tri and len(azimuths) >= 4:
+        dev = np.abs(((np.asarray(azimuths, dtype=float) - azimuth + 30.0)
+                      % 60.0) - 30.0)
+        keep = dev <= 15.0
+        if int(keep.sum()) >= max(3, int(round(len(azimuths) * 0.5))) \
+                and not bool(keep.all()):
+            az_kept = [float(v) for v in np.asarray(azimuths, dtype=float)[keep]]
+            azimuth = _circ_mean(az_kept, 6.0) % 60.0
+            log(f"  方位角合成：按 6θ（模 60°）圆统计；剔除 "
+                f"{len(azimuths) - len(az_kept)} 个对偶轴离群块"
+                f"（偏离主方向 >15°）→ 用 {len(az_kept)}/{len(azimuths)} 块"
+                f"合成 {azimuth:.2f}°")
 
     # --- 全局原点：把各采样块的绝对原点投到全局网格上，取相位中位数 ---
     # 做法：把每块的 origin 当"一个格点候选"，取其相对全局网格的相位，
@@ -497,8 +530,12 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
         nn_cv=med([g.nn_cv for g, _, _ in results]),
         regularity=med([g.regularity for g, _, _ in results]),
         angle_conc=med([g.angle_conc for g, _, _ in results]),
-        notes=f"由 {len(results)}/{n_want} 个采样瓦片的中位数合成"
-              + ("（三角形/错行种植）" if is_tri else "（正方形/对齐种植）"),
+        notes=f"由 {len(results)}/{n_want} 个采样瓦片合成"
+              + ("（三角形/错行种植，方位角按 6θ 模 60° 圆统计"
+                 + (f"，剔除 {len(azimuths) - len(az_kept)} 个对偶轴离群块"
+                    if len(az_kept) < len(azimuths) else "")
+                 + "）"
+                 if is_tri else "（正方形/对齐种植，方位角按 2θ 模 180° 圆统计）"),
     )
 
     # 与用户给定的设计密度交叉校验（独立于影像的强先验）
@@ -584,6 +621,7 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
     use_elev = (elevation is not None and elevation.available
                 and elev_params is not None and elev_params.enabled)
     elev_stats: dict = {}
+    seg_w = None                     # ← 供不可种植检测复用（水体第三条证据，见下）
     if use_elev:
         chm_w, seg_w = elevation.read(win_buf, canopy.shape)
         canopy, elev_stats = fuse_canopy(canopy, chm_w, seg_w, elev_params)
@@ -648,7 +686,13 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
     unplantable_polys: list[tuple[str, object, float, str]] = []
     unplantable_stats: dict[str, float] = {}
     if not args.no_landcover:
-        masks = detect_unplantable(rgb, valid, px_m, LandcoverParams())
+        # seg_w 传入水体检测作为第三条证据（2026-10-17 修正 92% 漏检）：
+        # 油棕园的蓄水塘含藻类时呈灰绿/亮绿，`B≥G>R` 天然不成立，
+        # 而 build_chm 又把水面置成 NaN → fuse_canopy 里"无高度处不判树冠"
+        # 让水面必然落进空地候选。实测 5,691 m² 真水塘因此被算成需补种。
+        lc_params = LandcoverParams(
+            water_use_segment=not bool(getattr(args, "no_water_segment", False)))
+        masks = detect_unplantable(rgb, valid, px_m, lc_params, seg=seg_w)
         union = masks["road"] | masks["water"] | masks["office"]
         gap_units = gap_units & ~union        # ← 关键：按像素扣除，不整块改判
         for cls in ("water", "road", "office"):
@@ -903,6 +947,10 @@ def build_argparser() -> argparse.ArgumentParser:
     # --- 不可种植地物参数（2026-10-13 用户要求）---
     ap.add_argument("--no-landcover", action="store_true",
                     help="关闭道路/水体/办公区检测（退化为旧行为）")
+    ap.add_argument("--no-water-segment", action="store_true",
+                    help="水体检测不使用 DJI 语义分割证据（退化为纯 RGB 蓝度/暗水规则）。"
+                         "默认使用：RGB 蓝度规则只能覆盖语义分割水体的 7.9%"
+                         "（含藻类的灰绿色水塘不满足 B≥G>R，实测漏检 5,691 m²）")
     ap.add_argument("--unplantable-overlap", type=float, default=0.5,
                     help="[已失效，仅为向后兼容] 旧的「整块改判」阈值。"
                          "现改为按像素几何差集扣除不可种植区域，不再使用该阈值")
@@ -980,6 +1028,7 @@ def main() -> int:
         "min_coverage_for_slot": args.min_coverage_for_slot,
         "min_valid_ratio": args.min_valid_ratio,
         "no_landcover": args.no_landcover,
+        "no_water_segment": args.no_water_segment,
         "unplantable_overlap": args.unplantable_overlap,
         "target_density_per_ha": args.target_density,
         "chm": args.chm or "",
@@ -1184,8 +1233,26 @@ def main() -> int:
     n_unp = sum(class_totals[k] for k in UNPLANTABLE_CLASSES)
     unp_area = sum(f["properties"]["area_sqm"] for f in all_features
                    if f["properties"]["class"] in UNPLANTABLE_CLASSES)
-    log(f"需补种空地 {n_plant} 块 / {area_total:,.0f} m² "
-        f"（占影像覆盖的 {area_total/(area_ha*1e4)*100:.2f}%）")
+    # --- 需补种口径拆分（2026-10-17）---------------------------------------
+    # 原来把所有 4 类空地加总当"需补种面积"，但 alley_gap 的语义是
+    # 「正常行间缝隙、无需补种」、uncertain 是「证据不足、需人工核实」——
+    # 实测这两类合计 52,534 m²，占 headline 的 14.0%。现显式拆三档。
+    prio = summarize_priority([{"class": f["properties"]["class"],
+                                "area_sqm": f["properties"]["area_sqm"]}
+                               for f in all_features])
+    def_area = prio["definite_plant"]["area_sqm"]
+    def_n = prio["definite_plant"]["count"]
+    log(f"需补种（确定）{def_n} 块 / {def_area:,.0f} m² "
+        f"（占影像覆盖的 {def_area/(area_ha*1e4)*100:.2f}%）"
+        f" ← 连片空地 + 株位空缺")
+    log(f"  待复核（不确定，需人工核实）{prio['review']['count']} 块 / "
+        f"{prio['review']['area_sqm']:,.0f} m²")
+    log(f"  不计入（林间空隙＝正常行间缝隙）{prio['not_needed']['count']} 块 / "
+        f"{prio['not_needed']['area_sqm']:,.0f} m²")
+    log(f"  合计空地 {n_plant} 块 / {area_total:,.0f} m²"
+        f"（旧口径：上三档之和，其中 "
+        f"{(prio['review']['area_sqm'] + prio['not_needed']['area_sqm'])/max(area_total,1e-9)*100:.1f}%"
+        f" 算法自述无需补种/待核实）")
     log(f"不可种植地物 {n_unp} 块 / {unp_area:,.0f} m²（已从补种面积中按像素扣除）")
     # 动态列出所有非零类别（含新增 road/water/office），不再硬编码旧 4 类
     log("按类别：" + "，".join(
@@ -1372,6 +1439,7 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "simplify_m": args.simplify_m,
             "separate_gaps": not args.no_separate,
             "landcover_unplantable": not args.no_landcover,
+            "water_use_segment": not args.no_water_segment,
             "unplantable_overlap": args.unplantable_overlap,
             "target_density_per_ha": args.target_density,
             "chm_path": args.chm or None,
@@ -1400,6 +1468,19 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "gap_area_share_pct": round(area_total / (area_ha * 1e4) * 100, 3),
             "by_class": dict(counts),
             "by_class_label": {CLASS_LABEL_CN[k]: v for k, v in counts.items()},
+            # --- 需补种口径三档拆分（2026-10-17 新增）-------------------------
+            # 旧字段（total_area_sqm / plantable_area_sqm）是"4 类空地之和"，
+            # 其中含「林间空隙＝正常缝隙、无需补种」与「不确定＝需人工核实」，
+            # 实测占 14.0%。新字段把口径显式拆开，桌面端/报表应以 definite 为准。
+            "by_priority": summarize_priority(
+                [{"class": f["properties"]["class"],
+                  "area_sqm": f["properties"]["area_sqm"]} for f in features]),
+            "by_priority_label": PRIORITY_LABEL_CN,
+            "plantable_area_definite_sqm": summarize_priority(
+                [{"class": f["properties"]["class"],
+                  "area_sqm": f["properties"]["area_sqm"]} for f in features]
+            )["definite_plant"]["area_sqm"],
+            "plantable_area_legacy_sqm": round(area_total, 2),
             "gap_area_stats_sqm": {
                 "max": round(float(areas.max()), 2),
                 "median": round(float(np.median(areas)), 2),
