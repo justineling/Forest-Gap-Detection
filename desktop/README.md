@@ -11,7 +11,7 @@ Tauri v2 桌面端的**前端部分**，同时可脱离 Tauri 直接用浏览器
 
 ```bash
 # ① 启动本地瓦片 / 辅助服务（零新依赖：标准库 + rasterio）
-#    首次建议加 --build-overviews（一次性建金字塔；否则低缩放级瓦片要 35~100 s/张）
+#    首次建议加 --build-overviews（一次性建金字塔）
 .venv/Scripts/python.exe scripts/tile_server.py --build-overviews
 
 # ② 启动前端（另开一个终端）
@@ -21,6 +21,13 @@ npm run dev      # → http://localhost:5173
 ```
 
 浏览器打开 `http://localhost:5173` 即可。
+
+> ⚠️ **`--build-overviews` 会就地修改源影像**（对本 BigTIFF 是**写入文件内部**，
+> 不是 `.ovr` 边车）：实测 **3.48 GB → 4.66 GB（+1.19 GB）**，耗时 174 s。
+> 换来的是瓦片从 **104 s → 0.7 s**（z=13）、**35 s → 0.6 s**（z=15）。
+> 这与架构文档 STEP 01「TIF 建金字塔」是同一件事，ArcGIS/QGIS 打开大图时也会做。
+> **回退方式**：需要 GDAL CLI 的 `gdaladdo -clean <file>`（本机 venv 内没有 gdaladdo/rio
+> 的清理命令），最稳的是重新拷一份原始影像。**执行前请确认你有原图副本。**
 
 > **不启后端也能用**：前端会自动退回内置样例数据
 > （`public/sample-gaps.geojson`，从真实结果按类别分层抽样 280 个要素），

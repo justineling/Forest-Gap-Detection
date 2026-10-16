@@ -251,19 +251,22 @@ def blank_png() -> bytes:
 
 
 def build_overviews(path: Path, levels: tuple[int, ...] = (2, 4, 8, 16, 32, 64)) -> bool:
-    """一次性为影像建金字塔（GDAL 会写成 `.ovr` 边车文件）。
+    """一次性为影像建金字塔。
 
     为什么必须做：本影像没有 overviews，低缩放级的瓦片窗口会覆盖大半个影像，
     GDAL 只能按全分辨率读 → **实测 35 s（z=15）/ 104 s（z=13）一张瓦片**，
-    交互完全不可用。建完金字塔后同一张瓦片是毫秒级。
+    交互完全不可用。建完金字塔后同一张瓦片是 **0.5~0.7 s**（实测快 90~150 倍）。
 
-    代价：`.ovr` 体积约等于原图的 1/4~1/3（本影像约 1 GB），可随时删除重建。
+    ⚠️ **会就地修改源文件**：对 BigTIFF，GDAL 把概览写进文件内部
+    （不是 `.ovr` 边车）。本影像实测 3.48 GB → **4.66 GB（+1.19 GB）**，
+    用时 174 s。想回退需要用 GDAL CLI `gdaladdo -clean <file>`；
+    本机 venv 内没有 gdaladdo/rio CLI，最稳的回退方式是重新拷一份原始影像。
     """
     with rasterio.open(path, "r+") as ds:
         if ds.overviews(1):
             print("  影像已有金字塔，跳过", file=sys.stderr)
             return True
-        print(f"  正在建金字塔 {list(levels)}（一次性，写入 .ovr 边车）…", file=sys.stderr)
+        print(f"  正在建金字塔 {list(levels)}（一次性；BigTIFF 会写进文件内部）…", file=sys.stderr)
         sys.stderr.flush()
         t0 = time.time()
         try:
