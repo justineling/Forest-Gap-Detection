@@ -39,3 +39,10 @@ Thumbs.db
 
 # ---- 临时文件 ----
 *.tmp
+
+# ---- 桌面端（Node 工程在分支 feat/desktop-app 的 desktop/）----
+# desktop/ 自身的 .gitignore 只存在于该分支；在主分支上补一层，
+# 防止 desktop/node_modules（1500+ 文件）被 git add -A 误纳管。
+desktop/node_modules/
+desktop/dist/
+desktop/tests/dist/

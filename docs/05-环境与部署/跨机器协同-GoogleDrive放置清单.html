@@ -94,7 +94,7 @@ border-bottom:1px dashed var(--line)}
 这份是<b>跨机器协同的操作清单</b>：为了让公司机与家用机看到同一份结果，
 你需要往 Google Drive 放哪些东西、怎么放、以及<b>哪些千万别放</b>。<br><br>
 一句话结论：<b>放 <code>output/</code>（检测结果，324 MB）+ <code>segment.tif</code> 和 <code>tree_info.json</code>（共 3 MB）；
-891 MB 的 <code>dsm.tif</code> 和 3.5 GB 的正射影像都不用放。</b>
+891 MB 的 <code>dsm.tif</code> 和 4.7 GB 的正射影像都不用放。</b>
 </div>
 
 <h2>一、必须放的：<code>output/</code> 整个目录</h2>
@@ -151,9 +151,9 @@ border-bottom:1px dashed var(--line)}
 <table>
 <thead><tr><th>内容</th><th class="num">体积</th><th>为什么不放</th><th>替代方案</th></tr></thead>
 <tbody>
-<tr><td class="mono">WGR17-002.tif（正射影像）</td><td class="num">3.5 GB</td>
+<tr><td class="mono">WGR17-002.tif（正射影像）</td><td class="num">4.7 GB</td>
 <td>太大，且是<b>原始数据</b>，不会变</td>
-<td>每台机器本地各存一份</td></tr>
+<td>每台机器本地各存一份<br><span style="font-size:11.5px;color:var(--muted)">（该体积已含瓦片服务建的金字塔，比原始文件多约 1.2 GB；原始下载体积约 3.5 GB。见 <code>desktop/README.md</code>）</span></td></tr>
 <tr><td class="mono">models/（模型权重）</td><td class="num">约 430 MB</td>
 <td>体积大，且有公开下载地址</td>
 <td>跑 <code>一键配置环境.bat</code> 自动获取</td></tr>

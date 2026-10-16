@@ -54,6 +54,15 @@ ext_sizes = {
 }
 EXT_SMALL = ext_sizes["segment.tif"] + ext_sizes["tree_info.json"]
 ORTHO_NAME = "WGR17-002.tif" if du(EXT/"WGR17-002.tif") else "WGR17.tif"
+ORTHO_HAS_PYR = (EXT/"WGR17-002.tif.ovr").exists()
+# 金字塔可能在文件内部（BigTIFF）而非 .ovr 边车，用「明显大于原始 3.5 GB」判断
+ORTHO_SIZE_GB = ext_sizes["WGR17.tif"] / 1024**3
+ORTHO_PYR_NOTE = (
+    "<br><span style=\"font-size:11.5px;color:var(--muted)\">"
+    "（该体积已含瓦片服务建的金字塔，比原始文件多约 1.2 GB；"
+    "原始下载体积约 3.5 GB。见 <code>desktop/README.md</code>）</span>"
+    if ORTHO_SIZE_GB > 3.9 else ""
+)
 
 BODY = f"""
 <div class="lead">
@@ -119,7 +128,7 @@ BODY = f"""
 <tbody>
 <tr><td class="mono">{ORTHO_NAME}（正射影像）</td><td class="num">{human(ext_sizes['WGR17.tif'])}</td>
 <td>太大，且是<b>原始数据</b>，不会变</td>
-<td>每台机器本地各存一份</td></tr>
+<td>每台机器本地各存一份{ORTHO_PYR_NOTE}</td></tr>
 <tr><td class="mono">models/（模型权重）</td><td class="num">约 430 MB</td>
 <td>体积大，且有公开下载地址</td>
 <td>跑 <code>一键配置环境.bat</code> 自动获取</td></tr>
