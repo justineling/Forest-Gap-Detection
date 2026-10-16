@@ -114,6 +114,41 @@
 - 遗留：`office` 门槛下调后"道路变宽处被标为办公区"的语义噪声
   （要更干净需新增 `hard_surface` 类别）。
 
+## ★ 2026-10-17 桌面端（Tauri）需求评审与前端原型
+
+### 技术栈：以 `架构方案.html` 的冻结决策为准，**否决**外部方案的 3 处
+- 前端 **React 18 + TS**（不用 Vue 3）· 地图 **MapLibre GL 4**（不用 Leaflet）
+- 绘图/编辑 **Terra Draw**（Leaflet-Geoman 只支持 Leaflet）
+- Python 后端 **保留 stdio NDJSON sidecar**（不用 FastAPI HTTP 微服务）；
+  **只有瓦片走 HTTP**（浏览器必须能 `<img src>` 取图）
+- 瓦片服务语言 **待用户拍板**：架构文档原定 Rust GDAL，本机实测建议原型期用 Python
+  （算法已全在 Python 且逐位可复现，重写地理内核等于把"已验证"换成"未验证"）
+- 决策文档：`docs/01-需求与架构/桌面端交互需求与实现映射.md`；PRD 见附录 C（v0.4）
+
+### 两项需求算法侧**根本不存在**（不是"要改"，是"没有"）
+- **ROI/KML 裁剪**：`process_image.py` 的 `kml_source=None` / `used_kml=False` 是硬编码；
+  `sidecar.py` 收到 `kml` 只发 `W1002` 告警后忽略 → 新需求 **R-P0-11（P0）**
+- **补种点位生成**：`grep -rn "replant\|planting_point" scripts/*.py` **零命中**
+  → 新需求 **R-P1-7（P1）**，方案＝网格排坑模拟（复用 `GridModel`）
+- ROI 与现有 `--forest-mask` 是**同构**机制（多边形→栅格掩膜→裁剪），实现成本低
+
+### 前端原型（分支 `feat/desktop-app`，`desktop/` 子目录）
+- React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 CSS 代 Tailwind）
+- `scripts/tile_server.py`（**新增，零新依赖**：标准库 `http.server` + rasterio）：
+  `/meta` · `/tiles/{z}/{x}/{y}.png` · `/gaps` · `POST /export` · `--build-overviews`
+- 双口径估算：面积折算 `floor(area/66.67)` + 网格排坑（8.45/7.32/0.67°/退让 2 m），
+  两者差值作为质量指标
+- **三个必踩的坑**（详见 `desktop/README.md`）：
+  1. `rasterio.windows.Window.intersection` **无交集时抛 `WindowError`**，不是返回空窗口；
+  2. 本影像 **4 波段**（第 4 波段恒 255 = Alpha）——4 波段源送进 3 波段目标 `reproject` 直接报错；
+  3. **影像没有金字塔** → 低缩放级瓦片 z=15 约 35 s、z=13 约 104 s 一张；
+     `--build-overviews` 建一次（约 1 GB `.ovr`）后毫秒级。**STEP 01「建金字塔」不是可选项。**
+
+### docgen 教训（新）
+自动重生成文档时**路径必须可移植**：`gen_gdrive.py` 曾硬编码 `D:/WGR`，
+在家里机上探不到就把体积全写成 `0 KB`，**静默把一份正确文档改成了错的**。
+
+
 ## 4. 红线与硬约定（违反会返工）
 - **Git**：绝不自动 commit，必须用户明确同意。提交前先 `git reset` 清空暂存区再按路径 `git add`
   （防 `git stash pop` 恢复的 staged 文件被误卷进提交）。核实远端真实状态用 `git ls-remote`。
