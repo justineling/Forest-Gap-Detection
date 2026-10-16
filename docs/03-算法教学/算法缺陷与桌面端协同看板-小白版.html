@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>算法还有什么毛病？—— 大白话版（Stage 14 冻结）</title>
+<style>
+:root{
+  --bg:#0f172a; --card:#1e293b; --line:#334155; --fg:#f8fafc; --muted:#94a3b8;
+  --accent:#38bdf8; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --purple:#a855f7;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--fg);line-height:1.85;padding:2rem 1.4rem 3.5rem}
+.wrap{max-width:900px;margin:0 auto}
+header{border-bottom:1px solid var(--line);padding-bottom:1.3rem;margin-bottom:1.6rem}
+h1{font-size:1.6rem;color:#fff;margin-bottom:.4rem}
+.sub{color:var(--muted);font-size:.94rem}
+h2{font-size:1.18rem;margin:2rem 0 .8rem;padding-bottom:.35rem;border-bottom:1px solid var(--line)}
+h3{font-size:1rem;margin:1.2rem 0 .5rem}
+p{margin-bottom:.85rem;font-size:.96rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.2rem 1.4rem;margin-bottom:1rem}
+.verdict{border-left:4px solid var(--accent)}
+.verdict-ok{border-left:4px solid var(--ok)}
+.verdict-warn{border-left:4px solid var(--warn)}
+.verdict-bad{border-left:4px solid var(--bad)}
+.verdict-purple{border-left:4px solid var(--purple)}
+.big{font-size:2rem;font-weight:700;color:var(--accent);line-height:1.2}
+.tag{display:inline-block;font-size:.75rem;font-weight:700;padding:.16rem .55rem;border-radius:6px;margin-right:.35rem;white-space:nowrap}
+.t-bad{background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.35)}
+.t-warn{background:rgba(245,158,11,.15);color:#fcd34d;border:1px solid rgba(245,158,11,.35)}
+.t-ok{background:rgba(16,185,129,.15);color:#6ee7b7;border:1px solid rgba(16,185,129,.35)}
+.t-p{background:rgba(168,85,247,.16);color:#d8b4fe;border:1px solid rgba(168,85,247,.38)}
+.code{font-family:ui-monospace,Consolas,monospace;background:rgba(255,255,255,.08);
+  padding:.08rem .32rem;border-radius:4px;font-size:.87rem;color:#fde047}
+table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:.5rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:rgba(255,255,255,.04);color:var(--muted)}
+footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
+  border-top:1px solid var(--line);padding-top:1.3rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>算法还有什么毛病？</h1>
+  <p class="sub">大白话版 · 配合《算法缺陷与桌面端协同看板》（专业版）一起看。
+    现在的状态是：算法暂时"封版"，先去做桌面软件，毛病记在案上，以后再修。</p>
+</header>
+
+<div class="card verdict">
+  <h3>先说结论</h3>
+  <p>算法现在<strong>没有会算错总面积的毛病</strong>了，上一轮修掉的 4 个都是"会算错"的级别。
+    现在剩下 7 个毛病，按严重程度分三档。</p>
+  <p><strong>最要紧的一句话</strong>：这 7 个里有 <strong>5 个</strong>，
+    等桌面软件做好之后<strong>就自动不算问题了</strong>——因为到时你自己在地图上圈一圈，
+    圈外的东西根本不会被算进去，算错的地方你点一下删掉就行。</p>
+  <p>所以先做桌面软件、把算法放一放，是省钱省时间的做法。</p>
+</div>
+
+<h2>一、打个比方</h2>
+<div class="card">
+  <p>把算法想成一个<strong>刚学会看航拍图的临时工</strong>。他已经能干这些活：</p>
+  <p>✅ 认出哪是树、哪是空地 · ✅ 按每棵树 8.35 米的行列规律去核对 ·
+    ✅ 认出水塘、道路、房子这些不能种树的地方 · ✅ 报出"确定要补种"的面积</p>
+  <p>但他还有几件事<strong>分不清</strong>，这就是下面 7 个毛病。</p>
+</div>
+
+<h2>二、7 个毛病，大白话讲</h2>
+
+<div class="card verdict-bad">
+  <h3><span class="tag t-bad">严重</span>毛病 1：分不清"高草"和"刚种的小树苗"</h3>
+  <p><strong>打个比方</strong>：一片 2~4 米高的绿东西，可能是要清掉的杂草，也可能是你两年前种下去、
+    现在刚长到 2~4 米的油棕苗。<strong>从一张照片上，它俩长得几乎一样。</strong></p>
+  <p><strong>影响</strong>：约 <strong>9.9 万平方米</strong>（差不多 14 个足球场）的地，
+    算法会说"要补种"，但其实可能已经种过了。</p>
+  <p><strong>桌面软件能帮忙吗</strong>：能一点点 —— 你知道哪个区块刚种过，
+    可以在软件里把那一块误报的空地<strong>框选删掉</strong>。</p>
+  <p><strong>要彻底解决</strong>：得拿<strong>两个不同时间的照片</strong>对比（同一块地，
+    去年是草、今年是小树，一看就知道）。<strong>只看一张照片，神仙也分不出来</strong>，
+    所以别在这个上面继续硬钻了。</p>
+</div>
+
+<div class="card verdict-bad">
+  <h3><span class="tag t-bad">严重</span>毛病 2：太依赖大疆软件给的分割图</h3>
+  <p><strong>打个比方</strong>：判断"这里有没有树"，一半的活儿是靠大疆智图软件给的
+    <span class="code">segment.tif</span> 那张"树/水/房子"标注图。
+    但大疆那个模型是给<strong>柑橘、荔枝、香蕉</strong>这些树训练人的，
+    <strong>里面根本没有"油棕"这一课</strong> —— 它是硬着头皮猜的。</p>
+  <p><strong>影响</strong>：约 <strong>21.5 万平方米</strong>（有效区域的 16.7%）的判断，
+    完全靠这个"外行"的标注撑着。</p>
+  <p>更现实的问题：<strong>如果哪天航拍没跑大疆的果树分析，这套算法就少了一条腿。</strong></p>
+  <p><strong>桌面软件能帮忙吗</strong>：<strong>帮不上</strong>。这是数据来源问题，
+    最多做到"发现缺文件时明确提醒你"，而不是悄悄算错。</p>
+  <p><strong>要彻底解决</strong>：拿现在算得准的部分当"标准答案"，
+    自己训练一个认识油棕的小 AI 模型。</p>
+</div>
+
+<div class="card verdict-warn">
+  <h3><span class="tag t-warn">中等</span>毛病 3：那个"多高算树"的分界线，换个园区可能就不灵了</h3>
+  <p><strong>打个比方</strong>：现在用的规则是"高度超过 5.2 米就算树，低于 1.2 米肯定不是树"。
+    这条线是<strong>拿这一片成熟园区、只用 5 个点</strong>试出来的。</p>
+  <p>问题是那台航拍设备把树<strong>压矮了大约 40%</strong>（真树 8~15 米，它量出来只有 5~9 米）。
+    要是换到一片<strong>刚种两三年的小树林</strong>，或者换台没压过的机器，这条线就切错位置了。</p>
+  <p><strong>影响</strong>：这条线上下挪 1 米，就有 <strong>3 万平方米</strong>的地在"树"和"不是树"之间翻来翻去。</p>
+  <p><strong>桌面软件能帮忙吗</strong>：能 —— 在"高级设置"里放个<strong>滑块</strong>，
+    或者给"幼龄林 / 中龄林 / 成熟林"三个档位，你自己选。</p>
+</div>
+
+<div class="card verdict-warn">
+  <h3><span class="tag t-warn">中等</span>毛病 4：整个园子用一把"尺子"，但每块地的起点不一样</h3>
+  <p><strong>打个比方</strong>：油棕是按 8.35 米一棵、隔行走半个位置这样整齐排的。
+    算法想用一把"标准尺子"去量整个园子 —— 可是<strong>每穿过一条林道，
+    对面那块地的种植起点就重新开始</strong>，跟尺子对不上。</p>
+  <p><strong>影响</strong>：全园一把尺子时"对得上"的比例只有 <strong>46%</strong>
+    （等于瞎猜的水平）；但在局部 300 米范围内单独对，能到 <strong>79%~97%</strong>。</p>
+  <p>另外还发现：<strong>558 个"树心"落在了标为空地的地方</strong>（占全部树心的 3.7%），
+    也就是个别漏网的活树被圈进了空地。</p>
+  <p><strong>好消息</strong>：反过来说，空地落在树心 2 米内的面积只有 <strong>2.1%</strong>，
+    而全园随便挑一个点落在树附近的机会是 14.5% —— 说明<strong>空地总体上是避开了树的</strong>，
+    这 558 个只是零星漏网。</p>
+  <p><strong>桌面软件能帮忙吗</strong>：能帮大忙 —— 你圈的那一小块地（几百米），
+    本来就不跨林道，问题自动没了。</p>
+</div>
+
+<div class="card verdict-purple">
+  <h3><span class="tag t-p">中等</span>毛病 5：自动"猜边界"的那套东西很敏感</h3>
+  <p><strong>打个比方</strong>：航拍图会拍到园区外面的<strong>原始野林</strong>。
+    算法本来想自己猜"哪儿是园区、哪儿是野林"，靠的是"这片有没有整齐的种植规律"。</p>
+  <p>但这套猜法<strong>很飘</strong>：换个参数，要补种的面积就在
+    <strong>4% 到 26% 之间来回晃</strong>。而且它特别容易搞错一种情况 ——
+    <strong>刚推平、准备种但还没种的空地</strong>（一棵树都没有），会被误当成"野林"划出去。</p>
+  <p><strong>桌面软件能帮忙吗</strong>：<strong>能彻底解决！</strong>
+    你直接在地图上沿着林道圈一圈，圈外的野林根本不会参与计算，
+    就再也不需要这套"猜边界"的东西了。</p>
+</div>
+
+<div class="card verdict">
+  <h3><span class="tag t-p">轻微</span>毛病 6：有些加宽的路口被标成了"办公区"</h3>
+  <p><strong>打个比方</strong>：为了能认出水塘旁边的小泵房，我们把"白色小方块算建筑"的门槛降低了。
+    副作用是<strong>一些比较宽的白色砂石路口也被当成了房子</strong>。</p>
+  <p><strong>影响</strong>：<strong>零</strong>。因为路口和房子都属于"不能种树的人工地面"，
+    两边都不算进补种面积。只是图层名字看着有点怪。</p>
+  <p><strong>桌面软件能帮忙吗</strong>：无所谓 —— 软件默认只勾选显示"可以种的地方"，
+    这些背景层根本不显示。</p>
+</div>
+
+<div class="card verdict">
+  <h3><span class="tag t-p">轻微</span>毛病 7：跑得慢，还有些老旧的小毛病</h3>
+  <p><strong>跑得慢</strong>：整幅图要 <strong>17 分半钟</strong>（528 个小块一块一块算，不并行）。
+    好消息是这些小块<strong>互相没关系</strong>，改成同时算能快 3~4 倍。</p>
+  <p><strong>高度图上有个别"假尖刺"</strong>：15 个<strong>健康的油棕区块</strong>量出 14~30 米的怪高度
+    （真树也就 8~15 米）。查过了，是航拍立体匹配的毛病，<strong>而且它恰好叠在真树上</strong>，
+    所以只会造成很小的漏检（最多约 6,400 平方米）。但这也说明：
+    <strong>高度数据不能拿来做精细的分层判断。</strong></p>
+  <p><strong>老旧小毛病</strong>：出图脚本只会画 4 种颜色（现在有 8 类）；
+    有两个脚本里写死了公司电脑的路径（换电脑会报错）；
+    还有个参数已经不生效了但还留在命令行里，容易让人误会。</p>
+  <p><strong>桌面软件能帮忙吗</strong>：能帮一部分 —— 你圈的范围越大越小，
+    只算圈内的块，时间跟着降。</p>
+</div>
+
+<h2>三、已经修好的 4 个（上一轮）</h2>
+<div class="card verdict-ok">
+  <table>
+    <thead><tr><th>修好的毛病</th><th>修前</th><th>修后</th></tr></thead>
+    <tbody>
+      <tr><td>两台电脑算出的"树的朝向"差 20 度</td>
+        <td>21.2 度（错的）</td><td><strong>0.67 度</strong>（两台机器一致）</td></tr>
+      <tr><td>灰绿色的浑水塘被当成"要补种的地"</td>
+        <td>只认出 7.9% 的水面</td><td><strong>认出 98%</strong></td></tr>
+      <tr><td>水塘旁边的小泵房、化肥棚漏掉了</td>
+        <td>只找到 4 处</td><td><strong>找到 82 处</strong></td></tr>
+      <tr><td>"要补种面积"里混进了"本来就不需要补的缝隙"</td>
+        <td>多算了 14%</td><td><strong>拆成三档，报数不再虚高</strong></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>四、接下来该怎么做（一句话版）</h2>
+<div class="card verdict-purple">
+  <p><strong>现在：</strong>算法封版，去做桌面软件。你圈的那一块才跑，
+    算错的地方你手动删掉 —— 上面 7 个毛病里 5 个就此化解。</p>
+  <p><strong>以后（按这个顺序修最划算）：</strong></p>
+  <p>1️⃣ 让软件支持"只算我圈的范围"（顺带解决毛病 5，还能更快）</p>
+  <p>2️⃣ 算出"每个坑该种几棵、点在哪"，给出能拿到地里放样的坐标</p>
+  <p>3️⃣ 改成同时算很多块（17 分半 → 3 分钟以内）</p>
+  <p>4️⃣ 收拾那些老旧小毛病（假路径、失效参数、只会画 4 色）</p>
+  <p>5️⃣ 拿两个年份的照片，解决"高草还是小树苗"（这个最花时间，也最值）</p>
+  <p><strong>暂时别碰</strong>：改那个"多高算树"的分界线。现在只有 5 个样本点撑着，
+    动它容易把已经算对的地方搞坏。等攒够人工标注的样本再说。</p>
+</div>
+
+<footer>
+  这是小白版；技术细节与实测数据见《算法缺陷与桌面端协同看板》专业版<br>
+  所有数字都是真机实测，不是估算
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>算法缺陷与桌面端协同看板（Stage 14 基线冻结版）</title>
+<style>
+:root{
+  --bg:#0f172a; --card:#1e293b; --line:#334155; --fg:#f8fafc; --muted:#94a3b8;
+  --accent:#38bdf8; --p0:#ef4444; --p0bg:rgba(239,68,68,.12);
+  --p1:#f59e0b; --p1bg:rgba(245,158,11,.12);
+  --p2:#3b82f6; --p2bg:rgba(59,130,246,.12);
+  --fixed:#10b981; --fixedbg:rgba(16,185,129,.12);
+  --tauri:#a855f7; --tauribg:rgba(168,85,247,.14);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--fg);line-height:1.7;padding:2rem 1.5rem 4rem}
+.container{max-width:1240px;margin:0 auto}
+header{border-bottom:1px solid var(--line);padding-bottom:1.5rem;margin-bottom:1.6rem;
+  display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:1rem}
+h1{font-size:1.72rem;font-weight:700;color:#fff;display:flex;align-items:center;gap:.7rem;flex-wrap:wrap}
+.badge{font-size:.8rem;background:var(--accent);color:#0f172a;padding:.18rem .62rem;border-radius:999px;font-weight:700;white-space:nowrap}
+.sub{color:var(--muted);margin-top:.4rem;font-size:.92rem}
+.meta{text-align:right;font-size:.82rem;color:var(--muted)}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem;margin-bottom:1.6rem}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.15rem}
+.kpi-label{font-size:.8rem;color:var(--muted);letter-spacing:.03em}
+.kpi-value{font-size:1.55rem;font-weight:700;margin:.28rem 0}
+.kpi-sub{font-size:.79rem;color:var(--muted)}
+.banner{background:linear-gradient(135deg,rgba(168,85,247,.16),rgba(56,189,248,.12));
+  border:1px solid rgba(168,85,247,.4);border-radius:12px;padding:1.2rem 1.4rem;margin-bottom:1.2rem}
+.banner h3{color:#e9d5ff;font-size:1.02rem;margin-bottom:.42rem}
+.banner p{font-size:.9rem;color:#cbd5e1}
+.warnbox{background:rgba(239,68,68,.09);border:1px solid rgba(239,68,68,.42);border-radius:12px;
+  padding:1.2rem 1.4rem;margin-bottom:1.2rem}
+.warnbox h3{color:#fca5a5;font-size:1.02rem;margin-bottom:.5rem}
+.warnbox p,.warnbox li{font-size:.9rem;color:#e5e7eb}
+.warnbox ul{padding-left:1.2rem;margin-top:.35rem}
+.infobox{background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.32);border-radius:12px;
+  padding:1.2rem 1.4rem;margin-bottom:1.6rem}
+.infobox h3{color:#7dd3fc;font-size:1.02rem;margin-bottom:.5rem}
+table{width:100%;border-collapse:collapse;font-size:.86rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:rgba(255,255,255,.04);color:var(--muted);font-weight:600;white-space:nowrap}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:rgba(255,255,255,.08);
+  padding:.08rem .34rem;border-radius:4px;font-size:.84rem;color:#fde047}
+.controls{display:flex;flex-wrap:wrap;gap:.6rem;margin:1.6rem 0 1.2rem;align-items:center;justify-content:space-between}
+.tabs{display:flex;flex-wrap:wrap;gap:.5rem}
+.fbtn{background:var(--card);border:1px solid var(--line);color:var(--muted);padding:.46rem .95rem;
+  border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:600;transition:all .15s}
+.fbtn:hover{border-color:var(--accent);color:var(--fg)}
+.fbtn.active{background:var(--accent);color:#0f172a;border-color:var(--accent)}
+.search{background:var(--card);border:1px solid var(--line);color:var(--fg);padding:.46rem .85rem;
+  border-radius:8px;font-size:.85rem;min-width:230px}
+.list{display:flex;flex-direction:column;gap:1.2rem}
+.dcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.4rem}
+.dcard:hover{border-color:#475569}
+.dhead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:.7rem;margin-bottom:.9rem}
+.dtitle-wrap{display:flex;align-items:center;flex-wrap:wrap;gap:.6rem}
+.tag{font-size:.74rem;font-weight:700;padding:.18rem .58rem;border-radius:6px;white-space:nowrap}
+.t-p0{background:var(--p0bg);color:var(--p0);border:1px solid rgba(239,68,68,.35)}
+.t-p1{background:var(--p1bg);color:var(--p1);border:1px solid rgba(245,158,11,.35)}
+.t-p2{background:var(--p2bg);color:var(--p2);border:1px solid rgba(59,130,246,.35)}
+.t-fx{background:var(--fixedbg);color:var(--fixed);border:1px solid rgba(16,185,129,.35)}
+.t-tauri{background:var(--tauribg);color:#d8b4fe;border:1px solid rgba(168,85,247,.4)}
+.dtitle{font-size:1.08rem;font-weight:700;color:#fff}
+.pill{background:#0f172a;border:1px solid var(--line);padding:.26rem .7rem;border-radius:8px;
+  font-size:.8rem;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--accent)}
+.dbody{display:grid;grid-template-columns:repeat(auto-fit,minmax(275px,1fr));gap:1rem}
+.ib{background:rgba(15,23,42,.55);border:1px solid rgba(51,65,85,.7);border-radius:8px;padding:.85rem 1rem}
+.ib h4{font-size:.79rem;color:var(--muted);margin-bottom:.38rem;letter-spacing:.03em}
+.ib p,.ib li{font-size:.87rem;color:#e2e8f0}
+.ib ul{padding-left:1.15rem}
+.ib.tauri{background:rgba(168,85,247,.08);border-color:rgba(168,85,247,.3)}
+.ib.tauri h4{color:#d8b4fe}
+.ib.src{background:rgba(16,185,129,.06);border-color:rgba(16,185,129,.25)}
+.ib.src h4{color:#6ee7b7}
+footer{margin-top:2.6rem;text-align:center;font-size:.82rem;color:var(--muted);
+  border-top:1px solid var(--line);padding-top:1.4rem}
+h2.sec{font-size:1.15rem;margin:2.2rem 0 .9rem;padding-bottom:.4rem;border-bottom:1px solid var(--line)}
+@media(max-width:640px){body{padding:1.2rem .9rem 3rem}.dbody{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div>
+    <h1>🌲 算法缺陷与桌面端协同看板 <span class="badge">Stage 14 基线冻结</span></h1>
+    <p class="sub">算法转入维护冻结、开发重心移交 Tauri 桌面端期间的缺陷台账 —— 记录真机实测量级、
+      桌面端交互能否化解、以及解冻后的修复路线</p>
+  </div>
+  <div class="meta">
+    <div>基准影像：<code>WGR17-002.tif</code>（528 瓦片 / 229 ha）</div>
+    <div>确定需补种基线：<strong>702 块 / 309,143 m²（13.49%）</strong></div>
+    <div>契约测试基线：<strong>95 / 95</strong></div>
+  </div>
+</header>
+
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="kpi-label">Stage 14 已攻克</div>
+    <div class="kpi-value" style="color:var(--fixed)">4 项</div>
+    <div class="kpi-sub">6θ 方位角 / 水体 98% / 泵房 / 三档口径</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">待修核心算法债（P0 / P1）</div>
+    <div class="kpi-value" style="color:var(--p0)">5 项</div>
+    <div class="kpi-sub">高草vs幼树 / 域外分割依赖 / CHM 阈值泛化 / 网格相位 / 掩膜敏感</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">工程与语义债（P2）</div>
+    <div class="kpi-value" style="color:var(--p2)">2 项</div>
+    <div class="kpi-sub">单进程 1,048 s / 硬化路口语义混叠</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">桌面端交互可化解</div>
+    <div class="kpi-value" style="color:#d8b4fe">5 / 7 项</div>
+    <div class="kpi-sub">靠圈选 Target Block + 手改多边形绕过</div>
+  </div>
+</div>
+
+<div class="banner">
+  <h3>💡 为什么「先冻结算法、转向桌面端」是对的</h3>
+  <p>剩余缺陷里最难缠的三个 —— <strong>未开发林掩膜阈值敏感（4%~26% 摇摆）</strong>、
+    <strong>跨道路网格相位重置（全图对齐率仅 46%）</strong>、<strong>少量高草/幼树与硬化路口误判</strong> ——
+    一旦桌面端上线<strong>「Step 2 用户圈选 Target Block」</strong>与
+    <strong>「Step 4 交互式增删多边形」</strong>，就在产品交互层被直接吸收：圈外野林根本不进管线，误判由用户一键删掉。
+    解冻后再按下方清单逐条升级底层算法即可。</p>
+</div>
+
+<div class="warnbox">
+  <h3>⚠️ 两处必须纠正的对外说法（来自外部技术方案的建议）</h3>
+  <p><strong>1. 前端框架是 React，不是 Vue 3。</strong>
+    项目 <code>docs/01-需求与架构/架构方案.html</code> 已冻结技术栈：
+    <strong>Tauri v2 + React 18 + TS + MapLibre GL 4</strong>；文件树、依赖清单、任务分解（T01–T05）
+    全部按 React 写好。<strong>绘图库用 Terra Draw</strong>（<code>Leaflet-Geoman</code> 只支持 Leaflet，不能用）。</p>
+  <p><strong>2. 算法主链路走 stdio NDJSON sidecar，不是 FastAPI HTTP 微服务。</strong>
+    <code>docs/01-需求与架构/推理服务契约.md</code> 已冻结并实现（契约测试 95/95）。
+    FastAPI 方案要重新设计契约、管端口与进程生命周期、额外引入 3 个依赖，没有收益。
+    <strong>唯一的 HTTP 例外是瓦片服务</strong>（浏览器必须能 <code>&lt;img src&gt;</code> 取图）。</p>
+  <p>完整裁定见 <code>docs/01-需求与架构/桌面端交互需求与实现映射.md</code>。</p>
+</div>
+
+<h2 class="sec">📐 数据来源与口径说明</h2>
+<div class="infobox">
+  <h3>为什么每个数字都要标出处</h3>
+  <p>本看板的量级全部来自<strong>真机探针实测</strong>，不是估算。其中一项本次重新跑过并<strong>修正了口径</strong>：</p>
+  <table>
+    <thead><tr><th>指标</th><th>数值</th><th>来源</th><th>备注</th></tr></thead>
+    <tbody>
+      <tr><td>非树区绿色植被</td><td>122,784 m²（占非树区 29%）</td><td><code>probe_ambiguous.py</code></td><td>高度 × 绿度交叉分档</td></tr>
+      <tr><td>其中「绿色 + 中高」</td><td>99,486 m²</td><td>同上</td><td>CHM≥1.2 m 且 ExG≥60</td></tr>
+      <tr><td>「非树」判定依赖域外分割</td><td>214,827 m²（有效区 16.7%）</td><td><code>probe_chm_artifact.py</code></td><td>CHM 既不救援也不否决</td></tr>
+      <tr><td>CHM 阈值 ±1 m 的翻转量</td><td>±30,400 m²</td><td><code>probe_dji_chm.py</code></td><td>仅 5 个真值点标定</td></tr>
+      <tr><td>掩膜影响区间</td><td><strong>4%~26%</strong></td><td>`build_forest_mask.py` 多参数对比</td><td>对外稿件曾写成 26.5%，实测上界是 <strong>26%</strong></td></tr>
+      <tr><td><strong>残树交叉验证（本次重跑）</strong></td><td><strong>558 个树心落在空地内</strong>（占 15,190 个树心的 3.7%）</td><td><code>probe_gaps_truth2.py</code></td><td>曾用"274 个多边形"这个更严口径表述；现已按<strong>树心计数</strong>重测</td></tr>
+      <tr><td>空地落在树心 ≤2 m 内的面积</td><td><strong>2.1%</strong>（全园自然基准 14.5%）</td><td>同上</td><td>低约 7 倍 → 空地确实避开了树</td></tr>
+      <tr><td>水体落在需补种区</td><td><strong>103 m²</strong>（修复前 5,691 m²）</td><td>同上</td><td>水体修复的独立复核</td></tr>
+      <tr><td>CHM 异常区块</td><td>15 块健康油棕，CHM_P90 <strong>14.08~29.99 m</strong></td><td>50 m 区块统计（<code>2026-10-16</code> 记录）</td><td>对外稿件曾写"17~30 m"，实际下界 14.08 m</td></tr>
+      <tr><td>全量耗时</td><td><strong>1,048.2 秒</strong>（528 瓦片串行）</td><td>10-17 全量跑批日志</td><td>公司机约 1,973 秒</td></tr>
+      <tr><td>矢量化损耗</td><td>5.2%</td><td>栅格 421,363 → 多边形 399,344 m²</td><td>属正常，无需优化</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="controls">
+  <div class="tabs">
+    <button class="fbtn active" data-f="all">全部记录 (11)</button>
+    <button class="fbtn" data-f="p0">🔴 P0 核心算法债 (2)</button>
+    <button class="fbtn" data-f="p1">🟠 P1 泛化与精度债 (3)</button>
+    <button class="fbtn" data-f="p2">🔵 P2 语义与工程债 (2)</button>
+    <button class="fbtn" data-f="tauri">🟣 桌面端可化解 (5)</button>
+    <button class="fbtn" data-f="fixed">🟢 Stage 14 已修复 (4)</button>
+  </div>
+  <input type="text" class="search" id="q" placeholder="搜索关键字（CHM / 水体 / 幼树 / 相位 / 掩膜 …）" />
+</div>
+
+<div class="list" id="list">
+
+  <!-- D1 -->
+  <div class="dcard" data-c="p0 tauri">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p0">P0 · 业务模糊带</span>
+        <span class="tag t-tauri">桌面端可人工微调</span>
+        <span class="dtitle">D1　算法无法区分「高草 / 蕨类」与「已定植幼龄油棕」</span>
+      </div>
+      <span class="pill">122,784 m² 绿色植被（其中中高 99,486 m²）</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 根因与现象</h4>
+        <p>在 <code>1.2 m ≤ CHM &lt; 5.2 m</code> 且高绿度（ExG≥60）的区间，算法一律判"非树 → 需补种"。
+          但这一段里既可能有要清芭补种的<strong>高大杂草 / 野生灌木</strong>，也可能有已种下 2~4 年、
+          高 2~4 m 的<strong>幼龄油棕</strong>（不该重复补种）。</p>
+        <p>更麻烦的是：<code>DSM高程辅助检测方案.html</code> 里规划的「低矮植被」独立类别
+          <strong>代码中从未落地</strong>，而该方案"草 0.3~1.5 m vs 油棕 ≥4 m 一刀切开"的假设
+          <strong>已被本项目自己的实测否定</strong>（草地真值点 CHM 中位 3.05 m，被 DSM 平滑"渗高"）。</p>
+      </div>
+      <div class="ib tauri">
+        <h4>🖥️ 桌面端过渡方案</h4>
+        <p>用户在桌面端知道哪个区块刚种了小苗。用 <strong>图层过滤 + 框选删除</strong>，
+          一键删掉已知幼龄区上的误报空地。</p>
+        <p>更根本的做法已在 PRD 里记下：给多边形加一个<strong>「人工确认」状态字段</strong>
+          （可导入补种计划表），算法只负责"哪里可疑"——因为"这块地什么时候推的、种没种"
+          本质是非影像信息。</p>
+      </div>
+      <div class="ib">
+        <h4>🛠️ 解冻后修复方向</h4>
+        <ul>
+          <li>在 <code>1.2~5.2 m</code> + 高 ExG 区加二级分类：<strong>幼龄油棕的放射状纹理</strong>
+            （6 方向 Gabor）+ <strong>是否落在 8.35 m 种植格点上</strong> → 剥离为 <code>young_palm</code>；</li>
+          <li>⚠️ 但要注意：<strong>单期影像做不到"幼树 vs 高草"的语义区分</strong>，
+            需要多时相（同一地块两期对比）。不要在这上面继续堆特征工程。</li>
+        </ul>
+      </div>
+      <div class="ib src">
+        <h4>📌 证据</h4>
+        <p><code>probe_ambiguous.py</code>：明确裸地 158,146 m²（37.5%，铁定要补）；
+          绿色中高植被 99,486 m²（23.6%，业务判断）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- D2 -->
+  <div class="dcard" data-c="p0">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p0">P0 · 外部模型强耦合</span>
+        <span class="dtitle">D2　51% 的「非树」判定完全依赖大疆域外果树分割（<code>segment.tif</code>）</span>
+      </div>
+      <span class="pill">214,827 m²（占全幅有效区 16.7%）</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 根因与现象</h4>
+        <p>在 <code>1.2 ≤ CHM &lt; 5.2 m</code> 区间，CHM 既不触发救援也不触发否决，
+          <strong>51% 的非树判定完全由 <code>segment.tif == other</code> 决定</strong>。</p>
+        <p>而大疆智图果树模型只支持柑橘/荔枝/香蕉等 6 类果树，<strong>油棕属于域外推断</strong>；
+          若未来航拍未跑大疆果树分析（缺 <code>segment.tif</code>），F1 融合规则就失去光学主腿。
+          另有 <code>segment.tif</code> <strong>不含内嵌 CRS</strong>（靠代码硬编码 <code>EPSG:4326</code> 兜底），
+          换数据源可能静默错位。</p>
+      </div>
+      <div class="ib tauri">
+        <h4>🖥️ 桌面端能做什么（只能缓解，不能根治）</h4>
+        <p>导入时校验工程目录是否含 <code>segment.tif</code>：有 → F1 高精度管线；
+          没有 → <strong>明确提示</strong>并降级为「CHM + 局部归一化 ExG」备用管线（而不是静默出错）。</p>
+      </div>
+      <div class="ib">
+        <h4>🛠️ 解冻后修复方向</h4>
+        <ul>
+          <li>用当前 F1 高置信区做<strong>伪标签</strong>（<code>CHM≥5.2 且 seg==tree</code> 为正，
+            <code>CHM&lt;1.2 且 seg==other</code> 为负），训练超轻量本地分割头
+            （SegFormer-B0 / YOLOv11n-seg），导出 ONNX 供桌面端调用，摆脱对 <code>segment.tif</code> 的依赖；</li>
+          <li>同时给 <code>segment.tif</code> 加 <strong>CRS 对齐校验 + 明确报错</strong>。</li>
+        </ul>
+      </div>
+      <div class="ib src">
+        <h4>📌 证据</h4>
+        <p><code>probe_chm_artifact.py</code>：非树判据来源分工表 —— 51% 靠 seg、约 4% 靠 CHM 否决。
+          属<strong>底层输入依赖，桌面端不能化解</strong>。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- D3 -->
+  <div class="dcard" data-c="p1 tauri">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p1">P1 · 阈值泛化脆弱</span>
+        <span class="tag t-tauri">桌面端可开参数滑块</span>
+        <span class="dtitle">D3　CHM 融合阈值（5.2 m / 1.2 m）对树龄与 DSM 平滑度高度敏感</span>
+      </div>
+      <span class="pill">CHM 阈值每变 ±1.0 m → ±30,400 m² 翻转</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 根因与现象</h4>
+        <p>大疆 <code>gsddsm.tif</code> 经过强平滑，冠层高度被系统性低估约 <strong>40%</strong>
+          （真树 8~15 m，CHM 读数 5~9 m）。当前 5.20 m / 1.20 m 是在<strong>单一成熟园区</strong>按
+          <strong>仅 5 个真值点</strong>标定的。换到幼龄林园区或用未平滑的精细 DSM，
+          固定阈值会大面积漏救或误砍。</p>
+      </div>
+      <div class="ib tauri">
+        <h4>🖥️ 桌面端过渡方案</h4>
+        <p>在「高级设置」暴露 <code>chm_rescue_m</code>（默认 5.2）与 <code>chm_veto_m</code>（默认 1.2）
+          两个滑块，或给「幼龄林 / 中龄林 / 成熟林」三档预设。<strong>这正是 sidecar 契约已支持的用户可配参数。</strong></p>
+      </div>
+      <div class="ib">
+        <h4>🛠️ 解冻后修复方向</h4>
+        <ul>
+          <li>按 Target Block 统计有效 CHM 的<strong>双峰直方图</strong>（地面峰 vs 冠层峰）；</li>
+          <li>用双高斯混合模型（GMM）或分位数自动标定该区块的 <code>T_rescue</code> / <code>T_veto</code>，
+            实现零人工调参的跨园区自适应。<strong>必须先做 A/B 验证，不可直接上线。</strong></li>
+        </ul>
+      </div>
+      <div class="ib src">
+        <h4>📌 证据</h4>
+        <p><code>probe_dji_chm.py</code> 的阈值敏感性扫描（±1 m ≈ ±3.0 万 m²）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- D4 -->
+  <div class="dcard" data-c="p1 tauri">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p1">P1 · 网格相位与残树</span>
+        <span class="tag t-tauri">圈选区块可大幅缓解</span>
+        <span class="dtitle">D4　全图共用单一网格原点对齐率仅 46%，且连片空地内包住 558 个存活树心</span>
+      </div>
+      <span class="pill">局部 300 m 细扫对齐率 79.5%~97.3%（全局仅 ~46%）</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 根因与现象</h4>
+        <p><strong>① 相位不连续</strong>：株距（8.45 m）与方位角（0.67°）已完全锁定，
+          但不同种植区块跨过林道 / 水沟后，种树<strong>起点相位</strong>会重置。全图共用一个原点时，
+          对齐率仅 ~46%（等于随机基准）；局部 300 m 窗口细扫可达 79.5%~97.3%。</p>
+        <p><strong>② 大斑块内含孤立残树</strong>（本次重测）：<strong>558 个树心落在空地多边形内</strong>
+          （占全部 15,190 个树心的 3.7%），其中 490 个落在 <code>open_patch</code>。
+          不过方位已对：空地落在树心 ≤2 m 内的面积只有 <strong>2.1%</strong>，而全园自然基准是 14.5%
+          —— 空地确实避开了树，这 558 个是零星漏网。</p>
+      </div>
+      <div class="ib tauri">
+        <h4>🖥️ 桌面端过渡方案</h4>
+        <p>用户按<strong>单个 Target Block</strong> 圈选检测时，范围通常只有 200~400 m，
+          <strong>天然消除跨区块相位跳变</strong>。且点「估算棵数」时可直接扣减多边形内的存活树心。</p>
+      </div>
+      <div class="ib">
+        <h4>🛠️ 解冻后修复方向</h4>
+        <ul>
+          <li>网格相位从"全图唯一"改为<strong>按 Target Block 或 300 m 局部窗口独立细扫</strong>；</li>
+          <li>对落入 <code>open_patch</code> 的孤立高置信树心做 <strong>半径 2.5 m 布尔挖孔</strong>
+            （Polygon Interior Ring），排坑模拟时避开残树。</li>
+        </ul>
+      </div>
+      <div class="ib src">
+        <h4>📌 证据（本次重跑 <code>probe_gaps_truth2.py</code>）</h4>
+        <p>树心 15,190 → 落在空地内 <strong>558 个</strong>（3.7%）；
+          距树心 ≤2 m 面积 6,774 m²（<strong>2.1%</strong>）、≤3 m 6.2%、≤5 m 34.9%。</p>
+        <p class="dim" style="color:var(--muted)">口径说明：更早曾用"274 个多边形内含树心（涉及 228,838 m²）"表述，
+          那是按<strong>多边形计数</strong>且"含 1 个即算"的严口径（对大连片块偏严）；本次改为按<strong>树心计数</strong>，
+          更可直接复核。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- D5 -->
+  <div class="dcard" data-c="p1 tauri">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p1">P1 · 边界掩膜敏感</span>
+        <span class="tag t-tauri">桌面端圈选后彻底消失</span>
+        <span class="dtitle">D5　自动「未开发林掩膜」对网格尺度与阈值极敏感</span>
+      </div>
+      <span class="pill">不同参数下影响需补种面积在 4% ~ 26% 间摇摆</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 根因与现象</h4>
+        <p><code>build_forest_mask.py</code> 靠 50 m / 100 m 网格统计树心密度与规律性。问题有三：</p>
+        <ul>
+          <li>林缘交界处有明显 <strong>50 m 网格台阶锯齿</strong>；</li>
+          <li>50 m 小网格（0.25 ha）低密度下有<strong>"小样本分母效应"</strong>
+            —— 碰巧一对树间距 8 m 就能得到 25%~50% 的规律性得分；</li>
+          <li>极易把<strong>刚推平清芭的待种地</strong>（树心密度 0）与原始野林混淆
+            —— 这正是 10-16 绿度闸门要修的那个坑。</li>
+        </ul>
+        <p>另外 <code>output/forest-mask-争议区.geojson</code> 里还有 <strong>16 块 / 4.08 ha
+          "真·模糊地带"</strong>，多特征指纹比对结果不干净（密度像森林、CHM 像种植区）。</p>
+      </div>
+      <div class="ib tauri">
+        <h4>🖥️ 桌面端直接根治</h4>
+        <p><strong>这项缺陷在桌面端上线后基本消失</strong>：Step 2 让用户沿目标区块的林道画框，
+          框外原始森林根本不进管线，不再需要自动猜边界。</p>
+        <p>届时 <code>build_forest_mask.py</code> <strong>降级为"无 ROI 时的批处理兜底工具"</strong>。</p>
+      </div>
+      <div class="ib">
+        <h4>🛠️ 解冻后修复方向</h4>
+        <ul>
+          <li>桌面端管线用用户绘制的 <code>roi</code> 替代 <code>forest-mask</code>；</li>
+          <li>保留掩膜工具仅作命令行全图模式的参考；</li>
+          <li>若要继续自动判断，需引入<strong>标注验证集</strong>（当前 0 个标注样本，
+            <code>active_learning.py</code> 已实现但从未运行）。</li>
+        </ul>
+      </div>
+      <div class="ib src">
+        <h4>📌 证据</h4>
+        <p>掩膜多参数对比实测区间 <strong>4%~26%</strong>；争议区 16 块 / 4.08 ha。
+          另有约 <strong>9,155 m²</strong> 落在 <code>CHM_P90&gt;13</code> 的疑似 DSM 伪影区，
+          <strong>正确性不可验证</strong>。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- D6 -->
+  <div class="dcard" data-c="p2 tauri">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p2">P2 · 语义噪声</span>
+        <span class="tag t-tauri">桌面端默认不显示，无感</span>
+        <span class="dtitle">D6　建筑门槛下调至 25 m² 后，部分「加宽硬化路口」被标为办公区</span>
+      </div>
+      <span class="pill">对需补种面积影响 0 m²，仅不可种植子类间语义混叠</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 根因与现象</h4>
+        <p>Stage 14 为抓出 25~400 m² 的水塘泵房与化肥棚，把亮白低饱和（<code>fill ≥ 0.30</code>）
+          的 <code>office</code> 面积门槛从 400 m² 降到 25 m²。副作用是部分局部加宽
+          （约 10×5 m）、长宽比不够细长的<strong>白色砂石路口</strong>通过了 <code>fill</code> 判据，
+          被归入 <code>office</code>（现 82 块 / 7,235 m²）。</p>
+        <p><strong>已裁图目视确认</strong>：这些新"办公区"里确实有硬化路口，不是建筑。</p>
+      </div>
+      <div class="ib tauri">
+        <h4>🖥️ 桌面端过渡方案</h4>
+        <p>业务上完全无害：<code>road</code> 与 <code>office</code> 同属"不可种植"背景层，
+          桌面端默认只勾选「可种植（连片空地 / 株位空缺）」。
+          也可把 <code>office</code> 的前端标签显示为更准确的<strong>「建筑与硬化设施」</strong>。</p>
+      </div>
+      <div class="ib">
+        <h4>🛠️ 解冻后修复方向</h4>
+        <ul>
+          <li>加一条拓扑 + 高度规则：25~150 m² 的 <code>office</code> 若与 <code>road</code> 相接
+            （Touches / Intersects）且内部 <code>CHM_P90 &lt; 0.8 m</code>（无房顶高度），
+            则并回 <code>road</code>；</li>
+          <li>或新增独立的 <code>hard_surface</code>（硬化地面）类别，语义更干净。</li>
+        </ul>
+      </div>
+      <div class="ib src">
+        <h4>📌 证据</h4>
+        <p>office 检出量 4 块 / 2,597 m² → 82 块 / 7,235 m²（修复收益 +4,638 m² 正确剔除）；
+          新检出中 93.9% 落在"亮白低饱和"掩膜内（标签自洽）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- D7 -->
+  <div class="dcard" data-c="p2">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p2">P2 · 工程与性能债</span>
+        <span class="dtitle">D7　单进程跑批 1,048 秒、DSM 垂直尖峰伪影、遗留硬编码与退役模块</span>
+      </div>
+      <span class="pill">全量 528 瓦片 / 1,048.2 秒（串行）· 矢量化损耗 5.2%</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 逐项清单</h4>
+        <ul>
+          <li><strong>单进程串行</strong>：528 瓦片循环处理，本机 1,048.2 秒、公司机约 1,973 秒。
+            瓦片之间完全独立，<strong>多进程是"12 分钟目标"唯一现实路径</strong>（4 核可望 3~4×）；</li>
+          <li><strong>DSM 垂直尖峰伪影</strong>：15 个<strong>健康油棕</strong>区块 CHM_P90 达
+            <strong>14.08~29.99 m</strong>（密度 72~163 株/ha、规律性最高 68% → 不可能是野生林）。
+            结论是"伪影叠在真树上"，因此漏检上限仅 <strong>6,420 m²</strong>，
+            但<strong>也意味着 CHM 不能用于精细高度分层</strong>；</li>
+          <li><strong>概览图只支持 4 类</strong>：<code>visualize_full.py</code> 的 <code>CLASS_ORDER</code>
+            缺 road/water/office/undeveloped，与 8 类交付包不一致；</li>
+          <li><strong>硬编码机器路径</strong>：<code>build_forest_mask.py</code> 的
+            <code>--tree-info/--ortho</code> 默认 <code>D:\WGR\...</code>；
+            <code>active_learning.py</code> 的 <code>IMG_DEFAULT = D:/WGR/WGR17.tif</code>
+            → <strong>换机器直接报错</strong>；</li>
+          <li><strong>死参数</strong>：<code>--unplantable-overlap</code> 已失效（仅保留兼容），
+            契约与 CLI 里仍暴露，容易误导；</li>
+          <li><strong>退役模块未标注</strong>：有 CHM/segment 时草地回检整链自动跳过
+            （属合理降级设计），但 10-13/14 那套判据实际已"退役"，文档需写清，
+            避免后人误以为它在起作用。</li>
+        </ul>
+      </div>
+      <div class="ib tauri">
+        <h4>🖥️ 桌面端协同优化</h4>
+        <p>① 先用用户圈的 Target Block 过滤瓦片列表（跳过圈外瓦片，耗时按面积近似线性下降）；
+          ② 通过 Tauri 传参彻底消灭 <code>D:\WGR</code> 硬编码路径（sidecar 契约已全部走参数）。</p>
+      </div>
+      <div class="ib">
+        <h4>🛠️ 解冻后修复方向</h4>
+        <ul>
+          <li><code>process_image.py</code> 瓦片循环改 <code>ProcessPoolExecutor</code> 多进程；</li>
+          <li><code>build_chm.py</code> 对 &gt;15 m 异常高程做邻域中值截断；</li>
+          <li><code>segment.tif</code> 缺 CRS 时从同目录正射影像继承 + 校验 + 报错；</li>
+          <li>清理死参数、补全概览图 8 类、把硬编码路径改为可移植探测
+            （docgen 已做过同样的可移植改造，可照抄）。</li>
+        </ul>
+      </div>
+      <div class="ib src">
+        <h4>📌 证据</h4>
+        <p>跑批日志（10-17 全量）；50 m 区块 CHM_P90 统计表（<code>2026-10-16.md</code>）；
+          矢量化 421,363 → 399,344 m²（5.2%）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- F1 -->
+  <div class="dcard" data-c="fixed">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-fx">✅ Stage 14 已修复</span>
+        <span class="dtitle">F1　种植网格方位角 60° 旋转对称「角度别名」导致跨机器漂移</span>
+      </div>
+      <span class="pill">21.2063°（错误） → 0.6656°（与公司机 0.7° 对齐）</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔧 修复与验证</h4>
+        <p>把 <code>global_consensus</code> 里的算术中位数换成
+          <strong>6 倍角圆统计量（6θ Circular Mean）</strong>，并剔除偏离主方向 &gt;15° 的对偶轴离群块
+          （实测 7 块里有 1 块是 90°）。彻底消除 3°/61°/1°/179° 等价分支折返与
+          <strong>0°/60° 边界跳变</strong>（真值恰好卡在边界上，直接用 <code>angle % 60</code>
+          取中位数会算出 30° 这种离谱值）。</p>
+        <p>用 <code>tree_info</code> 树心在 300 m 窗口做「方位 0.5° × 相位 8×8」细扫独立定标，
+          真值 <strong>59.0°（≡ −1.0°）</strong>，对齐率 79~97%（随机基准 45.8%）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- F2 -->
+  <div class="dcard" data-c="fixed">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-fx">✅ Stage 14 已修复</span>
+        <span class="dtitle">F2　浑浊 / 藻类水塘漏检 92%（水面 CHM 置 NaN 后掉进需补种）</span>
+      </div>
+      <span class="pill">水体覆盖 7.9%（605 m²）→ 98.0%（21 块 / 9,711 m²）</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔧 修复与验证</h4>
+        <p>机制是"漏斗"：<code>build_chm</code> 把水面置为 NaN →
+          <code>fuse_canopy</code> 里 <code>canopy &amp;= isfinite(chm)</code> 让水面<strong>必然</strong>被判非树冠；
+          而 RGB 蓝度规则（<code>B≥G&gt;R</code>）只覆盖语义水体的 <strong>7.9%</strong>
+          —— 富含藻类/泥沙的灰绿色水塘天然不满足。</p>
+        <p>修法：<code>detect_water</code> 并入 <code>seg == water</code> 作为第三条证据
+          （同过 30 m² 门槛），新参数 <code>water_use_segment</code>（CLI <code>--no-water-segment</code> 可回退）。
+          已裁图目视确认那 3 块 1,378~3,163 m² 都是<strong>真水塘</strong>
+          （#2 旁有道路与泵房、#3 是绿色浑浊水塘）。</p>
+        <p><strong>本次独立复核</strong>：落在需补种区的 DJI 水体从 5,691 m² 降到
+          <strong>103 m²</strong>。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- F3 -->
+  <div class="dcard" data-c="fixed">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-fx">✅ Stage 14 已修复</span>
+        <span class="dtitle">F3　25~400 m² 面状亮白建筑（水塘旁泵房 / 化肥棚）判据缝隙</span>
+      </div>
+      <span class="pill">office 检出 4 块 / 2,597 m² → 82 块 / 7,235 m²</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔧 修复与验证</h4>
+        <p><code>bright</code> 掩膜按 <code>fill ≥ 0.30</code> 分给 office，但 office 还要求面积 ≥400 m²，
+          于是"面状但不够大"（12~400 m²）的亮白地物既不是 road 也不是 office → 漏成需补种。
+          门槛下调到 <strong>25 m²</strong> 后捕获了泵房、化肥棚与硬化堆场，
+          正确剔除 <strong>4,638 m²</strong> 的误报补种面积。</p>
+        <p>副作用见 <a href="#list" style="color:#7dd3fc">D6</a>（部分硬化路口被标为 office，对需补种面积零影响）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- F4 -->
+  <div class="dcard" data-c="fixed">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-fx">✅ Stage 14 已修复</span>
+        <span class="dtitle">F4　「需补种」口径混入「林间空隙 / 不确定」+ 桌面端 sidecar 契约不一致</span>
+      </div>
+      <span class="pill">确定需补种锁定 702 块 / 309,143 m²（13.49%）</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔧 修复与验证</h4>
+        <p><strong>① 口径</strong>：<code>alley_gap</code> 的语义本就是"正常行间缝隙、无需补种"，
+          <code>uncertain</code> 是"证据不足、需人工核实"，但旧口径把 4 类空地一股脑加总当 headline
+          —— 实测 <strong>52,534 m²（14.0%）</strong>与语义自相矛盾。已拆三档：
+          确定需补种（连片空地 + 株位空缺）/ 待复核（不确定）/ 不计入（林间空隙），
+          旧字段保留兼容。</p>
+        <p><strong>② sidecar 对齐</strong>：<code>run_pipeline</code> 调 <code>process_tile</code> 时
+          <strong>没传 elevation / elev_params</strong> → 桌面端一直在跑纯 RGB 版本；
+          <code>class_totals</code> 只初始化 4 类 → road/water/office 计数被静默丢弃。均已修，
+          契约测试保持 <strong>95/95</strong>。</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<h2 class="sec">🎯 解冻后的修复优先级（按性价比）</h2>
+<div class="infobox">
+  <table>
+    <thead><tr><th>序</th><th>动作</th><th>成本</th><th>收益</th><th>风险</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>ROI 圈选裁剪（R-P0-11）—— 同时服务桌面端需求与算法</td>
+        <td>中</td><td>绕开掩膜敏感 + 跑批提速</td><td>低（与 <code>--forest-mask</code> 同构）</td></tr>
+      <tr><td>2</td><td>补种点位生成（R-P1-7）—— 网格排坑 + 退让</td>
+        <td>中</td><td>给出可放样 GPS 点位；PRD Q5 长期悬空项</td>
+        <td>低（复用 <code>GridModel</code>）</td></tr>
+      <tr><td>3</td><td>多进程跑批（4~8 核）</td>
+        <td>低</td><td>1,048 s → 约 3 分钟内</td><td>低（瓦片独立）</td></tr>
+      <tr><td>4</td><td>清理工程债：死参数 / 硬编码路径 / 概览图 8 类 / 退役模块标注</td>
+        <td>低</td><td>换机器可用；文档不失真</td><td>极低</td></tr>
+      <tr><td>5</td><td>残树挖孔（open_patch 内 2.5 m 半径）+ 局域网格相位</td>
+        <td>中</td><td>提升排坑精度</td><td>低</td></tr>
+      <tr><td>6</td><td>CHM 自适应阈值（GMM 双峰）</td>
+        <td>中</td><td>跨园区泛化</td><td><strong>中（须 A/B；5 个真值点不足以定标）</strong></td></tr>
+      <tr><td>7</td><td>训练本地轻量分割头（伪标签）</td>
+        <td><strong>高</strong></td><td>摆脱 <code>segment.tif</code> 依赖</td>
+        <td>中（需算力与验证集）</td></tr>
+      <tr><td>8</td><td>「低矮植被 / 幼树」类别</td>
+        <td><strong>高</strong></td><td>解决最大产品级模糊带</td>
+        <td><strong>高（单期影像做不到，需多时相）</strong></td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:.8rem"><strong>先做 1~4 项</strong>：成本低、直接服务桌面端、且不改变已有交付数字的可复现性。
+    第 6~8 项涉及阈值重新标定与模型训练，<strong>必须等有标注验证集之后再做</strong>
+    （当前全部验证证据 = 5 个真值点 + 目视抽查 + DJI 交叉核对）。</p>
+</div>
+
+<footer>
+  Forest-Gap-Detection · Stage 14 算法规格冻结与 Tauri 桌面端过渡台账<br>
+  所有量级均为真机探针实测 · 相关文档：<code>算法缺陷与改进清单.md</code> ·
+  <code>桌面端交互需求与实现映射.md</code> · <code>推理服务契约.md</code>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var cur = 'all';
+  var btns = document.querySelectorAll('.fbtn');
+  var cards = document.querySelectorAll('.dcard');
+  var q = document.getElementById('q');
+
+  function apply() {
+    var kw = (q.value || '').toLowerCase().trim();
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      var cats = (c.getAttribute('data-c') || '').split(/\s+/);
+      var okCat = (cur === 'all') || cats.indexOf(cur) >= 0;
+      var okKw = !kw || (c.textContent || '').toLowerCase().indexOf(kw) >= 0;
+      c.style.display = (okCat && okKw) ? 'block' : 'none';
+    }
+  }
+
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].addEventListener('click', function () {
+      for (var j = 0; j < btns.length; j++) btns[j].classList.remove('active');
+      this.classList.add('active');
+      cur = this.getAttribute('data-f');
+      apply();
+    });
+  }
+  q.addEventListener('input', apply);
+})();
+</script>
+</body>
+</html>
