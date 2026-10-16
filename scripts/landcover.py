@@ -83,7 +83,12 @@ class LandcoverParams:
     #                                                    → 全部 ≥ 0.30
     road_fill_max: float = 0.30     # fill 低于此值 → 线状 → 道路
     road_min_area_sqm: float = 12.0  # 面积过小的亮斑视为噪声
-    office_min_area_sqm: float = 400.0  # office 最小面积（20×20 m 级）
+    # ⚠️ office 最小面积：2026-10-16 评审发现原来卡 400 m² 有**判据缝隙** ——
+    #    「fill≥0.30（面状）但 12~400 m²」的亮白地物两个类都不收，会漏成需补种。
+    #    实测该缝隙 2,925 m² / 107 块（最大仅 67 m²）；目视实例：水塘旁的**泵房**
+    #    （约 80 m² 白屋顶）。油棕园里的水泵房 / 化肥棚 / 砂石堆场普遍只有
+    #    20~150 m²，极少有 400 m² 以上的大办公楼 → 门槛下调到 25 m²。
+    office_min_area_sqm: float = 25.0   # office 最小面积（泵房/棚屋量级）
     office_fill_min: float = 0.30   # fill 高于此值且面积达标 → 面状 → office
 
     # --- 水体 ---
@@ -97,6 +102,14 @@ class LandcoverParams:
     water_dark_exg: float = 15.0    # 深水的 ExG 上限
     water_texture_max: float = 6.0  # 水面纹理上限（实测白路纹理 0.7~8.0，水面更平滑）
     water_min_area_sqm: float = 30.0  # 水体连通域最小面积（水体是成片地物，不是散点）
+    # --- 语义分割水体证据（2026-10-17 新增，修正 92% 漏检）---
+    # 实测：DJI 语义分割标注的 7,625 m² 水体里，**只有 7.9% 满足 B≥G>R** ——
+    # 油棕园的蓄水塘常含藻类，呈灰绿/亮绿（L 中位 121.7、S 中位 0.20、ExG 中位 12），
+    # 恰好落在上面两条 RGB 规则的空隙里。而 build_chm 又把水面置成 NaN，
+    # fuse_canopy 里 `canopy &= isfinite(chm)`（无高度处不判树冠）让水面
+    # **必然**落进空地候选 → 实测 5,691 m² 真水塘被算成「需补种」。
+    # 故并入语义分割的水体掩码（再过同一最小面积门槛）。
+    water_use_segment: bool = True
 
     # --- 通用 ---
     min_blob_px: int = 200          # 连通域最小像素数，滤除孤立噪点
@@ -283,7 +296,7 @@ def detect_office(rgb: np.ndarray, valid: np.ndarray, px_m: float,
                   p: LandcoverParams | None = None,
                   feat: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
                   ) -> np.ndarray:
-    """办公生活区、堆料场等大面积硬化场地。
+    """办公生活区、堆料场、泵房等**面状**硬化场地（含小型构筑物）。
 
     与道路共用"浅色低饱和"掩膜，反过来取**面状**连通域：
     ``fill ≥ office_fill_min`` 且面积 ≥ ``office_min_area_sqm``。
@@ -293,6 +306,12 @@ def detect_office(rgb: np.ndarray, valid: np.ndarray, px_m: float,
         25×44 m，fill 0.548，597 m² → 办公区
     ⚠️ 全图白色地物共 64,689 m²，最大连通域是 16,056 m² 的路网，
     因此命中量天然不大——这与"园区以道路为主、办公区少"的预期一致。
+
+    ⚠️ 2026-10-17 修正：面积门槛从 400 m² 下调到 **25 m²**。原因是原门槛留下
+    一条**判据缝隙** ——「fill≥0.30（面状）但 12~400 m²」的亮白地物既不是
+    道路（fill 太高）也不是 office（面积不够），会原样漏成「需补种」。
+    实测该缝隙 2,925 m² / 107 块（最大 67 m²），目视实例是水塘旁的**泵房**。
+    油棕园里的水泵房 / 化肥棚 / 砂石堆场普遍 20~150 m²，极少到 400 m²。
     """
     p = p or LandcoverParams()
     # feat 由 detect_unplantable 预计算后传入（避免 roads/office/water 各算一遍）
@@ -331,18 +350,24 @@ def detect_office(rgb: np.ndarray, valid: np.ndarray, px_m: float,
 # 水体
 # ----------------------------------------------------------------------------
 def detect_water(rgb: np.ndarray, valid: np.ndarray, px_m: float,
-                 p: LandcoverParams | None = None) -> np.ndarray:
+                 p: LandcoverParams | None = None,
+                 seg: np.ndarray | None = None,
+                 seg_water_class: int = 5) -> np.ndarray:
     """河流 / 水塘。
 
     用户描述："河流颜色各异，不过看得出来是水"。因此不押注单一颜色，
-    用两条互补规则：
+    用三条互补规则：
 
     1. ``B ≥ G > R`` —— 水比陆地更偏蓝（实测命中 0.42%）
     2. 暗 + 低 ExG + 极低纹理 —— 深水会掉进"暗区"（3.51%），
        单靠亮度会同时抓到阴影，所以必须叠加"极平滑"这个纹理条件
        （水面纹理 std 远低于树冠与裸土）
+    3. **语义分割标注的水体**（``seg == seg_water_class``，2026-10-17 新增）——
+       前两条只覆盖 DJI 标注水体的 **7.9%**：油棕园的蓄水塘含藻类时呈
+       灰绿/亮绿（实测 L 中位 121.7 / S 0.20 / ExG 中位 12），
+       `B≥G>R` 对它天然不成立。第三条补上这个原理性盲区。
 
-    两条规则之后统一过**最小连通域面积**门槛。
+    三条规则之后统一过**最小连通域面积**门槛。
     实测必要性：裸用规则时命中处亮度仅 31~45、连通域最大 11 m²——
     那是密林阴影里的散点，不是水体；加上 30 m² 门槛后全部滤掉。
     """
@@ -361,6 +386,13 @@ def detect_water(rgb: np.ndarray, valid: np.ndarray, px_m: float,
         w2 = dark & (tex < p.water_texture_max)
 
     out = w1 | w2
+
+    # 第三条证据：语义分割水体（唯一能覆盖「含藻类灰绿色水塘」的判据）
+    if seg is not None and p.water_use_segment:
+        w3 = (seg == seg_water_class) & valid
+        if w3.any():
+            out = out | w3
+
     if not out.any():
         return out
 
@@ -594,19 +626,25 @@ def _grid_period_filter(opened: np.ndarray, raw: np.ndarray, rgb: np.ndarray,
 # 汇总
 # ----------------------------------------------------------------------------
 def detect_unplantable(rgb: np.ndarray, valid: np.ndarray, px_m: float,
-                       p: LandcoverParams | None = None
+                       p: LandcoverParams | None = None,
+                       seg: np.ndarray | None = None,
+                       seg_water_class: int = 5
                        ) -> dict[str, np.ndarray]:
     """三类不可种植地物掩膜汇总。
 
     返回 ``{"road": mask, "water": mask, "office": mask}``，均为 bool 数组。
     三者互不重叠：water 优先，然后 road，最后 office（按此优先级赋值），
     避免同一个亮斑同时被判成道路和办公区。
+
+    ``seg`` 为可选的 DJI 语义分割栅格（与 rgb 同形状），
+    其水体类别作为水体的第三条证据（见 ``detect_water``）。
     """
     p = p or LandcoverParams()
     shape = rgb.shape[:2]
     # 三个检测器共用同一组基础特征（亮度 / 饱和度 / ExG），只算一次
     feat = _features(rgb)
-    water = detect_water(rgb, valid, px_m, p)
+    water = detect_water(rgb, valid, px_m, p, seg=seg,
+                         seg_water_class=seg_water_class)
     road = detect_roads(rgb, valid, px_m, p, feat=feat)
     office = detect_office(rgb, valid, px_m, p, feat=feat)
 
@@ -696,6 +734,23 @@ def _selftest(verbose: bool = True) -> int:
     if verbose:
         print(f"  [{'OK ' if all(int(v.sum())==0 for v in m2.values()) else 'FAIL'}] "
               f"纯绿图上三类均为空")
+
+    # 语义分割水体证据（2026-10-17）：**绿色浑浊水塘**（含藻类）不满足 B≥G>R，
+    # 也不够暗 —— 纯 RGB 判据检不出，只有 seg 能救。这是实测 92% 漏检的主因。
+    turbid = np.dstack([np.full((H, W), 110, np.uint8),
+                        np.full((H, W), 140, np.uint8),
+                        np.full((H, W), 100, np.uint8)])
+    seg = np.zeros((H, W), np.uint8)
+    seg[420:520, 60:220] = 5                       # DJI 标注的水体
+    allv = np.ones((H, W), bool)
+    m_no = detect_unplantable(turbid, allv, px_m)
+    m_seg = detect_unplantable(turbid, allv, px_m, seg=seg)
+    check("绿色浑浊水塘：不用 seg 检不出", m_no["water"], False)
+    check("绿色浑浊水塘：用 seg 能检出", m_seg["water"], True)
+    m_off = detect_unplantable(turbid, allv, px_m,
+                               LandcoverParams(water_use_segment=False), seg=seg)
+    check("绿色浑浊水塘：water_use_segment=False 时退回旧行为",
+          m_off["water"], False)
 
     if verbose:
         print(f"自测结果：{'全部通过' if ok else '存在失败项'}")
