@@ -39,7 +39,7 @@ UTM49N = "EPSG:32649"   # 马来西亚砂拉越在 UTM 49N（中央经线 111°E
 # 类别顺序：需补种的在前，不可种植的在后
 CLASS_ORDER = [
     "vacant_slot", "alley_gap", "open_patch", "uncertain",
-    "road", "water", "office",
+    "road", "water", "office", "undeveloped",
 ]
 CLASS_LABEL_CN = {
     "vacant_slot": "株位空缺",
@@ -49,6 +49,7 @@ CLASS_LABEL_CN = {
     "road": "道路",
     "water": "水体",
     "office": "办公生活区",
+    "undeveloped": "非种植区",
 }
 
 # .prj 内容（ArcGIS 靠它识别坐标系，必须与几何真实 CRS 一致）

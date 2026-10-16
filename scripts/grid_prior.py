@@ -117,6 +117,14 @@ CLASS_ROAD = "road"                 # 园区道路 / 硬化路面
 CLASS_WATER = "water"               # 河流 / 水塘
 CLASS_OFFICE = "office"             # 办公生活区 / 堆料场等硬化场地
 
+# --- 非种植区（2026-10-16 用户指认新增）-------------------------------------
+# 用户核实：园区南部（原「油棕-南部」参考点所在处）是**尚未开发的天然林/次生林**，
+# 不属于油棕种植区。该处野生乔木排列随机、无 8.35 m 种植行距，林间自然林窗会被
+# 误判为「需补种空地」，虚增补种面积。
+# 由 `--forest-mask` 传入的掩膜多边形内的空地改判为此类，**不计入需补种**，
+# 但仍保留在输出里，便于在 ArcGIS 中单独成层复核。
+CLASS_UNDEVELOPED = "undeveloped"   # 非种植区（未开发林 / 非种植用途地块）
+
 CLASS_LABEL_CN = {
     CLASS_VACANT_SLOT: "株位空缺",
     CLASS_ALLEY_GAP: "林间空隙",
@@ -125,6 +133,7 @@ CLASS_LABEL_CN = {
     CLASS_ROAD: "道路",
     CLASS_WATER: "水体",
     CLASS_OFFICE: "办公生活区",
+    CLASS_UNDEVELOPED: "非种植区",
 }
 
 # 三个给出类别的"语义锚点"（用于 UI 提示与补种建议）
@@ -136,10 +145,11 @@ CLASS_SEMANTICS = {
     CLASS_ROAD: "园区道路或硬化路面，不可种植，无需补种",
     CLASS_WATER: "河流、水塘或积水，不可种植，无需补种",
     CLASS_OFFICE: "办公生活区、堆料场等硬化场地，不可种植，无需补种",
+    CLASS_UNDEVELOPED: "非油棕种植区（未开发林等），不纳入补种范围",
 }
 
 # 不可种植类别：统计"需补种面积"时必须剔除
-UNPLANTABLE_CLASSES = (CLASS_ROAD, CLASS_WATER, CLASS_OFFICE)
+UNPLANTABLE_CLASSES = (CLASS_ROAD, CLASS_WATER, CLASS_OFFICE, CLASS_UNDEVELOPED)
 
 # 估计方法标识（写进 JSON，便于回溯是哪条路线得出的网格）
 METHOD_POINT_LATTICE = "point_lattice"      # 树心点阵（主力）

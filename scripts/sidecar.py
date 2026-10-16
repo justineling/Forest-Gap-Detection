@@ -139,6 +139,7 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     "elevation_enabled": (bool, True),
     "elevation_core_chm": (float, 5.2),
     "elevation_veto_chm": (float, 1.2),
+    "forest_mask_path": (str, ""),
     "unplantable_overlap": (float, 0.5),
     # 草地回检：把「过于鲜绿且连片」的区域从树冠中剔除（修正草地被误判成油棕）
     "grass_recheck":  (bool,  True),
@@ -293,6 +294,8 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     args.no_elevation = not bool(values["elevation_enabled"])
     args.core_chm = values["elevation_core_chm"]
     args.veto_chm = values["elevation_veto_chm"]
+    # 非种植区掩膜（未开发林等）：落在其中的需补种空地改判为 undeveloped
+    args.forest_mask = values["forest_mask_path"]
     args.no_grass_recheck = not bool(values["grass_recheck"])
     args.no_grass_grid = not bool(values["grass_grid"])
     args.quiet = bool(values["quiet"])
@@ -347,6 +350,7 @@ def params_echo(args: SimpleNamespace) -> dict:
         "elevation_enabled": not args.no_elevation,
         "elevation_core_chm": args.core_chm,
         "elevation_veto_chm": args.veto_chm,
+        "forest_mask_path": args.forest_mask or None,
         "grass_recheck": not args.no_grass_recheck,
         "grass_grid": not args.no_grass_grid,
         "progress_every": args.progress_every,
@@ -467,6 +471,7 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         "elevation_enabled": not args.no_elevation,
         "elevation_core_chm": args.core_chm,
         "elevation_veto_chm": args.veto_chm,
+        "forest_mask_path": args.forest_mask or None,
         "no_grass_recheck": args.no_grass_recheck,
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,

@@ -108,6 +108,7 @@ from grid_prior import (  # noqa: E402
     CLASS_LABEL_CN, METHOD_PRIOR_FALLBACK, summarize_classes,
     check_density_consistency, DEFAULT_TARGET_DENSITY_PER_HA,
     summarize_unplantable, UNPLANTABLE_CLASSES, CLASS_SEMANTICS,
+    CLASS_UNDEVELOPED,
     DEFAULT_PRIOR_PITCH_M,
 )
 from landcover import (detect_unplantable, detect_grass,  # noqa: E402
@@ -924,6 +925,11 @@ def build_argparser() -> argparse.ArgumentParser:
                     help="高度救援阈值（米）：CHM ≥ 此值无条件判为树冠。本项目实测标定值 5.2，默认 %(default)s")
     ap.add_argument("--veto-chm", type=float, default=1.2,
                     help="高度否决阈值（米）：CHM < 此值无条件非树冠。本项目实测标定值 1.2，默认 %(default)s")
+    ap.add_argument("--forest-mask", default="",
+                    help="非种植区掩膜（GeoJSON 多边形，EPSG:4326）。落在其中的"
+                    "需补种空地会改判为 undeveloped 且不计入需补种。"
+                    "可用 scripts/build_forest_mask.py 自动生成后在 ArcGIS 里复核。"
+                    "留空则不启用")
     ap.add_argument("--quiet", action="store_true", help="精简日志")
     return ap
 
@@ -981,6 +987,7 @@ def main() -> int:
         "elevation_enabled": not args.no_elevation,
         "elevation_core_chm": args.core_chm,
         "elevation_veto_chm": args.veto_chm,
+        "forest_mask": args.forest_mask or "",
         "no_grass_recheck": args.no_grass_recheck,
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,
@@ -1141,6 +1148,21 @@ def main() -> int:
 
     ds.close()
 
+    # --- 非种植区掩膜（2026-10-16）-------------------------------------------
+    # 用户核实园区南部为未开发天然林/次生林，不属油棕种植区。该处林间自然林窗
+    # 会被误判为「需补种空地」。用掩膜改判为 undeveloped（不计入需补种）。
+    if getattr(args, "forest_mask", None):
+        all_features, area_total, n_msk, a_msk = _apply_forest_mask(
+            all_features, args.forest_mask, area_total)
+        # 改判后重算类别计数（比逐个迁移更不易出错）
+        class_totals = {c: 0 for c in CLASS_LABEL_CN}
+        for f in all_features:
+            k = f["properties"]["class"]
+            if k in class_totals:
+                class_totals[k] += 1
+        if n_msk:
+            log(f"  掩膜改判后，需补种面积 {area_total:,.0f} m²")
+
     # --- 合并输出 ---
     log("-" * 78)
     log("合并整幅结果…")
@@ -1196,6 +1218,88 @@ def _reload_from_disk(tiles_dir: Path, tiles: list[Tile], fp: str
             if k in counts:
                 counts[k] += v
     return feats, counts, area
+
+
+def _apply_forest_mask(features: list[dict], mask_path: str,
+                       area_total: float) -> tuple[list[dict], float, int, float]:
+    """把落在「非种植区掩膜」内的需补种空地改判为 `undeveloped`。
+
+    背景（2026-10-16 用户核实）
+    --------------------------
+    园区南部（原「油棕-南部」参考点所在处）是**尚未开发的天然林 / 次生林**，
+    不属于油棕种植区。该处野生乔木排列随机、没有 8.35 m 的种植行距，
+    林间自然林窗（低矮灌木、林隙）会被算法当作「油棕园里的空地」框出来，
+    虚增全园需补种面积。
+
+    做法
+    ----
+    掩膜是一组多边形（GeoJSON，EPSG:4326）。**只改判需补种的 4 类**，
+    道路 / 水体 / 办公区不受影响（它们本来就不计入需补种）。
+    改判后的要素**仍保留在输出里**，单独成层（`undeveloped`），
+    便于在 ArcGIS 中复核，但**不计入需补种面积**。
+
+    掩膜来源
+    --------
+      · 自动：`scripts/build_forest_mask.py`（基于 DJI 树心密度的区块判定）
+      · 手动：用户在 ArcGIS / QGIS 里沿未开发林边界手绘后导出 GeoJSON
+    ⚠️ 自动掩膜对阈值敏感（实测 4%~26% 区间），**建议人工复核后再定稿**。
+    """
+    import json as _json
+    from shapely.geometry import shape as _shape, Point
+    from shapely.strtree import STRtree
+
+    p = Path(mask_path)
+    if not p.exists():
+        log(f"⚠️ 非种植区掩膜不存在，已跳过：{p}")
+        return features, area_total, 0, 0.0
+
+    gj = _json.loads(p.read_text(encoding="utf-8"))
+    geoms = []
+    for f in gj.get("features", []):
+        try:
+            g = _shape(f["geometry"])
+            if not g.is_empty:
+                geoms.append(g)
+        except Exception:  # noqa: BLE001
+            continue
+    if not geoms:
+        log(f"⚠️ 非种植区掩膜无有效多边形，已跳过：{p}")
+        return features, area_total, 0, 0.0
+
+    tree = STRtree(geoms)
+    plant_cls = (CLASS_VACANT_SLOT, CLASS_ALLEY_GAP,
+                 CLASS_OPEN_PATCH, CLASS_UNCERTAIN)
+    n_masked = 0
+    a_masked = 0.0
+    for f in features:
+        pr = f["properties"]
+        if pr["class"] not in plant_cls:
+            continue
+        ring = f["geometry"]["coordinates"][0]
+        pt = Point(sum(c[0] for c in ring) / len(ring),
+                   sum(c[1] for c in ring) / len(ring))
+        hit = False
+        for g in tree.query(pt):
+            # shapely 2.x 返回索引，1.8 返回几何对象 —— 两种都兼容
+            geom = geoms[g] if isinstance(g, (int, np.integer)) else g
+            if geom.contains(pt):
+                hit = True
+                break
+        if hit:
+            pr["class"] = CLASS_UNDEVELOPED
+            pr["class_label"] = CLASS_LABEL_CN[CLASS_UNDEVELOPED]
+            pr["class_semantics"] = CLASS_SEMANTICS[CLASS_UNDEVELOPED]
+            pr["class_method"] = (
+                (pr.get("class_method", "") + "+forest_mask").lstrip("+"))
+            pr["class_reason"] = ("落在非种植区掩膜内（未开发林等），"
+                                  "不计入补种范围")
+            n_masked += 1
+            a_masked += float(pr.get("area_sqm", 0.0))
+
+    log(f"非种植区掩膜：{len(geoms)} 个多边形 ← {p.name}；"
+        f"改判 {n_masked} 块 / {a_masked:,.0f} m² 为「{CLASS_LABEL_CN[CLASS_UNDEVELOPED]}」"
+        f"（不计入需补种）")
+    return features, area_total - a_masked, n_masked, a_masked
 
 
 def _density_check_payload(grid, args) -> dict:
@@ -1272,6 +1376,7 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "segment_path": args.segment or None,
             "elevation_core_chm": args.core_chm,
             "elevation_veto_chm": args.veto_chm,
+            "forest_mask_path": args.forest_mask or None,
             "node_tol_ratio": args.node_tol_ratio,
             "elongate_ratio": args.elongate_ratio,
         },
