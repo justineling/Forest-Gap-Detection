@@ -70,7 +70,7 @@ padding:10px 14px;margin:10px 0;font-size:13.5px;color:#7a2418}
 
 <header>
   <h1>空地检测成果 · ArcGIS 导入指南</h1>
-  <div class="sub">专业版（面向已会使用 ArcGIS 的技术人员）&nbsp;·&nbsp;成果：1,655 个空地多边形，分 8 类&nbsp;·&nbsp;
+  <div class="sub">专业版（面向已会使用 ArcGIS 的技术人员）&nbsp;·&nbsp;成果：1,726 个地物多边形，分 8 类&nbsp;·&nbsp;
   影像：WGR17.tif（EPSG:4326，3.5 GB）&nbsp;·&nbsp;日期：2026-10-13</div>
 </header>
 
@@ -92,8 +92,8 @@ padding:10px 14px;margin:10px 0;font-size:13.5px;color:#7a2418}
 <div class="verdict v-yes">
 <div class="vico">✅</div>
 <div><b>几何自动画：一定能。</b>任选一个 <code>gaps-all-*</code> 文件导入，ArcGIS 即自动生成
-<b>1,655 个 Polygon 要素</b>（连片空地 474 + 不确定 461 + 株位空缺 277 + 林间空隙 225
-+ 道路 180 + 水体 8 + 办公生活区 4 + <b>非种植区 26</b>），
+<b>1,726 个 Polygon 要素</b>（连片空地 449 + 不确定 465 + 株位空缺 253 + 林间空隙 251
++ 道路 180 + 水体 21 + 办公生活区 82 + <b>非种植区 25</b>），
 无需手动画任何一个多边形。</div>
 </div>
 
@@ -313,7 +313,7 @@ ArcGIS 会自动执行 <b>on-the-fly 动态投影</b>，直接叠在一起——
   <rect x="18" y="36" width="12" height="10" fill="#a8763f"/>
   <path d="M18 36 L24 32 L30 36" fill="none" stroke="#a8763f" stroke-width="1.5"/>
   <text x="38" y="45" font-family="Cascadia Code,Consolas,monospace" font-size="12.5" font-weight="700" fill="#223">output/arcgis/</text>
-  <text x="460" y="45" font-size="11.5" fill="#5b6b5f">全部 13 个文件 · 1,655 个多边形</text>
+  <text x="460" y="45" font-size="11.5" fill="#5b6b5f">全部 13 个文件 · 1,726 个多边形</text>
 
   <text x="24" y="70" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#8a8a8a">├─</text>
   <text x="60" y="70" font-family="Cascadia Code,Consolas,monospace" font-size="12" fill="#1f5c8a" font-weight="600">gaps-all-utm49n-shp.zip</text>
@@ -431,7 +431,7 @@ Build Pyramids and Statistics</b>。只额外生成缩放级别的缓存、不�
 检测成果：1,048 个空地多边形（连片空地 380 / 不确定 318 / 株位空缺 180 / 林间空隙 170）<br>
 配套文档：《地物光谱特征实测报告》《地物光谱特征报告-小白版》《ArcGIS 导入指南-小白版》<br>
 本页面所有示意图均为手写内联 SVG，无任何外部资源引用，可单文件离线分发。
-<br>2026-10-15 更新：接入 DSM 高程 + DJI 语义分割双证据，空地由 1,442 增至 1,655（草地漏检修复）<br>2026-10-16 更新：新增第 8 类「非种植区」（undeveloped）—— 南部未开发林内的 35 块 / 50,589 m² 空地改判为该类，不计入需补种。需补种由 399,344 降至 <b>348,755 m²</b>（1,428 块）。掩膜文件：<span class="mono">forest-mask-50m.geojson</span><br><b>2026-10-16 二次修正（绿度闸门）</b>：用户目视发现西南角「已推平清芭、修好林道与排灌沟的待种空地」被误判为非种植区。根因是原判据只有「密度&lt;70 且 规律性&lt;25%」，而<b>推平的裸地同样是 0 棵树</b>（密度 8~23、规律性 0%），完美触发掩膜。实测指纹：健康油棕 ExG 65~70 / 未开发林 116 / 推平裸地 <b>−5~12</b>（裸地为负值）。新增「绿度闸门」（区块 ExG 中位 &lt; 60 判为推平裸地）后：非种植区 <b>35 块 / 50,589 m² → 26 块 / 23,159 m²</b>，需补种 <b>348,755 → 376,185 m²</b>（1,437 块），<b>释放 27,430 m² 待种空地</b>。掩膜文件：<span class="mono">forest-mask-50m-exg60.geojson</span>（⚠️ 不可用 <code>seg==tree</code> 替代判据：区块 (27,12) 语义分割判树 76% 但 ExG=−5）</footer>
+<br>2026-10-15 更新：接入 DSM 高程 + DJI 语义分割双证据，空地由 1,442 增至 1,655（草地漏检修复）<br>2026-10-16 更新：新增第 8 类「非种植区」（undeveloped）—— 南部未开发林内的 35 块 / 50,589 m² 空地改判为该类，不计入需补种。需补种由 399,344 降至 <b>348,755 m²</b>（1,428 块）。掩膜文件：<span class="mono">forest-mask-50m.geojson</span><br><b>2026-10-16 二次修正（绿度闸门）</b>：用户目视发现西南角「已推平清芭、修好林道与排灌沟的待种空地」被误判为非种植区。根因是原判据只有「密度&lt;70 且 规律性&lt;25%」，而<b>推平的裸地同样是 0 棵树</b>（密度 8~23、规律性 0%），完美触发掩膜。实测指纹：健康油棕 ExG 65~70 / 未开发林 116 / 推平裸地 <b>−5~12</b>（裸地为负值）。新增「绿度闸门」（区块 ExG 中位 &lt; 60 判为推平裸地）后：非种植区 <b>35 块 / 50,589 m² → 26 块 / 23,159 m²</b>，需补种 <b>348,755 → 376,185 m²</b>（1,437 块），<b>释放 27,430 m² 待种空地</b>。掩膜文件：<span class="mono">forest-mask-50m-exg60.geojson</span>（⚠️ 不可用 <code>seg==tree</code> 替代判据：区块 (27,12) 语义分割判树 76% 但 ExG=−5）<br><b>2026-10-17 更新（四项修复 + 口径拆分）</b>：① 网格方位角 21.2° → <b>0.67°</b>（修掉 60° 别名 bug，两台机器结果一致）；② 水体 605 → <b>9,711 m²</b>（并入语义分割水体证据，DJI 水塘覆盖率 7.9% → <b>98.0%</b>）；③ 办公生活区 4 → <b>82 块</b>（面积门槛 400 → 25 m²，泵房/棚屋量级）；④「需补种」拆三档 —— <b>确定需补种 702 块 / 309,143 m²</b>、待复核 465 块 / 40,593 m²、不计入（林间空隙）251 块 / 13,277 m²。交付包 <b>1,726 要素 / 8 类分层</b>。详见 <span class="mono">docs/03-算法教学/算法缺陷与改进清单.md</span></footer>
 
 </div>
 </body>

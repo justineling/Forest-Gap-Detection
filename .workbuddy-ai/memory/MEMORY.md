@@ -71,6 +71,49 @@
   `forest-mask-50m-exg60.geojson`、`wgr17-final-gaps.geojson`、`arcgis/`（8 类）。
 - 分析脚本在 `.workbuddy-ai/tmp/analyze/probe_*.py`（tmp 不入库）。
 
+---
+
+## ★ 2026-10-17 四项修复（家里电脑）
+
+完整记录见 `docs/03-算法教学/算法缺陷与改进清单.md` 的「★ 2026-10-17 修复记录」
+（含 A/B 表）。以下只记**长期有效的要点**：
+
+### 1. 网格方位角合成：必须按格点对称阶数折叠
+- 等边三角形格点有 **60° 旋转对称** → 方位角要按 **6θ（模 60°）** 做圆统计。
+  旧代码按 2θ（模 180°）→ 把 21.2° 当结果（真值 **59.0° ≡ −1.0°**）。
+- ⚠️ **禁止**"先 `angle % 60` 再取算术中位数"：真值卡在 0/60 边界时
+  （−1°→59°、+1°→1°）会算出 30°。
+- 还要剔除**对偶轴离群块**（90° ≡ 30° mod 60°，偏离主方向 30°）后再合成。
+- 验证法：`tree_info` 树心在 300 m 窗口做「方位 0.5° × 相位 8×8」细扫，
+  指标 = 树心落格点 3 m 内的比例（随机基准 45.8%，实测最优 79~97%）。
+  ⚠️ 全幅细扫不可行（1,500 m 跨度上 0.2° 就漂移 5 m）。
+
+### 2. 水体：CHM 置 NaN 会把水面推向"非树"
+- `build_chm` 把水面置 NaN，而 `fuse_canopy` 里 `canopy &= isfinite(chm)`
+  → 水面**必然**进空地候选；RGB 蓝度规则只覆盖 DJI 水体的 **7.9%**
+  （含藻类的绿水塘不满足 `B≥G>R`）。
+- 已并入 `seg==water` 作为第三条证据（参数 `water_use_segment`，
+  CLI `--no-water-segment` 可回退）。实测 DJI 水塘覆盖率 **7.9% → 98.0%**。
+
+### 3. 「需补种」必须三档报（否则虚胖 14%）
+- `grid_prior.PRIORITY_GROUPS` + `summarize_priority()`；
+  输出 `summary.by_priority` / `plantable_area_definite_sqm`。
+  确定需补种 = open_patch + vacant_slot；review = uncertain；not_needed = alley_gap。
+
+### 4. 桌面端必须与 CLI 走同一条路
+- `sidecar.run_pipeline` 调 `process_tile` 时**必须传 `elevation` / `elev_params`**
+  —— 2026-10-17 前没传，**桌面端跑的是纯 RGB 版本**（退化为草地回检）。
+- `class_totals` 要用 `{c: 0 for c in CLASS_LABEL_CN}` 全量初始化，
+  否则 `if k in class_totals` 会把 road/water/office 计数静默丢弃。
+
+### 5. 修复后的交付数字（2026-10-17，本机）
+- 交付包 **1,726 要素 / 8 类**；**确定需补种 702 块 / 309,143 m²**（占 13.49%）；
+  待复核（不确定）465 块 / 40,593 m²；不计入（林间空隙）251 块 / 13,277 m²；
+  不可种植：道路 180/34,357、水体 21/9,711、办公 82/7,235；非种植区 25/20,412。
+- 全量耗时（本机）**1,048.2 秒**；契约测试 95/95。
+- 遗留：`office` 门槛下调后"道路变宽处被标为办公区"的语义噪声
+  （要更干净需新增 `hard_surface` 类别）。
+
 ## 4. 红线与硬约定（违反会返工）
 - **Git**：绝不自动 commit，必须用户明确同意。提交前先 `git reset` 清空暂存区再按路径 `git add`
   （防 `git stash pop` 恢复的 staged 文件被误卷进提交）。核实远端真实状态用 `git ls-remote`。

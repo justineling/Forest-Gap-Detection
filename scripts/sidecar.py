@@ -133,6 +133,9 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     "survey_samples":   (int,   7),
     # 不可种植地物（2026-10-13 新增）
     "landcover_unplantable": (bool, True),
+    # 水体第三条证据：并入 DJI 语义分割的水体类别（2026-10-17 新增）。
+    # 修正「含藻类的灰绿色水塘」漏检 —— RGB 蓝度规则只覆盖 DJI 水体的 7.9%。
+    "water_use_segment": (bool, True),
     "target_density_per_ha": (float, 150.0),
     "chm_path": (str, ""),
     "segment_path": (str, ""),
@@ -156,6 +159,7 @@ _ARG_ALIASES = {
     "landcover_unplantable": "no_landcover",  # 语义相反：True → no_landcover=False
     "grass_recheck": "no_grass_recheck",      # 语义相反：True → no_grass_recheck=False
     "grass_grid": "no_grass_grid",            # 语义相反：True → no_grass_grid=False
+    "water_use_segment": "no_water_segment",  # 语义相反：True → no_water_segment=False
 }
 
 
@@ -285,6 +289,8 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     # 不可种植地物（语义取反：landcover_unplantable=True → no_landcover=False）
     args.no_landcover = not bool(values["landcover_unplantable"])
     args.unplantable_overlap = values["unplantable_overlap"]
+    # 水体第三条证据（语义取反：water_use_segment=True → no_water_segment=False）
+    args.no_water_segment = not bool(values["water_use_segment"])
     # 用户给定的设计密度（株/公顷），用于交叉校验网格估计
     args.target_density = values["target_density_per_ha"]
     # 海拔证据（CHM + DJI 语义分割）：草地/油棕在纯 RGB 上不可分，
@@ -344,6 +350,7 @@ def params_echo(args: SimpleNamespace) -> dict:
         "survey_samples": args.survey_samples,
         "landcover_unplantable": not args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
+        "water_use_segment": not args.no_water_segment,
         "target_density_per_ha": args.target_density,
         "chm_path": args.chm or None,
         "segment_path": args.segment or None,
@@ -433,7 +440,7 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
     import process_image as PI
     from detect import TARGET_CRS
     from grid_prior import (CLASS_VACANT_SLOT, CLASS_ALLEY_GAP,
-                            CLASS_OPEN_PATCH, CLASS_UNCERTAIN)
+                            CLASS_OPEN_PATCH, CLASS_UNCERTAIN, CLASS_LABEL_CN)
 
     stage = "open_image"
 
@@ -465,6 +472,7 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         "min_valid_ratio": args.min_valid_ratio,
         "no_landcover": args.no_landcover,
         "unplantable_overlap": args.unplantable_overlap,
+        "no_water_segment": args.no_water_segment,
         "target_density_per_ha": args.target_density,
         "chm_path": args.chm or None,
         "segment_path": args.segment or None,
@@ -565,12 +573,38 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                           "failed": 0, "valid": len(good)},
             }
 
+        # --- 海拔证据（CHM + DJI 语义分割，2026-10-17 接线）---------------------
+        # ⚠️ 原来这里**没有接海拔证据**：调用 PI.process_tile(...) 时没传
+        #    elevation / elev_params，于是**桌面端跑的是纯 RGB 版本**
+        #    （退化为草地回检兜底），与 CLI 结果不一致 —— 同一份影像两条路
+        #    会给出不同的补种面积。现按 process_image.main() 的同一逻辑接线。
+        #    未提供 chm/segment 时 elevation 仍为 None，行为与旧版一致（向后兼容）。
+        elev_params = PI.ElevationParams(
+            enabled=not args.no_elevation,
+            core_chm=args.core_chm,
+            veto_chm=args.veto_chm,
+        )
+        elevation = None
+        if elev_params.enabled:
+            chm_p = args.chm or None
+            seg_p = args.segment or None
+            if chm_p or seg_p:
+                elevation = PI.ElevationEvidence(chm_p, seg_p,
+                                                ortho_transform=ds.transform)
+                if not elevation.available:
+                    elevation = None
+                else:
+                    emit("log", level="info", stage="elevation",
+                         message=f"海拔证据：CHM={'有' if elevation.has_chm() else '无'}  "
+                                 f"语义分割={'有' if elevation.has_segment() else '无'}  "
+                                 f"救援阈值 {elev_params.core_chm:g} m / "
+                                 f"否决阈值 {elev_params.veto_chm:g} m")
+
         # --- 逐瓦片处理 ---
         stage = "tile_processing"
         done = skipped = failed = 0
         all_features: list[dict] = []
-        class_totals = {CLASS_VACANT_SLOT: 0, CLASS_ALLEY_GAP: 0,
-                        CLASS_OPEN_PATCH: 0, CLASS_UNCERTAIN: 0}
+        class_totals = {c: 0 for c in CLASS_LABEL_CN}
         area_total = 0.0
         t_proc = time.time()
 
@@ -612,7 +646,9 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
 
             if not args.merge_only:
                 try:
-                    res = PI.process_tile(ds, tile, px_m, grid, args, tiles_dir)
+                    res = PI.process_tile(ds, tile, px_m, grid, args, tiles_dir,
+                                          elevation=elevation,
+                                          elev_params=elev_params)
                     res["fingerprint"] = fp
                     res["generated_at"] = _now()
                     PI.atomic_write_json(tf, res)

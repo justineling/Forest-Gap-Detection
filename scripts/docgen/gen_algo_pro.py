@@ -345,6 +345,43 @@ weecology/deepforest-tree 权重，123 MB）。</p>
 门槛改为「0.4 × 单个区块面积」。</p>
 </div>
 
+<div class="tlitem win">
+<div class="tldate">阶段 14 · 最新</div>
+<div class="tlhead">评审式体检后的四项修复 —— 方位角别名 / 水体漏斗 / 亮白缝隙 / 口径拆分</div>
+<p>对全流程做了一次"体检式"评审（14 个量化探针 + 目视裁图），发现并修掉四处问题：</p>
+<ol>
+<li><b>网格方位角的「60° 别名」bug（最隐蔽）</b>：等边三角形种植的格点具有
+<b>60° 旋转对称</b>，所以 0.7° / 59° / 61° / 179° 描述的是<b>同一个格子</b>，
+而 90° 是它的对偶轴。旧代码按"模 180°（2θ）"折叠求圆均值，把 7 个采样块的
+<code>[3, 61, 1, 61, 90, 179, 179]</code> 合成成 <b>21.2°</b>；
+用树心在 300 m 窗口做「方位 0.5° × 相位 8×8」细扫，真值是
+<b>59.0°（≡ −1.0°）</b>，对齐率 79~97%（随机基准 45.8%）。
+→ 改用 <b>6θ（模 60°）圆统计 + 剔除对偶轴离群块</b>，合成值 <b>0.67°</b>，
+两台机器结果一致（此前要素数与总面积逐位一致，但类别归属抖动 ±1~6%）。</li>
+<li><b>水体「漏斗」</b>：<code>build_chm</code> 把水面置成 NaN，
+而 <code>fuse_canopy</code> 里"无高度处不判树冠"→ 水面<b>必然</b>落进空地候选；
+唯一能拦下它的是 RGB 蓝度规则 <code>B≥G&gt;R</code>，而油棕园的蓄水塘含藻类时
+呈灰绿/亮绿（L 中位 121.7、S 0.20、ExG 中位 12），<b>只有 7.9% 满足蓝度条件</b>。
+→ 实测 <b>5,691 m² 真水塘被算成「需补种」</b>；并入 <code>seg==water</code>
+作为第三条证据后拦截。</li>
+<li><b>亮白地物的判据缝隙</b>：道路判据是「亮白 + fill &lt; 0.30（线状）」，
+办公区是「亮白 + fill ≥ 0.30 且 <b>面积 ≥ 400 m²</b>」——
+于是「面状但 12~400 m²」的亮白地物两个类都不收，会漏成需补种
+（实测缝隙 2,925 m² / 107 块；目视实例：水塘旁的泵房）。
+→ 面积门槛下调到 <b>25 m²</b>（泵房/棚屋量级）。</li>
+<li><b>「需补种」口径虚胖</b>：<code>alley_gap</code> 的语义是「正常行间缝隙、
+<b>无需补种</b>」、<code>uncertain</code> 是「证据不足、需人工核实」，
+却都被加进需补种总面积（合计 <b>52,534 m² = headline 的 14.0%</b>）。
+→ 拆成三档输出：<b>确定需补种</b>（连片空地 + 株位空缺）/
+<b>待复核</b>（不确定）/ <b>不计入</b>（林间空隙）。</li>
+</ol>
+<div class="verdict v-yes"><div class="vico">🎯</div><div>
+顺手修掉一处<b>桌面端与 CLI 不一致</b>：<code>sidecar.py</code> 调用
+<code>process_tile</code> 时没传海拔证据，导致<b>桌面端跑的是纯 RGB 版本</b>
+（退化为草地回检兜底），同一份影像两条路会给出不同的补种面积。
+</div></div>
+</div>
+
 </div>
 
 <h2>三、实测数据速查</h2>
@@ -391,23 +428,28 @@ weecology/deepforest-tree 权重，123 MB）。</p>
 <table>
 <thead><tr><th>类别</th><th class="num">块数</th><th class="num">面积 m²</th><th>是否计入需补种</th></tr></thead>
 <tbody>
-<tr><td><span class="sw" style="background:#e74c3c"></span>株位空缺</td><td class="num">277</td><td class="num">17,049.8</td><td>✅ 计入</td></tr>
-<tr><td><span class="sw" style="background:#f1c40f"></span>林间空隙</td><td class="num">225</td><td class="num">12,444.7</td><td>✅ 计入</td></tr>
-<tr><td><span class="sw" style="background:#e67e22"></span>连片空地</td><td class="num">474</td><td class="num">306,602.0</td><td>✅ 计入</td></tr>
-<tr><td><span class="sw" style="background:#95a5a6"></span>不确定</td><td class="num">461</td><td class="num">40,089.0</td><td>✅ 计入</td></tr>
+<tr><td><span class="sw" style="background:#e74c3c"></span>株位空缺</td><td class="num">253</td><td class="num">16,042.6</td><td>✅ 确定需补种</td></tr>
+<tr><td><span class="sw" style="background:#f1c40f"></span>林间空隙</td><td class="num">251</td><td class="num">13,277.1</td><td>❌ 不计入（正常行间缝隙）</td></tr>
+<tr><td><span class="sw" style="background:#e67e22"></span>连片空地</td><td class="num">449</td><td class="num">293,100.3</td><td>✅ 确定需补种</td></tr>
+<tr><td><span class="sw" style="background:#95a5a6"></span>不确定</td><td class="num">465</td><td class="num">40,593.5</td><td>⚠️ 待复核（需人工核实）</td></tr>
 <tr><td><span class="sw" style="background:#8a8a8a"></span>道路</td><td class="num">180</td><td class="num">34,357.3</td><td>❌ 不可种植</td></tr>
-<tr><td><span class="sw" style="background:#4a90d9"></span>水体</td><td class="num">8</td><td class="num">605.4</td><td>❌ 不可种植</td></tr>
-<tr><td><span class="sw" style="background:#c9a06a"></span>办公生活区</td><td class="num">4</td><td class="num">2,597.2</td><td>❌ 不可种植</td></tr>
-<tr><td><span class="sw" style="background:#9b59b6"></span>非种植区（未开发林）</td><td class="num">26</td><td class="num">23,158.8</td><td>❌ 不可种植</td></tr>
-<tr><td colspan="2"><b>合计 1,655 块</b></td><td class="num"><b>436,904</b></td>
-<td>需补种 <b>376,185 m²</b>（占 16.42%）</td></tr>
+<tr><td><span class="sw" style="background:#4a90d9"></span>水体</td><td class="num">21</td><td class="num">9,710.8</td><td>❌ 不可种植</td></tr>
+<tr><td><span class="sw" style="background:#c9a06a"></span>办公生活区</td><td class="num">82</td><td class="num">7,234.8</td><td>❌ 不可种植</td></tr>
+<tr><td><span class="sw" style="background:#9b59b6"></span>非种植区（未开发林）</td><td class="num">25</td><td class="num">20,412.4</td><td>❌ 不计入</td></tr>
+<tr><td colspan="2"><b>合计 1,726 块</b></td><td class="num"><b>434,729</b></td>
+<td><b>确定需补种 702 块 / 309,143 m²</b>（占 13.49%）</td></tr>
 </tbody></table>
-<div class="q"><b>与纯 RGB 版本的对比</b>：需补种 309,792 → <b>376,185 m²</b>（+21.4%）。
+<div class="q"><b>与纯 RGB 版本的对比</b>：需补种 309,792 → <b>363,014 m²</b>（+17.2%，旧口径）。
 增幅主要来自此前被 ExG 误判为树冠的草地 ——
 新增 1036 块中 84.1% 落于 DJI 的 other 类，面积加权一致性 95%。
-<br><b>绿度闸门修正（阶段 13）</b>：非种植区 35 块 / 50,589 m² →
-<b>26 块 / 23,158.8 m²</b>，把西南角推平待种裸地 <b>27,430 m²</b>
-释放回「连片空地」。</div>
+<br><b>阶段 13 绿度闸门</b>：非种植区 35 块 / 50,589 m² →
+<b>25 块 / 20,412.4 m²</b>，把西南角推平待种裸地约 27,000 m²
+释放回「连片空地」。
+<br><b>阶段 14 四项修复</b>：网格方位角 21.2° → <b>0.67°</b>（两台机器结果一致）；
+水体 605 → <b>9,711 m²</b>（DJI 水体覆盖率 7.9% → <b>98.0%</b>）；
+办公生活区 4 → <b>82 块</b>（门槛 400 → 25 m²）；
+「需补种」拆三档 —— <b>确定需补种 702 块 / 309,143 m²</b>、
+待复核 465 块 / 40,593 m²、不计入（林间空隙）251 块 / 13,277 m²。</div>
 
 <h2>四、已知局限</h2>
 <ol>
@@ -417,26 +459,35 @@ weecology/deepforest-tree 权重，123 MB）。</p>
 （只有 orange/litchi/banana/plum/persimmon/wogan），仍会漏检约 20% 的树。
 这是必须叠加 CHM 的原因。</li>
 <li><b>DSM 不可得时</b>：退化为纯 RGB + 草地回检，草地漏检问题会重新出现。</li>
-<li><b>水体类 CHM 异常</b>：水面立体匹配失效会产生 ±20 m 假高程，
-已在算 DTM 前 mask 掉，但分割误标的水体边缘仍可能残留。</li>
-<li><b>办公区若与路网直接相连</b>会合成一个连通域，被整体判为道路——
-仍属"不可种植"，不影响补种统计，只是少一个独立类别。</li>
+<li><b>水体依赖语义分割</b>：水面立体匹配失效会产生 ±20 m 假高程，已在算 DTM 前
+mask 掉 —— 但这同时让水面"没有高度"→ <b>必然</b>落进空地候选，只能靠颜色/语义规则拦。
+阶段 14 并入 <code>seg==water</code> 后已能拦住含藻类的绿水塘
+（RGB 蓝度规则只覆盖 7.9%），但<b>没有语义分割时仍会漏</b>。</li>
+<li><b>办公区与路网相连</b>会合成一个连通域被整体判为道路；反过来，
+阶段 14 把办公区面积门槛降到 25 m² 后，<b>道路变宽处也可能被标成办公区</b>
+（目视实测：白色路面局部加宽约 10×5 m）。两者都属"不可种植"，
+不影响补种口径，但图层语义有噪声（可考虑新增 <code>hard_surface</code> 类别）。</li>
+<li><b>融合阈值仍只有 5 个真值点标定</b>：CHM 阈值每动 1 m，约 3.0 万 m² 在
+"树/非树"之间翻转。建议用主动学习（<code>scripts/active_learning.py</code>）
+挑"压线样本"扩到 20~30 点。</li>
+<li><b>网格勘察的采样瓦片未固定化</b>：方位角别名已修（阶段 14），
+但采样瓦片仍随"有效性排序"变化，两次跑仍可能得到略有差异的网格相位。</li>
 <li><b>大影像与 DSM 需另行获取</b>（不在仓库里）。</li>
 </ol>
 
 <footer>
-生成时间：2026-10-16 &nbsp;·&nbsp; 对应代码版本 <span class="mono">fd28d9f</span> + 绿度闸门修正<br>
+生成时间：2026-10-17 &nbsp;·&nbsp; 对应代码版本 <span class="mono">阶段 14 四项修复</span><br>
 数据来源：WGR17.tif 真实影像实测 + DSM/语义分割实测 + 项目 git 提交历史<br>
 相关文档：《DSM高程辅助检测方案》《算法说明与演进史-小白版》
 《分割判据说明》《空地分离算法讲解》《方法对比-DeepForest与结构法》
-《草地与油棕区分方案》
+《草地与油棕区分方案》《算法缺陷与改进清单》
 </footer>
 """
 
 OUT.write_text(shell(
     "算法说明与演进史",
     "Forest Gap Detection（油棕园空地智能检测）· 专业版 &nbsp;·&nbsp; "
-    "2026-10-16 更新（新增「绿度闸门」，修正推平待种裸地误判）&nbsp;·&nbsp; "
-    "基于 d0e368b + 后续修正",
+    "2026-10-17 更新（阶段 14：方位角别名 / 水体语义证据 / 亮白门槛 / 口径拆分）"
+    "&nbsp;·&nbsp; 基于 阶段 13 + 四项修复",
     BODY), encoding="utf-8")
 print(f"已生成 {OUT.name}  {OUT.stat().st_size/1024:.1f} KB")

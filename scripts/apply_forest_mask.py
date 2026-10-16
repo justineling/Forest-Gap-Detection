@@ -38,6 +38,7 @@ from process_image import _apply_forest_mask  # noqa: E402
 from grid_prior import (  # noqa: E402
     CLASS_LABEL_CN, CLASS_VACANT_SLOT, CLASS_ALLEY_GAP, CLASS_OPEN_PATCH,
     CLASS_UNCERTAIN, UNPLANTABLE_CLASSES,
+    summarize_priority, PRIORITY_LABEL_CN, PRIORITY_GROUPS,
 )
 
 
@@ -89,6 +90,14 @@ def main() -> int:
     s["gap_area_share_pct"] = round(area_new / cover * 100, 3) if cover else None
     s["by_class"] = {k: after.get(k, 0) for k in CLASS_LABEL_CN}
     s["by_class_label"] = {CLASS_LABEL_CN[k]: after.get(k, 0) for k in CLASS_LABEL_CN}
+    # 三档口径（与 process_image.build_full_geojson 保持一致，2026-10-17 新增）
+    prio = summarize_priority([{"class": f["properties"]["class"],
+                                "area_sqm": f["properties"]["area_sqm"]}
+                               for f in gaps])
+    s["by_priority"] = prio
+    s["by_priority_label"] = PRIORITY_LABEL_CN
+    s["plantable_area_definite_sqm"] = prio["definite_plant"]["area_sqm"]
+    s["plantable_area_legacy_sqm"] = round(area_new, 2)
     s["gap_area_stats_sqm"] = {
         "max": round(float(plant_areas.max()), 2),
         "median": round(float(np.median(plant_areas)), 2),
@@ -118,8 +127,18 @@ def main() -> int:
     print("-" * 76)
     b_need = sum(before_area[k] for k in plant_cls)
     a_need = sum(after_area[k] for k in plant_cls)
-    print(f"{'需补种合计':<14}{sum(before[k] for k in plant_cls):>11}"
+    print(f"{'空地合计(旧口径)':<16}{sum(before[k] for k in plant_cls):>9}"
           f"{sum(after[k] for k in plant_cls):>11}{b_need:>13,.0f}{a_need:>13,.0f}")
+    # 三档拆分：只有「确定需补种」才是真正的补种工作量
+    short = {"definite_plant": "确定需补种",
+             "review": "待复核(不确定)",
+             "not_needed": "不计入(林间空隙)"}
+    for gname in ("definite_plant", "review", "not_needed"):
+        b_cnt = sum(before[k] for k in PRIORITY_GROUPS[gname])
+        a_cnt = sum(after[k] for k in PRIORITY_GROUPS[gname])
+        b_a = sum(before_area[k] for k in PRIORITY_GROUPS[gname])
+        a_a = sum(after_area[k] for k in PRIORITY_GROUPS[gname])
+        print(f"{short[gname]:<16}{b_cnt:>9}{a_cnt:>11}{b_a:>13,.0f}{a_a:>13,.0f}")
     print(f"\n剔除 {n_msk} 块 / {a_msk:,.0f} m²（占原需补种 {a_msk/max(b_need,1e-9)*100:.1f}%）")
     return 0
 

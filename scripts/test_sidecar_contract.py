@@ -326,9 +326,14 @@ def test_success_path(tmpdir: Path) -> None:
           f"out_json 用正斜杠（实际 {res['out_json']}）")
     check(res["summary"] is not None, "result.summary 非空")
     check("by_class" in res["summary"], "summary.by_class 存在")
+    # 2026-10-17：sidecar 的 class_totals 改为按 CLASS_LABEL_CN 全量初始化
+    # （原来只初始化旧 4 类，会把 road/water/office/undeveloped 静默过滤掉 ——
+    #  与 CLI 的 by_class 不一致，属于修掉的 bug）。故 by_class 现在含 8 个键，
+    # 未出现的类别计数为 0。
     check(set(res["summary"]["by_class"]) ==
-          {"vacant_slot", "alley_gap", "open_patch", "uncertain"},
-          "by_class 含 4 个类别键")
+          {"vacant_slot", "alley_gap", "open_patch", "uncertain",
+           "road", "water", "office", "undeveloped"},
+          "by_class 含全部 8 个类别键")
     check(isinstance(res["tiles"]["valid"], int), "tiles.valid 是整数")
 
     # --- 落盘文件契约 ---

@@ -151,6 +151,29 @@ CLASS_SEMANTICS = {
 # 不可种植类别：统计"需补种面积"时必须剔除
 UNPLANTABLE_CLASSES = (CLASS_ROAD, CLASS_WATER, CLASS_OFFICE, CLASS_UNDEVELOPED)
 
+# ---------------------------------------------------------------------------
+# 「需补种」的三档口径（2026-10-17 新增）
+# ---------------------------------------------------------------------------
+# ⚠️ 为什么需要：原来把 4 类空地直接加总当"需补种面积"，但其中
+#   · alley_gap 的语义是「树冠之间的正常缝隙，**无需补种**」
+#   · uncertain 的语义是「证据不足，**需人工核实**」
+#   实测 1,655 要素版里这两类合计 52,534 m²，占 headline 的 **14.0%**，
+#   会让用户误以为"这 37.6 万 m² 都该补种"。故显式拆成三档输出，
+#   旧的合计字段保留（下游兼容），但日志与 summary 都给出拆分。
+CLASSES_DEFINITE_PLANT = (CLASS_OPEN_PATCH, CLASS_VACANT_SLOT)  # 确定需补种
+CLASSES_REVIEW = (CLASS_UNCERTAIN,)                             # 待人工复核
+CLASSES_NOT_NEEDED = (CLASS_ALLEY_GAP,)                         # 正常缝隙，不计入
+PRIORITY_GROUPS: dict[str, tuple[str, ...]] = {
+    "definite_plant": CLASSES_DEFINITE_PLANT,
+    "review": CLASSES_REVIEW,
+    "not_needed": CLASSES_NOT_NEEDED,
+}
+PRIORITY_LABEL_CN = {
+    "definite_plant": "确定需补种",
+    "review": "待复核（需人工核实）",
+    "not_needed": "不计入（正常林间缝隙）",
+}
+
 # 估计方法标识（写进 JSON，便于回溯是哪条路线得出的网格）
 METHOD_POINT_LATTICE = "point_lattice"      # 树心点阵（主力）
 METHOD_FOLD_PROFILE = "folded_profile"      # 折叠投影（辅助）
@@ -1633,6 +1656,25 @@ def summarize_unplantable(labels: Sequence[dict[str, Any]]) -> dict[str, float]:
         "by_class": {c: {"count": cnt[c], "area_sqm": round(area[c], 2)}
                      for c in UNPLANTABLE_CLASSES if cnt[c] > 0 or area[c] > 0},
     }
+
+
+def summarize_priority(labels: Sequence[dict[str, Any]]
+                       ) -> dict[str, dict[str, float]]:
+    """按「是否真的需要补种」把空地分成三档（块数 + 面积 m²）。
+
+    见 ``PRIORITY_GROUPS`` 的说明：``alley_gap`` 是正常行间缝隙、
+    ``uncertain`` 需人工核实，两者都不该混进"确定需补种"的面积里。
+    """
+    out: dict[str, dict[str, float]] = {}
+    for name, classes in PRIORITY_GROUPS.items():
+        cnt = 0
+        area = 0.0
+        for it in labels:
+            if it.get("class") in classes:
+                cnt += 1
+                area += float(it.get("area_sqm") or 0.0)
+        out[name] = {"count": cnt, "area_sqm": round(area, 2)}
+    return out
 
 
 # ============================================================================
