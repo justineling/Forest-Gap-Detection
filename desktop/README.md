@@ -41,9 +41,27 @@ npm run dev      # → http://localhost:5173
 |---|---|---|
 | ① 导入文件并渲染地图 | ✅ 已跑通 | `scripts/tile_server.py`（`/meta` + `/tiles/{z}/{x}/{y}.png`）· `src/components/MapCanvas.tsx` |
 | ② 圈选 Target Block，只检测圈内 | 🟡 **前端已就绪，算法侧待实现** | 前端：工具栏「① 圈选 Target Block」→ `store.setRoi` · 算法侧：`process_image.py` 的 ROI 裁剪尚不存在（见决策文档 R-P0-11） |
-| ③ 按 class 渲染 + 勾选过滤 | ✅ 已跑通 | `src/lib/classes.ts`（8 类 + 人工新增，配色与 `export_arcgis.py` 一致）· `src/components/LeftPanel.tsx` |
-| ④ add / delete / edit polygon | ✅ 已跑通 | Terra Draw（`MapCanvas.tsx` 的绘制/选择模式）+ `store` 的 `addGap` / `deleteGap` / `updateGapGeometry` / `setGapClass` |
-| ⑤ 估算可种植数量 + 导出 | 🟡 前端双口径已跑通；交付包导出走后端 | 估算：`src/lib/estimate.ts` · 导出：`POST /export`（geojson / csv / kml） |
+| ③ 按 class 渲染 + 勾选过滤 | ✅ 已跑通（有回归测试） | `src/lib/classes.ts`（8 类 + 人工新增，配色与 `export_arcgis.py` 一致）· `src/components/LeftPanel.tsx` |
+| ④ add / delete / edit polygon | ✅ 已跑通（有回归测试） | Terra Draw（`MapCanvas.tsx` 的绘制/选择模式）+ `store` 的 `addGap` / `deleteGap` / `updateGapGeometry` / `setGapClass` |
+| ⑤ 估算可种植数量 + 导出 | 🟡 前端双口径已跑通（有回归测试）；交付包导出走后端 | 估算：`src/lib/estimate.ts` · 导出：`POST /export`（geojson / csv / kml） |
+
+### 跑测试
+
+```bash
+cd desktop
+npm test        # 打包 store.test.ts / estimate.test.ts 后用 Node 直跑（约 5 秒）
+```
+
+- `tests/store.test.ts` —— 需求③④的纯逻辑回归（30 项断言）：
+  默认可见性、整组勾选/取消、新增（含面积重算与留痕）、
+  改判（`original_class` 保留原值、二次改判不覆盖）、改边界、删除、
+  编辑留痕计数、**编辑后旧估算结果必须失效**
+- `tests/estimate.test.ts` —— 需求⑤的数值回归（15 项断言）：
+  面积 vs Python/UTM 一致性、双口径、点位自检（越界/退让）、
+  退让单调性、`vacant_slot` 两个口径都等于块数（每块 1 株）
+
+> 测试不依赖浏览器与 `output/`（`store` 用构造要素；`estimate` 找不到结果文件时
+> 自动跳过并说明），因此换机器也能跑。
 
 ---
 
@@ -53,6 +71,9 @@ npm run dev      # → http://localhost:5173
 desktop/
 ├─ index.html · vite.config.ts · tsconfig.json · package.json
 ├─ public/sample-gaps.geojson     # 离线演示数据（真实结果抽样）
+├─ tests/
+│  ├─ store.test.ts               # 需求③④ 纯逻辑回归（npm test）
+│  └─ estimate.test.ts            # 需求⑤ 数值回归（npm test）
 └─ src/
    ├─ main.tsx · App.tsx · styles.css
    ├─ types.ts                    # 与 Python 侧 schema 对齐的领域类型
@@ -98,11 +119,17 @@ desktop/
 | 项 | 实测 |
 |---|---|
 | 面积核对（TS vs Python/UTM） | 435,071 vs 434,729 m²，**单块最大相对误差 0.09%** |
-| 参与面积 | 309,145 m²（与 `summary.plantable_area_definite_sqm` 一致） |
+| 参与面积 | 309,145 m²（与 `summary.plantable_area_definite_sqm` 差 0.00%） |
 | 口径A 面积折算 | **4,420 株** |
 | 口径B 网格排坑 | **2,152 株** |
 | 点位自检 | 越界 0 · 退让不足 0 · 株位标记 253 |
-| 单次耗时 | 264 ms（1,726 个多边形） |
+| 单次耗时 | 306 ms（1,726 个多边形） |
+
+> **两个"面积口径"数字为什么不一样（4,420 vs 4,636）**：
+> - `summary` 的 4,636 = 确定需补种总面积 309,143 ÷ 66.67（**不考虑形状**）；
+> - 本模块的 4,420 = 逐块 `floor(area/66.67)`（449 块连片空地）+ 每块 1 株（253 块株位空缺）。
+> 后者更保守：逐块取整会损失一点，而株位空缺按"一个单元缺 1 棵"计比按面积算更合理。
+> 两个都远大于排坑口径 2,152 —— 因为排坑要满足 2 m 退让与 8.45 m 间距的几何约束。
 
 **退让距离敏感度**（这是需要业务拍板的关键参数）：
 
@@ -126,8 +153,11 @@ UI 对差异 > 30% 的多边形标黄，正是为了让用户逐个判断。
 - `detect`（真正的检测）未接 —— 需先实现算法侧 ROI 裁剪
 - 未做 Tauri 外壳（窗口、文件对话框、sidecar 进程监督）
 - 未做 1,700+ 多边形在低配机器上的渲染压测
-- **未做浏览器端视觉验证**：本环境的 headless Chrome 起不来（沙箱限制），
-  界面渲染请自行打开 `http://localhost:5173` 确认
+- **未做浏览器端视觉验证**：本环境的 headless Chrome / Edge 都无法启动
+  （沙箱禁止 GUI 进程，`--headless --screenshot` 静默退出、不产出文件）。
+  因此 React 组件层的**渲染效果**未经我确认 ——
+  已用「类型检查 + 生产构建 + 纯逻辑回归测试」覆盖逻辑部分。
+  界面渲染请自行打开 `http://localhost:5173` 确认。
 
 ---
 
