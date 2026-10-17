@@ -9,7 +9,8 @@
 提供：
     GET  /meta                     影像元数据（外接框 / CRS / 分辨率 / 建议缩放级）
     GET  /tiles/{z}/{x}/{y}.png    XYZ 瓦片（Web Mercator）
-    GET  /gaps                     最近一次检测结果 GeoJSON
+    GET  /gaps                     最近一次检测结果 GeoJSON（含算法网格锚点）
+    GET  /planting-points?clearance=0.5   补种点位（Python/UTM 权威结算）
     POST /export                   把前端编辑后的要素导出为 geojson / csv / kml
 
 用法：
@@ -35,7 +36,7 @@ import time
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 import rasterio
@@ -101,6 +102,9 @@ class TileServer:
         self.lock = threading.Lock()
         self._ds = None
         self._meta: dict | None = None
+        self._gaps_cache: bytes | None = None
+        self._gaps_obj: dict | None = None
+        self._pp_cache: dict[float, bytes] = {}
 
     # ---- 数据集（每个线程各自持有一个只读句柄，避免 GDAL 句柄跨线程问题）----
     def dataset(self):
@@ -236,11 +240,130 @@ class TileServer:
 
     # ---- 检测结果 ----
     def gaps_json(self) -> bytes:
-        if self.gaps_path and self.gaps_path.exists():
-            return self.gaps_path.read_bytes()
-        return json.dumps(
-            {"type": "FeatureCollection", "features": [], "error": "未找到检测结果文件"}
-        ).encode("utf-8")
+        """返回检测结果 GeoJSON，并**动态补上网格锚点**（不改磁盘文件）。
+
+        为什么需要补：`planting_grid` 里的 `origin_x_m / origin_y_m` 是 UTM 49N
+        绝对坐标下的数学锚点（离园区约 451 km），前端在经纬度空间没法直接用它
+        铺格点。这里补一个「园区中心附近最近格点」的经纬度 `anchor_lon/anchor_lat`
+        —— 前端用 anchor + 同样的 pitch/row/skew/azimuth 就能重建**逐格一致**
+        的格点集合，从而与 Python 侧点位数逐株对账（否则两边差 +8.8%，
+        原因就是前端自己拿「首个顶点均值」当原点，相位是任意的）。
+
+        只在内存里 enrich，不写回文件 —— 重跑算法不必为此付费。
+        """
+        if not (self.gaps_path and self.gaps_path.exists()):
+            return json.dumps(
+                {"type": "FeatureCollection", "features": [], "error": "未找到检测结果文件"}
+            ).encode("utf-8")
+        if self._gaps_cache is not None:
+            return self._gaps_cache
+        raw = self.gaps_path.read_bytes()
+        try:
+            obj = json.loads(raw)
+            grid = obj.get("planting_grid")
+            if isinstance(grid, dict) and "anchor_lon" not in grid:
+                obj["planting_grid"] = _enrich_grid_anchor(obj, grid)
+                raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        except Exception as e:  # 结果格式异常时不要拖垮端点，原样返回
+            print(f"  ⚠️ planting_grid 锚点补算失败（原样返回）：{e}", file=sys.stderr)
+        self._gaps_cache = raw
+        return raw
+
+    # ---- 补种点位（权威结算在 Python，前端只展示/导出）----
+    def _gaps_data(self) -> dict:
+        """解析后的结果对象（含补算好的 planting_grid）。"""
+        if self._gaps_obj is None:
+            self.gaps_json()  # 触发解析 + 锚点补算
+            self._gaps_obj = json.loads(self._gaps_cache or b"{}")
+        return self._gaps_obj
+
+    def planting_points_json(self, clearance_m: float = 0.5) -> bytes:
+        """按退让距离生成补种点位（GeoJSON FeatureCollection）。
+
+        为什么放在服务端：前端 TS 用局部等距圆柱近似，与 Python 的 UTM 结算
+        在 0.5 m 档已实测**完全一致**（3,691 vs 3,691），但 1.0/2.0 m 档仍差
+        0.6~0.9%（GEOS buffer 与逐点距离的数值精度）。**对外报数与放样一律以
+        本端点为准**，前端自算只用于拖动时的即时反馈。
+
+        结果按退让距离缓存（同一档位重复请求不再重算）。
+        """
+        key = round(float(clearance_m), 3)
+        if key in self._pp_cache:
+            return self._pp_cache[key]
+
+        import planting_points as PP
+        from grid_prior import GridModel
+
+        obj = self._gaps_data()
+        grid = obj.get("planting_grid")
+        if not isinstance(grid, dict):
+            payload = {"type": "FeatureCollection", "features": [],
+                       "error": "结果里没有 planting_grid，无法生成点位"}
+            return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+        feats = [f for blk in (obj.get("blocks") or []) for f in (blk.get("gaps") or [])]
+        if not feats:
+            feats = obj.get("features") or []
+
+        gm = GridModel(
+            plant_pitch_m=grid["plant_pitch_m"],
+            row_pitch_m=grid["row_pitch_m"],
+            skew_offset_m=grid.get("skew_offset_m") or grid["plant_pitch_m"] / 2.0,
+            origin_x_m=grid["origin_x_m"],
+            origin_y_m=grid["origin_y_m"],
+            row_azimuth_deg=grid.get("row_azimuth_deg") or grid.get("azimuth_deg") or 0.0,
+            quality=grid.get("quality", 0.0),
+            method=grid.get("method", ""),
+            density_per_ha=grid.get("density_per_ha", 0.0),
+        )
+        res = PP.generate_planting_points(feats, gm, clearance_m=key)
+        out = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [p["lon"], p["lat"]]},
+                    "properties": {
+                        "point_id": p["point_id"],
+                        "gap_id": p["gap_id"],
+                        "class": p["class"],
+                        "source": p["source"],
+                        "utm_x": p["utm_x"],
+                        "utm_y": p["utm_y"],
+                        "clearance_m": p["clearance_m"],
+                    },
+                }
+                for p in res["points"]
+            ],
+            "meta": {
+                "total": res["total"],
+                "by_class": res["by_class"],
+                "by_source": res["by_source"],
+                "clearance_m": key,
+                "crs": "EPSG:4326",
+                "authority": "python/planting_points.py（UTM 49N 结算）",
+            },
+        }
+        raw = json.dumps(out, ensure_ascii=False).encode("utf-8")
+        self._pp_cache[key] = raw
+        return raw
+
+
+def _enrich_grid_anchor(obj: dict, grid: dict) -> dict:
+    """为 `planting_grid` 补一个 WGS84 锚点（**实现只有一份**，在 planting_points）。
+
+    锚点 = **结果范围中心最近的那个格点**。前端拿 anchor 当局部原点，
+    配合同样的 pitch / row / skew / azimuth 铺格点，就能重建与 Python 侧
+    **逐格一致**的格点集合 —— 这是前端报数与 Python 3,912 株对得上的前提。
+    """
+    import planting_points as PP
+
+    feats = [f for blk in (obj.get("blocks") or []) for f in (blk.get("gaps") or [])]
+    if not feats:
+        feats = obj.get("features") or []
+    lon, lat = PP.features_center_wgs84(feats)
+    return PP.grid_anchor_wgs84(grid, lon, lat)
+
 
 
 def blank_png() -> bytes:
@@ -481,6 +604,23 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/gaps":
             self._send(200, self.tile_server.gaps_json(), "application/geo+json")
             return
+        if path == "/planting-points":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                clr = float((qs.get("clearance") or ["0.5"])[0])
+            except ValueError:
+                self._json({"ok": False, "error": "clearance 必须是数字"}, 400)
+                return
+            if not (0.0 <= clr <= 10.0):
+                self._json({"ok": False, "error": "clearance 应在 0~10 m"}, 400)
+                return
+            try:
+                body = self.tile_server.planting_points_json(clr)
+            except Exception as e:  # noqa: BLE001
+                self._json({"ok": False, "error": f"点位生成失败：{e}"}, 500)
+                return
+            self._send(200, body, "application/geo+json")
+            return
         if path.startswith("/tiles/"):
             parts = path.strip("/").split("/")
             if len(parts) != 4:
@@ -606,7 +746,8 @@ def main() -> int:
         print("                 建议先跑一次：--build-overviews（一次性，约 1 GB 边车文件）", file=sys.stderr)
     print(f"  检测结果  : {gaps if gaps else '（未找到，/gaps 将返回空集合）'}", file=sys.stderr)
     print(f"  监听      : http://{args.host}:{args.port}", file=sys.stderr)
-    print(f"  端点      : /meta  /tiles/{{z}}/{{x}}/{{y}}.png  /gaps  /export", file=sys.stderr)
+    print(f"  端点      : /meta  /tiles/{{z}}/{{x}}/{{y}}.png  /gaps  "
+          f"/planting-points?clearance=0.5  /export", file=sys.stderr)
     print("=" * 66, file=sys.stderr)
     sys.stderr.flush()
 

@@ -57,6 +57,83 @@ def _utm_to_wgs(x: float, y: float) -> tuple[float, float]:
     return float(lon), float(lat)
 
 
+def grid_anchor_wgs84(grid, lon: float, lat: float) -> dict[str, Any]:
+    """把 `planting_grid` 补成**前端可直接用**的版本（含 WGS84 锚点）。
+
+    做法：给定一个经纬度（通常是结果范围中心），找**最近的那个格点**，
+    把它的经纬度作为 `anchor_lon / anchor_lat` 返回。
+
+    为什么需要：`origin_x_m / origin_y_m` 是 UTM 49N 下的数学锚点，
+    可能离园区几百公里（本园区 451 km），前端在经纬度空间没法直接拿它铺格点。
+    有了 anchor，前端用 anchor + 同样的 pitch/row/skew/azimuth 就能重建
+    **逐格一致**的格点集合 —— 这是前端 3,912 株与 Python 对得上的唯一前提
+    （不用 anchor 而用"首个顶点均值"时，相位任意，实测差 +8.8%）。
+
+    ⚠️ 这个函数是**唯一实现**：`tile_server.py` 的 `/gaps` 与
+    `planting_points.py` 的 `--emit-grid` 都调它，避免两处漂移。
+    """
+    fwd = Transformer.from_crs(WGS84, TARGET_CRS, always_xy=True)
+    inv = Transformer.from_crs(TARGET_CRS, WGS84, always_xy=True)
+
+    pitch = float(grid["plant_pitch_m"])
+    row = float(grid["row_pitch_m"])
+    skew = float(grid.get("skew_offset_m") or pitch / 2.0)
+    az = float(grid.get("row_azimuth_deg") or grid.get("azimuth_deg") or 0.0)
+    ox = float(grid["origin_x_m"])
+    oy = float(grid["origin_y_m"])
+
+    a = math.radians(az)
+    ux, uy = math.cos(a), math.sin(a)
+    vx, vy = -math.sin(a), math.cos(a)
+
+    e, n = fwd.transform(lon, lat)
+    du = (e - ox) * ux + (n - oy) * uy
+    dv = (e - ox) * vx + (n - oy) * vy
+    iy = round(dv / row)
+    ix = round((du - iy * skew) / pitch)
+    ge = ox + (ix * pitch + iy * skew) * ux + iy * row * vx
+    gn = oy + (ix * pitch + iy * skew) * uy + iy * row * vy
+    alon, alat = inv.transform(ge, gn)
+
+    out = dict(grid)
+    out["anchor_lon"] = round(float(alon), 9)
+    out["anchor_lat"] = round(float(alat), 9)
+    out["anchor_ix"] = int(ix)
+    out["anchor_iy"] = int(iy)
+    out["azimuth_deg"] = az            # 前端 GridSpec 字段名
+    out["skew_offset_m"] = skew
+    out["crs"] = TARGET_CRS
+    return out
+
+
+def features_center_wgs84(features: Iterable[dict]) -> tuple[float, float]:
+    """结果要素外接框的中心（经纬度）。"""
+    minx = miny = float("inf")
+    maxx = maxy = -float("inf")
+    for f in features:
+        geom = f.get("geometry") or {}
+        gtype = geom.get("type")
+        coords = geom.get("coordinates") or []
+        if gtype == "Polygon":
+            rings = coords[:1]
+        elif gtype == "MultiPolygon":
+            rings = [poly[0] for poly in coords if poly]
+        else:
+            continue
+        for ring in rings:
+            for pt in ring:
+                if len(pt) < 2:
+                    continue
+                x, y = float(pt[0]), float(pt[1])
+                minx = min(minx, x)
+                maxx = max(maxx, x)
+                miny = min(miny, y)
+                maxy = max(maxy, y)
+    if minx == float("inf"):
+        return 0.0, 0.0
+    return (minx + maxx) / 2.0, (miny + maxy) / 2.0
+
+
 def _slot_point(poly_utm) -> Point:
     """株位空缺的点位：优先质心，落在多边形外则回退 representative_point。
 
@@ -340,4 +417,63 @@ def _selftest() -> None:
 
 
 if __name__ == "__main__":
-    _selftest()
+    import argparse
+    import json
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(
+        description="补种点位生成 / 种植网格锚点导出（无参数时跑自测）"
+    )
+    ap.add_argument("--input", default="output/wgr17-final-gaps.geojson",
+                    help="检测结果 GeoJSON（默认用交付版 final；elev 是未应用森林掩膜的中间版，"
+                         "两者 open_patch/vacant_slot 差 18 块，点位会多 221 个）")
+    ap.add_argument("--emit-grid", default="output/planting-grid.json",
+                    help="把含 WGS84 锚点的 planting_grid 写到这个文件（供前端对齐相位）")
+    ap.add_argument("--no-emit-grid", action="store_true", help="不写网格锚点文件")
+    ap.add_argument("--selftest", action="store_true", help="只跑自测")
+    a = ap.parse_args()
+
+    if a.selftest or (not Path(a.input).exists()):
+        if not a.selftest:
+            print(f"⚠️ 找不到 {a.input}，改跑自测")
+        _selftest()
+        raise SystemExit(0)
+
+    data = json.loads(Path(a.input).read_text(encoding="utf-8"))
+    grid = data.get("planting_grid")
+    if not isinstance(grid, dict):
+        print(f"❌ {a.input} 里没有 planting_grid，无法导出锚点")
+        raise SystemExit(2)
+
+    feats = [f for blk in (data.get("blocks") or []) for f in (blk.get("gaps") or [])]
+    if not feats:
+        feats = data.get("features") or []
+    lon, lat = features_center_wgs84(feats)
+    enriched = grid_anchor_wgs84(grid, lon, lat)
+    print(f"结果中心: ({lon:.7f}, {lat:.7f})")
+    print(f"最近格点: ix={enriched['anchor_ix']} iy={enriched['anchor_iy']} "
+          f"→ ({enriched['anchor_lon']:.7f}, {enriched['anchor_lat']:.7f})")
+
+    # 三档参考株数：给前端测试做对账基准（否则前端只能硬编码数字，换数据就废）
+    from grid_prior import GridModel
+
+    gm = GridModel(
+        plant_pitch_m=grid["plant_pitch_m"], row_pitch_m=grid["row_pitch_m"],
+        skew_offset_m=grid["skew_offset_m"],
+        origin_x_m=grid["origin_x_m"], origin_y_m=grid["origin_y_m"],
+        row_azimuth_deg=grid["row_azimuth_deg"],
+        quality=grid.get("quality", 0.0), method=grid.get("method", ""),
+        density_per_ha=grid.get("density_per_ha", 0.0),
+    )
+    refs = {}
+    for clr in (0.5, 1.0, 2.0):
+        refs[f"{clr:.1f}"] = generate_planting_points(feats, gm, clearance_m=clr)["total"]
+    enriched["reference_totals"] = refs
+    print("参考株数（Python 权威）：" + "  ".join(f"{k} m → {v}" for k, v in refs.items()))
+
+    if not a.no_emit_grid:
+        out = Path(a.emit_grid)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(enriched, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"已写入 {out}（{out.stat().st_size} B）")
+    print(f"要素数: {len(feats)}")
