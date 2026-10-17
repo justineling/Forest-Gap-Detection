@@ -533,12 +533,13 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         all_tiles = PI.plan_tiles(ds.width, ds.height, args.tile_size, args.overlap)
         good, blank = PI.order_tiles_by_validity(ds, all_tiles)
         tiles = good + blank
-        if args.limit:
-            tiles = tiles[:args.limit]
+        # ⚠️ `limit` **不能**在这里截断：它与 `roi` 组合时，先截前 N 块再按 ROI 过滤，
+        #    如果前 N 块恰好都在圈外，就会得到 0 个瓦片并报 E3001
+        #    （实测踩过：`--limit 3 --roi 中部` 直接报"没有可处理的瓦片"）。
+        #    正确顺序：先 ROI 过滤（缩小范围），再 limit（试跑截断）。
         emit("log", level="info", stage="plan_tiles",
              message=f"瓦片规划：全图外接矩形 {len(all_tiles)} 块，"
-                     f"其中含有效数据 {len(good)} 块、纯 NoData {len(blank)} 块；"
-                     f"本次处理 {len(tiles)} 块")
+                     f"其中含有效数据 {len(good)} 块、纯 NoData {len(blank)} 块")
 
         # --- ROI 圈选（2026-10-17，R-P0-11）---
         # 与 process_image.main() 保持等价：瓦片级跳过 + 像素级掩膜（在 process_tile 内）
@@ -562,6 +563,15 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                          message=f"ROI 圈选 {roi_info['area_m2'] / 1e4:.2f} 公顷："
                                  f"瓦片 {before} → {len(tiles)} 块"
                                  f"（跳过圈外 {before - len(tiles)} 块，不读盘）")
+
+        # limit 放在 ROI 之后：先圈定范围，再截断试跑数量
+        if args.limit:
+            before = len(tiles)
+            tiles = tiles[:args.limit]
+            emit("log", level="info", stage="plan_tiles",
+                 message=f"试跑限制：{before} → {len(tiles)} 块（--limit {args.limit}）")
+        emit("log", level="info", stage="plan_tiles",
+             message=f"本次处理 {len(tiles)} 块")
 
         if not tiles:
             raise SidecarError("E3001", "没有可处理的瓦片", "plan_tiles", False)

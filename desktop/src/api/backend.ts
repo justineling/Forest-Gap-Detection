@@ -134,6 +134,93 @@ export async function fetchPlantingPoints(clearanceM: number): Promise<PlantingP
   return getJson<PlantingPointsResult>(`/planting-points?clearance=${clearanceM}`, 180000)
 }
 
+// ============================================================================
+//  Tauri 宿主桥接（检测走 stdio NDJSON sidecar）
+//  ---------------------------------------------------------------------------
+//  ⚠️ 护栏 4：**必须保留纯浏览器模式可用**。
+//    Headless Chrome（localhost:5173）里没有 `window.__TAURI_INTERNALS__`，
+//    直接 `invoke()` 会抛错 → React 卸载整棵树 → 白屏。
+//    所以这里一律先判断环境，浏览器下走"优雅降级"而不是硬调 Tauri API。
+//    另外用**动态 import**：只在真的要在 Tauri 里跑时才加载 @tauri-apps/api，
+//    浏览器打包产物不会因为这条路径多出运行时依赖。
+// ============================================================================
+
+export function isTauri(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<T>(cmd, args)
+}
+
+export type DetectStartResult =
+  | { ok: true; mode: 'tauri'; message: string }
+  | { ok: false; mode: 'browser'; message: string }
+
+/**
+ * 启动一次检测。
+ *
+ * `params` 直接对应 sidecar 的参数表（见交接简报 §3），例如：
+ * `{ input, job, chm, segment, workers: 4, target_density: 150 }`
+ *
+ * 若传了 `roi`（前端画的 Target Block，经纬度 GeoJSON），会一起带过去 ——
+ * Rust 侧把它写成临时 `.geojson` 再作为 `roi` 路径传给 sidecar
+ * （sidecar 的 `roi` 参数是**文件路径**，不接受内联几何）。
+ */
+export async function runDetect(opts: {
+  params: Record<string, unknown>
+  roi?: unknown
+}): Promise<DetectStartResult> {
+  if (!isTauri()) {
+    return {
+      ok: false,
+      mode: 'browser',
+      message:
+        '浏览器模式无法启动检测（需要拉起 Python 子进程）。' +
+        '请用「启动桌面端.bat」打开桌面应用；当前界面仍可查看/编辑/估算/导出。',
+    }
+  }
+  const payload: Record<string, unknown> = { ...opts.params }
+  if (opts.roi) payload.roi_geojson = opts.roi
+  const msg = await tauriInvoke<string>('run_detect', { params: payload })
+  return { ok: true, mode: 'tauri', message: msg }
+}
+
+/** 中途取消（全量 350 秒、ROI 195 秒，用户很可能画错框想中止） */
+export async function cancelDetect(): Promise<string> {
+  if (!isTauri()) return '浏览器模式没有可取消的检测'
+  return tauriInvoke<string>('cancel_detect')
+}
+
+/** 问一句"现在有没有检测在跑"（HMR 重载后恢复 UI 状态用） */
+export async function detectRunning(): Promise<boolean> {
+  if (!isTauri()) return false
+  try {
+    return await tauriInvoke<boolean>('detect_status')
+  } catch {
+    return false
+  }
+}
+
+/** 订阅 sidecar 的 NDJSON 事件（started / progress / log / result / error） */
+export async function onSidecarEvent(
+  cb: (ev: Record<string, unknown>) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const un = await listen<Record<string, unknown>>('sidecar-event', (e) => cb(e.payload))
+  return un
+}
+
+/** 订阅 sidecar 的 stderr 人类日志 */
+export async function onSidecarLog(cb: (line: string) => void): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const un = await listen<string>('sidecar-log', (e) => cb(e.payload))
+  return un
+}
+
 export interface ExportRequest {
   /** 编辑后的要素集合 */
   gaps: GapCollection

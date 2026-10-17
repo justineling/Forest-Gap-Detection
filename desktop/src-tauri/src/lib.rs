@@ -25,7 +25,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent};
 
 /// 瓦片 / 辅助服务端口（与 `desktop/src/api/backend.ts` 的 BACKEND_BASE 一致）
 const BACKEND_PORT: u16 = 8765;
@@ -33,6 +33,8 @@ const BACKEND_PORT: u16 = 8765;
 #[derive(Default)]
 struct Services {
     tile: Mutex<Option<Child>>,
+    /// 正在运行的检测子进程（`scripts/sidecar.py`）。用于防重入与中途取消。
+    detect: Mutex<Option<Child>>,
 }
 
 #[derive(Serialize)]
@@ -114,6 +116,10 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     let mut cmd = Command::new(&py);
     cmd.arg(&script)
         .current_dir(&root)
+        // 护栏 2：Windows 非控制台管道默认 cp936，中文日志/路径会乱码或抛错
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUTF8", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
@@ -143,6 +149,152 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
         "已用 {} 启动瓦片服务（端口 {BACKEND_PORT}）",
         py.display()
     ))
+}
+
+// ============================================================================
+//  检测：调 sidecar.py（stdio NDJSON）
+//  ---------------------------------------------------------------------------
+//  为什么走 stdio 而不是 HTTP：契约已冻结（95/95），sidecar 是算法唯一入口。
+//
+//  ★ 护栏 1（最容易踩死的一个）：**必须用两个线程分别读 stdout 与 stderr**。
+//    Windows 匿名管道缓冲区只有 64 KB 左右。如果只读 stdout、等进程结束再去读
+//    stderr，跑批过程中 stderr 的日志（每个瓦片都有输出）很快把它填满 →
+//    Python 的 log() 阻塞在 write 上 → 整个 sidecar 永久卡死。
+//    症状是"进度条停在 30% 不动、CPU 归零"，且没有任何报错 —— 极难排查。
+//
+//  ★ 护栏 2：Windows 非控制台管道的默认编码是 cp936，中文路径/JSON 会乱码或抛
+//    UnicodeEncodeError。必须显式注入 PYTHONIOENCODING=utf-8 + PYTHONUTF8=1；
+//    PYTHONUNBUFFERED=1 是为了让 progress 事件实时吐出（否则攒满 8 KB 才发）。
+//
+//  ★ 护栏 3：CREATE_NO_WINDOW，否则每点一次"开始检测"就闪一个黑框。
+// ============================================================================
+#[tauri::command]
+fn run_detect(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Services>,
+    params: serde_json::Value,
+) -> Result<String, String> {
+    // 防重入：同一时间只允许一个检测（否则两个进程抢同一份瓦片缓存）
+    {
+        let guard = state.detect.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("已有检测任务在运行，请先取消或等它完成".into());
+        }
+    }
+
+    let py = resolve_python(&app).ok_or("找不到 Python 解释器：请设置 FGD_PYTHON")?;
+    let root = project_root(&app).ok_or("定位不到项目根目录")?;
+    let script = root.join("scripts").join("sidecar.py");
+    if !script.exists() {
+        return Err(format!("找不到 {}", script.display()));
+    }
+    // ROI 传递：sidecar 的 `roi` 参数是**文件路径**，不接受内联几何。
+    // 前端把画好的多边形作为 `roi_geojson` 传进来，这里落成临时 GeoJSON 再替换。
+    let mut payload = params;
+    if let Some(roi_geom) = payload.get("roi_geojson").cloned() {
+        let tmp = std::env::temp_dir().join(format!("fgd-roi-{}.geojson", std::process::id()));
+        let fc = serde_json::json!({
+            "type": "FeatureCollection",
+            "features": [{ "type": "Feature", "properties": {}, "geometry": roi_geom }]
+        });
+        let text = serde_json::to_string(&fc).map_err(|e| format!("ROI 序列化失败：{e}"))?;
+        std::fs::write(&tmp, text).map_err(|e| format!("写 ROI 临时文件失败：{e}"))?;
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("roi_geojson");
+            obj.insert(
+                "roi".to_string(),
+                serde_json::Value::String(tmp.to_string_lossy().to_string()),
+            );
+        }
+    }
+    let json = serde_json::to_string(&payload).map_err(|e| format!("参数序列化失败：{e}"))?;
+
+    let mut cmd = Command::new(&py);
+    cmd.arg(&script)
+        .arg("--params-json")
+        .arg(&json)
+        .current_dir(&root)
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUTF8", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("启动 sidecar 失败：{e}（解释器 {}）", py.display()))?;
+
+    let stdout = child.stdout.take().ok_or("拿不到 sidecar stdout")?;
+    let stderr = child.stderr.take().ok_or("拿不到 sidecar stderr")?;
+
+    // 先登记句柄再起读线程：否则进程结束得很快时，读线程 take 到的会是 None
+    *state.detect.lock().map_err(|e| e.to_string())? = Some(child);
+
+    // ---- 线程 A：stdout → NDJSON 事件 → 前端 ----
+    let app_out = app.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            let payload = match serde_json::from_str::<serde_json::Value>(t) {
+                Ok(v) => v,
+                // 非 JSON 行（理论上不该有，stdout 是数据通道）也要让前端看见
+                Err(_) => serde_json::json!({ "event": "raw", "line": t }),
+            };
+            let _ = app_out.emit("sidecar-event", payload);
+        }
+        // 进程已退出：回收子进程并清空句柄，否则 cancel_detect 会 wait 一个死进程
+        if let Some(st) = app_out.try_state::<Services>() {
+            if let Ok(mut g) = st.detect.lock() {
+                if let Some(mut c) = g.take() {
+                    let _ = c.wait();
+                }
+            }
+        }
+    });
+
+    // ---- 线程 B：stderr → 人类日志 → 前端状态栏 ----
+    let app_err = app.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = app_err.emit("sidecar-log", line);
+        }
+    });
+
+    Ok("started".into())
+}
+
+/// 中途取消（全量要 350 秒，用户很可能画错框想中止）
+#[tauri::command]
+fn cancel_detect(state: tauri::State<'_, Services>) -> Result<String, String> {
+    let mut guard = state.detect.lock().map_err(|e| e.to_string())?;
+    match guard.take() {
+        Some(mut child) => {
+            child.kill().map_err(|e| format!("取消失败：{e}"))?;
+            let _ = child.wait(); // 回收，避免僵尸进程
+            Ok("已取消".into())
+        }
+        None => Ok("当前没有运行中的检测".into()),
+    }
+}
+
+/// 前端进来时问一句"是不是有任务在跑"（比如 HMR 重载后要恢复 UI 状态）
+#[tauri::command]
+fn detect_status(state: tauri::State<'_, Services>) -> bool {
+    state
+        .detect
+        .lock()
+        .map(|g| g.is_some())
+        .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -186,7 +338,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_url,
             service_status,
-            restart_tile_server
+            restart_tile_server,
+            run_detect,
+            cancel_detect,
+            detect_status
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -206,6 +361,13 @@ pub fn run() {
                     if let Ok(mut guard) = state.tile.lock() {
                         if let Some(mut child) = guard.take() {
                             let _ = child.kill();
+                        }
+                    }
+                    // 检测进程也要清 —— 否则关窗后后台还在跑 350 秒的批处理
+                    if let Ok(mut guard) = state.detect.lock() {
+                        if let Some(mut child) = guard.take() {
+                            let _ = child.kill();
+                            let _ = child.wait();
                         }
                     }
                 }
