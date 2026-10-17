@@ -158,6 +158,15 @@ React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 
   （`chm_path`/`segment_path`/`target_density_per_ha`，写错只回 W1001 然后照常跑完）。
 - **重跑合并策略** `lib/mergeEdits.ts`：`keep_manual`/`overwrite`；匹配用质心落入 +
   外接框 IoU 兜底；删除优先；`replayed_from` 留痕；store 的 `deletedFeatures` **存几何**。
+- **打包分发已通**：`scripts/desktop_entry.py` **单入口**（`--run-tile-server` /
+  默认 sidecar / `--self-test`），PyInstaller `--onedir` 出 **179 MB**，两服务共享一份依赖。
+  ⚠️ **两份 proj.db 版本不同**：rasterio 自带 MINOR=5、pyproj 自带 MINOR=4 →
+  `PROJ_DATA` **必须优先指向 rasterio 的 proj_data**（否则冻结态 `CRS.from_epsg` 全崩，
+  开发态复现不出来）。`freeze_support()` 必须是 `__main__` 第一行。
+  Rust 双模：`resources/py-runtime/desktop_entry.exe` → 仓库 `.venv`；
+  数据根 `%LOCALAPPDATA%\fgd\data`（自动创建，Program Files 不可写）。
+  ⚠️ `[profile.release]` **不要** `codegen-units=1` + full LTO（内存紧张时 rustc
+  会以 0xc0000005 崩，报错完全看不出原因），用 `codegen-units=4` + `lto="thin"`。
 - 三个 bat：`启动桌面端.bat`（开发）/ `构建安装包.bat`（发布）/ `_环境准备.bat`（共享）。
   必须 **UTF-8 无 BOM + CRLF**；`call 文件.bat 标签` 靠 shift+goto 分发且**顶层不能 setlocal**；
   搬家自愈**只对项目内 target** 生效（否则会删掉共享的 `CARGO_TARGET_DIR`）。
