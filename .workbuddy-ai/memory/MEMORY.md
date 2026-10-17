@@ -148,8 +148,16 @@ React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 
 - `--workers`（默认 1，0=自动 min(6, cpu//2)）：全量 **1,048 → 350 s**、ROI 462 → 195 s。
   四条护栏：**按 tile_idx 排序后累加** / initializer 只开一次句柄 / 锁死 BLAS+GDAL 线程 /
   子进程不写 stdout。**`workers` 不进指纹**。瓦片 < max(4, workers*2) 自动退回串行。
-- ⚠️ **建金字塔会改变网格勘察结果**：`order_tiles_by_validity` 用 overview 判有效性，
-  降采样方式一变 → 采样瓦片不同 → 网格 8.45/7.32 → 8.35/7.23。跨影像版本对比必须重立基线。
+- ✅ **建金字塔后网格 8.45/7.32 → 8.35/7.23 是变准了**（不是漂移）：8.35×7.23 正是
+  早期用频域自相关 + 树心 NND 互证的**真实物理株行距**；没建金字塔时全分辨率跨步
+  近邻抽样有混叠噪声才撑大到 8.45/7.32。跨影像版本对比仍须重立基线。
+- **Tauri ↔ sidecar IPC 已通**（`run_detect`/`cancel_detect`/`detect_status`）：
+  **两个线程分别读 stdout 与 stderr**（否则 64 KB 管道填满 → 永久死锁且无报错）；
+  注入 PYTHONUNBUFFERED/IOENCODING/UTF8；`CREATE_NO_WINDOW`；
+  `isTauri()` + 动态 import 保浏览器模式。**参数名必须逐字对齐**
+  （`chm_path`/`segment_path`/`target_density_per_ha`，写错只回 W1001 然后照常跑完）。
+- **重跑合并策略** `lib/mergeEdits.ts`：`keep_manual`/`overwrite`；匹配用质心落入 +
+  外接框 IoU 兜底；删除优先；`replayed_from` 留痕；store 的 `deletedFeatures` **存几何**。
 - 三个 bat：`启动桌面端.bat`（开发）/ `构建安装包.bat`（发布）/ `_环境准备.bat`（共享）。
   必须 **UTF-8 无 BOM + CRLF**；`call 文件.bat 标签` 靠 shift+goto 分发且**顶层不能 setlocal**；
   搬家自愈**只对项目内 target** 生效（否则会删掉共享的 `CARGO_TARGET_DIR`）。
