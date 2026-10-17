@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing as mp
 import os
 import random
 import sys
@@ -104,6 +105,7 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     "out_json":         (str,   None),
     "kml":              (str,   None),   # 已废弃，请用 roi（保留兼容）
     "roi":              (str,   ""),     # ROI 圈选：只检测该多边形内（.geojson/.kml）
+    "workers":          (int,   1),      # 并行进程数：1=串行；0=自动 min(6, cpu//2)
     "tile_size":        (int,   2048),
     "overlap":          (int,   128),
     "limit":            (int,   None),
@@ -243,6 +245,9 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     if values["progress_every"] is not None and values["progress_every"] < 1:
         raise ParamError(f"progress_every 必须 ≥ 1，收到 {values['progress_every']}")
 
+    if not (0 <= int(values["workers"]) <= 32):
+        raise ParamError(f"workers 应在 0~32（0=自动），收到 {values['workers']}")
+
     # KML 裁剪已由 roi 取代（契约 W1002）
     if values.get("kml") and not values.get("roi"):
         warnings.append({
@@ -259,6 +264,9 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     args.out_json = values["out_json"]
     # ROI 圈选（2026-10-17）：只检测该多边形内；圈外瓦片跳过不读盘
     args.roi = values["roi"]
+    # 并行进程数（2026-10-17）。⚠️ 刻意**不**加入参数指纹：
+    # 进程数不影响单瓦片结果，改它不该让 528 个瓦片缓存全部失效。
+    args.workers = int(values["workers"])
     args.tile_size = values["tile_size"]
     args.overlap = values["overlap"]
     args.limit = values["limit"]
@@ -327,6 +335,7 @@ def params_echo(args: SimpleNamespace) -> dict:
         "work_dir": args.work_dir,
         "out_json": args.out_json,
         "roi": args.roi,
+        "workers": args.workers,
         "tile_size": args.tile_size,
         "overlap": args.overlap,
         "limit": args.limit,
@@ -926,6 +935,8 @@ def read_params(argv: list[str]) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows / PyInstaller：多进程（--workers>1）必须调用，否则子进程会递归启动自己
+    mp.freeze_support()
     argv = list(sys.argv[1:] if argv is None else argv)
     raw = read_params(argv)
 

@@ -68,10 +68,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import multiprocessing as mp
 import os
 import shutil
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from functools import wraps
@@ -883,6 +885,101 @@ def load_tile_result(path: Path, expect_fp: str) -> dict | None:
 
 
 # ============================================================================
+# 多进程跑批（2026-10-17，--workers）
+# ============================================================================
+#
+# 为什么能加速：单瓦片 ~2 秒，绝大部分时间在 numpy / scipy / GDAL 的 C 层，
+# 不持有 GIL，天然适合多进程。
+#
+# ★ 四条护栏（缺一条就会"提速了但数字变了"或"反而更慢"）
+#
+# 1｜**按 tile_idx 排序后再累加**。并发完成顺序是随机的，而串行版是按
+#    tiles 顺序累加 all_features / class_totals / area_total。若不排序，
+#    浮点加法顺序变化 → 末位抖动 → 破坏"逐位可复现"红线。
+#    做法：worker 返回 (idx, ...)，主进程 results.sort(key=idx) 后再累加。
+#
+# 2｜**子进程只开一次大文件句柄**。Windows 用 spawn，DatasetReader 不可
+#    pickle。若每个瓦片都 rasterio.open 一次正射影像 + CHM + segment，
+#    528 个瓦片就是 1,500+ 次 4.6 GB 文件的头部解析，提速全被吃掉。
+#    做法：ProcessPoolExecutor(initializer=_worker_init) 在子进程启动时开一次。
+#
+# 3｜**锁死底层线程数**。numpy/scipy/GDAL 默认各自多线程；6 个 worker ×
+#    每个 8~16 线程 = 上百线程抢 CPU 与磁盘锁，实测会比单进程还慢。
+#    做法：_worker_init 里设 OMP/MKL/OPENBLAS/NUMEXPR/GDAL_NUM_THREADS=1。
+#
+# 4｜**子进程绝不写 stdout**。sidecar 的 stdout 是 NDJSON 数据通道。
+#    进度事件全部由主进程在 as_completed 循环里按原有节奏输出。
+#
+# ⚠️ `workers` **不进参数指纹**：进程数不影响单瓦片结果，改它不该让
+#    528 个瓦片的缓存全部失效（重跑一次 1,048 秒）。
+_WORKER: dict = {}
+
+
+def resolve_workers(n: int) -> int:
+    """把 --workers 归一成实际进程数。0 = 自动（min(6, cpu//2)）。"""
+    if n and n > 0:
+        return max(1, min(int(n), 32))
+    cpu = os.cpu_count() or 4
+    return max(1, min(6, cpu // 2))
+
+
+def _worker_init(in_path: str, chm_path, seg_path, px_m: float, grid,
+                 args, out_dir: str, elev_params, roi_geom, fp: str) -> None:
+    """子进程启动钩子：锁线程 + 开一次句柄。**不要在这里写 stdout。**"""
+    # 护栏 3：进程内单线程，把并行度完全交给外层进程池
+    for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+              "NUMEXPR_NUM_THREADS", "GDAL_NUM_THREADS"):
+        os.environ[k] = "1"
+
+    import rasterio as _rio
+    ds = _rio.open(in_path)
+    _WORKER.update({
+        "ds": ds, "px_m": px_m, "grid": grid, "args": args,
+        "out_dir": Path(out_dir), "elev_params": elev_params,
+        "roi_geom": roi_geom, "fp": fp, "elevation": None,
+    })
+    # 护栏 2：海拔证据（CHM / segment）也只开一次
+    if elev_params is not None and getattr(elev_params, "enabled", False) and (chm_path or seg_path):
+        try:
+            ev = ElevationEvidence(chm_path, seg_path, ortho_transform=ds.transform)
+            _WORKER["elevation"] = ev if ev.available else None
+        except Exception:  # noqa: BLE001
+            _WORKER["elevation"] = None
+
+
+def _worker_run(task: tuple[int, Tile]) -> tuple:
+    """处理一个瓦片。返回 (idx, tile_id, status, gaps, stats, error)。
+
+    异常在这里就地吞掉并写成 failed 瓦片文件（与串行版行为一致）——
+    让主进程能继续跑完其余瓦片，而不是整个池子崩掉。
+    """
+    idx, tile = task
+    tf = _WORKER["out_dir"] / f"{tile.tile_id}.json"
+    try:
+        res = process_tile(_WORKER["ds"], tile, _WORKER["px_m"], _WORKER["grid"],
+                           _WORKER["args"], _WORKER["out_dir"],
+                           elevation=_WORKER["elevation"],
+                           elev_params=_WORKER["elev_params"],
+                           roi_geom=_WORKER["roi_geom"])
+        res["fingerprint"] = _WORKER["fp"]
+        res["generated_at"] = datetime.now(timezone.utc).isoformat()
+        atomic_write_json(tf, res)
+        return (idx, tile.tile_id, res.get("status", "done"),
+                res.get("gaps", []), res.get("stats", {}), None)
+    except Exception as e:  # noqa: BLE001
+        err = f"{type(e).__name__}: {str(e)[:300]}"
+        atomic_write_json(tf, {
+            "tile_id": tile.tile_id, "status": "failed", "error": err,
+            "fingerprint": _WORKER["fp"],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "core": {"row": tile.row_core, "col": tile.col_core,
+                     "height": tile.h_core, "width": tile.w_core},
+            "gaps": [], "stats": {},
+        })
+        return (idx, tile.tile_id, "failed", [], {}, err)
+
+
+# ============================================================================
 # 主流程
 # ============================================================================
 def build_argparser() -> argparse.ArgumentParser:
@@ -905,6 +1002,10 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--force", action="store_true", help="忽略已有瓦片缓存，全部重算")
     ap.add_argument("--merge-only", action="store_true", help="只合并已有瓦片，不处理")
     ap.add_argument("--grid-only", action="store_true", help="只做网格勘察，不处理空地")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="并行进程数。1=串行（默认，与历史行为完全一致）；"
+                         "0=自动 min(6, cpu//2)；建议 4~6。"
+                         "⚠️ 进程数不进参数指纹，改它不会让瓦片缓存失效")
     ap.add_argument("--min-valid-ratio", type=float, default=0.05,
                     help="瓦片有效数据低于该比例则跳过。默认 0.05")
 
@@ -993,6 +1094,8 @@ def build_argparser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    # Windows / PyInstaller 打包后必须调用，否则多进程会无限递归启动自己
+    mp.freeze_support()
     ap = build_argparser()
     args = ap.parse_args()
 
@@ -1186,6 +1289,9 @@ def main() -> int:
     area_total = 0.0
     t_proc = time.time()
 
+    # ---- 第 1 步：按**原始顺序**吃掉命中缓存的瓦片（与串行版完全一致）----
+    # 缓存判定必须留在主进程：它要按 tiles 顺序累加，顺序变了浮点末位就会抖。
+    pending: list[tuple[int, Tile]] = []
     for i, tile in enumerate(tiles, 1):
         tf = tiles_dir / f"{tile.tile_id}.json"
 
@@ -1205,45 +1311,92 @@ def main() -> int:
 
         if args.merge_only:
             continue
+        pending.append((i, tile))
 
-        try:
-            res = process_tile(ds, tile, px_m, grid, args, tiles_dir,
-                               elevation=elevation,
-                               elev_params=elev_params,
-                               roi_geom=roi_geom)
-            res["fingerprint"] = fp
-            res["generated_at"] = datetime.now(timezone.utc).isoformat()
-            atomic_write_json(tf, res)
+    workers = resolve_workers(getattr(args, "workers", 1) or 1)
+    # 瓦片太少时 spawn 开销不划算（Windows 每个子进程约 1 秒），直接串行
+    use_pool = workers > 1 and len(pending) >= max(4, workers * 2)
+
+    if use_pool:
+        log(f"多进程跑批：{workers} 个 worker · 待处理 {len(pending)} 个瓦片"
+            f"（已命中缓存 {skipped} 个）")
+        results: list[tuple] = []
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_worker_init,
+            initargs=(str(in_path), args.chm or None, args.segment or None,
+                      px_m, grid, args, str(tiles_dir), elev_params, roi_geom, fp),
+        ) as ex:
+            futures = [ex.submit(_worker_run, t) for t in pending]
+            for n, fut in enumerate(as_completed(futures), 1):
+                results.append(fut.result())
+                step = max(1, len(pending) // 20)
+                if n % step == 0 or n == len(pending):
+                    el = time.time() - t_proc
+                    rate = n / el if el > 0 else 0
+                    eta = (len(pending) - n) / rate if rate > 0 else 0
+                    log(f"  进度 {n}/{len(pending)}（{(n/len(pending))*100:5.1f}%）"
+                        f"  用时 {el:5.0f}s  预计剩余 {eta:5.0f}s")
+
+        # 护栏 1：**严格按 tile_idx 升序**累加，保证与串行版逐位一致
+        results.sort(key=lambda r: r[0])
+        for _idx, tid, status, gaps, stats, err in results:
             done += 1
-            if res["status"] == "done":
-                all_features.extend(res["gaps"])
-                area_total += res["stats"]["area_sqm"]
-                for k, v in res["stats"]["by_class"].items():
+            if err:
+                failed += 1
+                log(f"  ✗ {tid} 处理失败：{err[:150]}")
+                continue
+            if status == "done":
+                all_features.extend(gaps)
+                area_total += stats.get("area_sqm", 0.0)
+                for k, v in stats.get("by_class", {}).items():
                     if k in class_totals:
                         class_totals[k] += v
-        except Exception as e:  # noqa: BLE001
-            failed += 1
-            log(f"  ✗ {tile.tile_id} 处理失败：{type(e).__name__}: {str(e)[:150]}")
-            atomic_write_json(tf, {
-                "tile_id": tile.tile_id, "status": "failed",
-                "error": f"{type(e).__name__}: {str(e)[:300]}",
-                "fingerprint": fp,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "core": {"row": tile.row_core, "col": tile.col_core,
-                         "height": tile.h_core, "width": tile.w_core},
-                "gaps": [], "stats": {},
-            })
-            continue
+    else:
+        # ---- 串行分支（workers=1，或瓦片太少不值得起进程池）----
+        for n, (i, tile) in enumerate(pending, 1):
+            tf = tiles_dir / f"{tile.tile_id}.json"
+            try:
+                res = process_tile(ds, tile, px_m, grid, args, tiles_dir,
+                                   elevation=elevation,
+                                   elev_params=elev_params,
+                                   roi_geom=roi_geom)
+                res["fingerprint"] = fp
+                res["generated_at"] = datetime.now(timezone.utc).isoformat()
+                atomic_write_json(tf, res)
+                done += 1
+                if res["status"] == "done":
+                    all_features.extend(res["gaps"])
+                    area_total += res["stats"]["area_sqm"]
+                    for k, v in res["stats"]["by_class"].items():
+                        if k in class_totals:
+                            class_totals[k] += v
+            except Exception as e:  # noqa: BLE001
+                failed += 1
+                log(f"  ✗ {tile.tile_id} 处理失败：{type(e).__name__}: {str(e)[:150]}")
+                atomic_write_json(tf, {
+                    "tile_id": tile.tile_id, "status": "failed",
+                    "error": f"{type(e).__name__}: {str(e)[:300]}",
+                    "fingerprint": fp,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "core": {"row": tile.row_core, "col": tile.col_core,
+                             "height": tile.h_core, "width": tile.w_core},
+                    "gaps": [], "stats": {},
+                })
+                continue
 
-        # --- 进度输出 ---
-        step = max(1, len(tiles) // 20)
-        if i % step == 0 or i == len(tiles):
-            el = time.time() - t_proc
-            rate = i / el if el > 0 else 0
-            eta = (len(tiles) - i) / rate if rate > 0 else 0
-            log(f"  进度 {i}/{len(tiles)}（{(i/len(tiles))*100:5.1f}%）"
-                f"  用时 {el:5.0f}s  预计剩余 {eta:5.0f}s"
-                f"  空地累计 {len(all_features)} 块 / {area_total:,.0f} m²")
+            # --- 进度输出（主进程，按原始顺序）---
+            step = max(1, len(pending) // 20)
+            if n % step == 0 or n == len(pending):
+                el = time.time() - t_proc
+                rate = n / el if el > 0 else 0
+                eta = (len(pending) - n) / rate if rate > 0 else 0
+                log(f"  进度 {n}/{len(pending)}（{(n/len(pending))*100:5.1f}%）"
+                    f"  用时 {el:5.0f}s  预计剩余 {eta:5.0f}s"
+                    f"  空地累计 {len(all_features)} 块 / {area_total:,.0f} m²")
+
+    log(f"瓦片处理完成：新算 {done} · 命中缓存 {skipped} · 失败 {failed}"
+        f"（{time.time() - t_proc:.1f} s，workers={workers if use_pool else 1}）")
 
     # --- 若 --merge-only 或本轮全部命中缓存，则从磁盘把结果读全 ---
     if args.merge_only or (done == 0 and skipped == len(tiles)):
