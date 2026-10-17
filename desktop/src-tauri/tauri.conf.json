@@ -29,6 +29,8 @@
     "active": true,
     "targets": ["msi", "nsis"],
     "icon": ["icons/icon.png"],
-    "resources": []
+    "resources": {
+      "../runtime/desktop_entry/**/*": "py-runtime/desktop_entry/"
+    }
   }
 }

@@ -19,7 +19,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -41,7 +41,7 @@ struct Services {
 struct ServiceStatus {
     backend_url: String,
     tile_server_running: bool,
-    python: Option<String>,
+    backend: Option<String>,
     project_root: Option<String>,
 }
 
@@ -75,29 +75,167 @@ fn project_root(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// 2. 打包后的 `resources/python/`（裁定：`--onedir` 或 python-build-standalone，
 ///    **严禁 `--onefile`** —— 每次启动解压 350 MB 到 %TEMP%，冷启动 6~10 s 且易被杀软拦）
 /// 3. 开发态仓库根的 `.venv`
-fn resolve_python(app: &tauri::AppHandle) -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("FGD_PYTHON") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
+/// 后端执行方式 —— 生产与开发走两条路，**互不破坏**。
+///
+/// | 形态 | 用什么 | 场景 |
+/// |---|---|---|
+/// | `Bundled` | `py-runtime/desktop_entry/desktop_entry.exe` | 安装包 / 免安装目录 |
+/// | `Dev` | 仓库 `.venv/Scripts/python.exe` + `scripts/*.py` | 日常开发 |
+///
+/// 打包版是**单入口**（`scripts/desktop_entry.py`）：靠第一个参数分发到
+/// `tile_server` 或 `sidecar`，两个服务共享同一份 `_internal` 动态库
+/// —— 否则 rasterio/numpy/scipy/shapely/pyproj 会被复制两遍，包体翻倍。
+enum Backend {
+    Bundled(PathBuf),
+    Dev { python: PathBuf, root: PathBuf },
+}
+
+impl Backend {
+    fn describe(&self) -> String {
+        match self {
+            Backend::Bundled(p) => format!("打包运行时 {}", p.display()),
+            Backend::Dev { python, .. } => format!("开发态解释器 {}", python.display()),
         }
     }
+
+    fn is_bundled(&self) -> bool {
+        matches!(self, Backend::Bundled(_))
+    }
+}
+
+/// 找后端执行器。**生产优先、开发兜底**：
+/// 1. `FGD_BACKEND` 环境变量（排障时可强制指定 exe 或 python）
+/// 2. Tauri `resources/py-runtime/desktop_entry.exe`（安装包）
+/// 3. 应用同级 `py-runtime/desktop_entry.exe`（免安装 zip 场景）
+/// 4. 仓库 `.venv`（开发态）
+fn resolve_backend(app: &tauri::AppHandle) -> Option<Backend> {
+    if let Ok(p) = std::env::var("FGD_BACKEND") {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            // 名字里带 python 就当解释器，否则当打包入口
+            let is_python = pb
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.to_lowercase().contains("python"))
+                .unwrap_or(false);
+            if is_python {
+                let root = project_root(app)?;
+                return Some(Backend::Dev { python: pb, root });
+            }
+            return Some(Backend::Bundled(pb));
+        }
+    }
+
+    let mut search_dirs: Vec<PathBuf> = Vec::new();
     if let Ok(res) = app.path().resource_dir() {
-        for cand in ["python/python.exe", "python/bin/python3", "python.exe"] {
-            let pb = res.join(cand);
-            if pb.exists() {
-                return Some(pb);
+        search_dirs.push(res.clone());
+        search_dirs.push(res.join("py-runtime"));
+        // 免安装：主程序同级的 py-runtime
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                search_dirs.push(dir.to_path_buf());
+                search_dirs.push(dir.join("py-runtime"));
             }
         }
     }
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for dir in &search_dirs {
+        for name in ["desktop_entry.exe", "desktop_entry"] {
+            let cand = dir.join(name);
+            if cand.exists() {
+                return Some(Backend::Bundled(cand));
+            }
+        }
+    }
+
+    let root = project_root(app)?;
     for cand in [".venv/Scripts/python.exe", ".venv/bin/python"] {
         let pb = root.join(cand);
         if pb.exists() {
-            return pb.canonicalize().ok();
+            return Some(Backend::Dev {
+                python: pb.canonicalize().ok()?,
+                root,
+            });
         }
     }
     None
+}
+
+/// 打包态的数据根目录：`resources/data` → 主程序同级 `data` → 主程序同级。
+///
+/// 打包版没有"仓库根"，而 `tile_server` 的默认探测（`drone data/`、`output/`）
+/// 都是相对路径。所以这里给一个明确的工作目录，并把相对路径参数补成绝对路径。
+fn bundled_data_root(app: &tauri::AppHandle) -> PathBuf {
+    // 1) 显式指定（运维 / 多套数据切换）
+    if let Ok(p) = std::env::var("FGD_DATA_ROOT") {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return pb;
+        }
+    }
+    // 2) 安装目录里的 data/（可预置只读样例数据）
+    if let Ok(res) = app.path().resource_dir() {
+        let d = res.join("data");
+        if d.exists() {
+            return d;
+        }
+    }
+    // 3) %LOCALAPPDATA%\fgd\data —— **可写**，推荐用户把影像与结果放这里。
+    //    安装到 Program Files 时安装目录是只读的，写不了 output/ 与瓦片缓存。
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let d = PathBuf::from(local).join("fgd").join("data");
+        if d.exists() {
+            return d;
+        }
+        // 首次运行：建出来并返回（用户把 drone data/ 与 output/ 放进去即可）
+        if std::fs::create_dir_all(&d).is_ok() {
+            return d;
+        }
+    }
+    // 4) 主程序同级（免安装 zip 场景）
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let d = dir.join("data");
+            if d.exists() {
+                return d.to_path_buf();
+            }
+            return dir.to_path_buf();
+        }
+    }
+    PathBuf::from(".")
+}
+
+/// 按后端形态构造命令，统一注入环境变量与 `CREATE_NO_WINDOW`。
+fn build_command(backend: &Backend, args: &[String], bundled_cwd: &Path) -> Command {
+    let mut cmd = match backend {
+        Backend::Bundled(exe) => {
+            let mut c = Command::new(exe);
+            // ⚠️ 打包态的工作目录必须是**可写**的数据根，不能是 exe 所在目录
+            //    （装到 Program Files 时那目录只读，写 output/ 与瓦片缓存会失败）。
+            c.current_dir(bundled_cwd);
+            c
+        }
+        Backend::Dev { python, root } => {
+            let mut c = Command::new(python);
+            c.current_dir(root);
+            c
+        }
+    };
+    for a in args {
+        cmd.arg(a);
+    }
+    // Windows 非控制台管道默认 cp936：中文日志/路径会乱码或抛错；
+    // PYTHONUNBUFFERED 让 progress 事件实时吐出（否则攒满 8 KB 才发）。
+    cmd.env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONUTF8", "1");
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
 }
 
 /// 拉起瓦片服务。已在监听则不重复启动（多人共用 / 手动起过服务的场景）。
@@ -105,35 +243,43 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     if port_open(BACKEND_PORT) {
         return Ok(format!("端口 {BACKEND_PORT} 已在监听，复用现有服务"));
     }
-    let py = resolve_python(app)
-        .ok_or("找不到 Python 解释器：请设置 FGD_PYTHON，或先运行 scripts/配置环境.ps1")?;
-    let root = project_root(app).ok_or("定位不到项目根目录")?;
-    let script = root.join("scripts").join("tile_server.py");
-    if !script.exists() {
-        return Err(format!("找不到 {}", script.display()));
+    let backend = resolve_backend(app).ok_or(
+        "找不到后端：请先跑 scripts/build_desktop_runtime.ps1 打包，或配置好 .venv",
+    )?;
+
+    // 两种形态的启动参数不同：
+    //   Dev     → python scripts/tile_server.py
+    //   Bundled → desktop_entry.exe --run-tile-server [--source ... --gaps ...]
+    //             （打包版没有仓库根，必须显式给影像与结果的绝对路径）
+    let mut args: Vec<String> = Vec::new();
+    if backend.is_bundled() {
+        args.push("--run-tile-server".into());
+        let data = bundled_data_root(app);
+        let src = data.join("drone data").join("WGR17-002.tif");
+        if src.exists() {
+            args.push("--source".into());
+            args.push(src.to_string_lossy().to_string());
+        }
+        let gaps = data.join("output").join("wgr17-final-gaps.geojson");
+        if gaps.exists() {
+            args.push("--gaps".into());
+            args.push(gaps.to_string_lossy().to_string());
+        }
+    } else if let Backend::Dev { root, .. } = &backend {
+        let script = root.join("scripts").join("tile_server.py");
+        if !script.exists() {
+            return Err(format!("找不到 {}", script.display()));
+        }
+        args.push(script.to_string_lossy().to_string());
     }
 
-    let mut cmd = Command::new(&py);
-    cmd.arg(&script)
-        .current_dir(&root)
-        // 护栏 2：Windows 非控制台管道默认 cp936，中文日志/路径会乱码或抛错
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .env("PYTHONUTF8", "1")
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    // Windows 下别弹出黑色控制台窗口
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    let data_root = bundled_data_root(app);
+    let mut cmd = build_command(&backend, &args, &data_root);
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("启动瓦片服务失败：{e}（解释器 {}）", py.display()))?;
+        .map_err(|e| format!("启动瓦片服务失败：{e}（{}）", backend.describe()))?;
 
     // 把服务的人类日志转到本进程 stderr，方便在 Tauri 控制台观察
     if let Some(err) = child.stderr.take() {
@@ -147,7 +293,7 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     *svc.tile.lock().unwrap() = Some(child);
     Ok(format!(
         "已用 {} 启动瓦片服务（端口 {BACKEND_PORT}）",
-        py.display()
+        backend.describe()
     ))
 }
 
@@ -182,12 +328,8 @@ fn run_detect(
         }
     }
 
-    let py = resolve_python(&app).ok_or("找不到 Python 解释器：请设置 FGD_PYTHON")?;
-    let root = project_root(&app).ok_or("定位不到项目根目录")?;
-    let script = root.join("scripts").join("sidecar.py");
-    if !script.exists() {
-        return Err(format!("找不到 {}", script.display()));
-    }
+    let backend = resolve_backend(&app)
+        .ok_or("找不到后端（打包运行时与 .venv 都不存在）")?;
     // ROI 传递：sidecar 的 `roi` 参数是**文件路径**，不接受内联几何。
     // 前端把画好的多边形作为 `roi_geojson` 传进来，这里落成临时 GeoJSON 再替换。
     let mut payload = params;
@@ -207,29 +349,46 @@ fn run_detect(
             );
         }
     }
+    // 打包态没有仓库根：把相对路径参数补成 data 根下的绝对路径。
+    // 前端传的是 `drone data/WGR17-002.tif`、`output/chm.tif` 这类相对路径，
+    // 在 Dev 模式下靠 cwd=仓库根 就能解析；打包后必须自己拼。
+    if backend.is_bundled() {
+        let base = bundled_data_root(&app);
+        for key in [
+            "input", "chm_path", "segment_path", "out_json", "work_dir", "forest_mask",
+        ] {
+            if let Some(v) = payload.get_mut(key) {
+                if let Some(txt) = v.as_str() {
+                    if !txt.is_empty() && Path::new(txt).is_relative() {
+                        *v = serde_json::Value::String(
+                            base.join(txt).to_string_lossy().to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let json = serde_json::to_string(&payload).map_err(|e| format!("参数序列化失败：{e}"))?;
 
-    let mut cmd = Command::new(&py);
-    cmd.arg(&script)
-        .arg("--params-json")
-        .arg(&json)
-        .current_dir(&root)
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PYTHONIOENCODING", "utf-8")
-        .env("PYTHONUTF8", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+    let mut args: Vec<String> = Vec::new();
+    if let Backend::Dev { root, .. } = &backend {
+        let script = root.join("scripts").join("sidecar.py");
+        if !script.exists() {
+            return Err(format!("找不到 {}", script.display()));
+        }
+        args.push(script.to_string_lossy().to_string());
     }
+    args.push("--params-json".into());
+    args.push(json);
+
+    let data_root = bundled_data_root(&app);
+    let mut cmd = build_command(&backend, &args, &data_root);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("启动 sidecar 失败：{e}（解释器 {}）", py.display()))?;
+        .map_err(|e| format!("启动 sidecar 失败：{e}（{}）", backend.describe()))?;
 
     let stdout = child.stdout.take().ok_or("拿不到 sidecar stdout")?;
     let stderr = child.stderr.take().ok_or("拿不到 sidecar stderr")?;
@@ -307,7 +466,7 @@ fn service_status(app: tauri::AppHandle) -> ServiceStatus {
     ServiceStatus {
         backend_url: format!("http://127.0.0.1:{BACKEND_PORT}"),
         tile_server_running: port_open(BACKEND_PORT),
-        python: resolve_python(&app).map(|p| p.display().to_string()),
+        backend: resolve_backend(&app).map(|b| b.describe()),
         project_root: project_root(&app).map(|p| p.display().to_string()),
     }
 }

@@ -39,3 +39,11 @@ Thumbs.db
 
 # ---- 临时文件 ----
 *.tmp
+
+# ---- PyInstaller 打包产物（179 MB 二进制，绝不入库）----
+# 只提交 scripts/desktop_entry.py 与 scripts/build_desktop_runtime.ps1，
+# 换机器跑一次构建脚本即可重新生成。
+desktop/runtime/
+build/pyinstaller/
+build/*.spec
+*.spec.bak
