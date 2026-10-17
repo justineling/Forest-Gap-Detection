@@ -93,15 +93,15 @@ border-bottom:1px dashed var(--line)}
 <div class="lead">
 这份是<b>跨机器协同的操作清单</b>：为了让公司机与家用机看到同一份结果，
 你需要往 Google Drive 放哪些东西、怎么放、以及<b>哪些千万别放</b>。<br><br>
-一句话结论：<b>放 <code>output/</code>（检测结果，324 MB）+ <code>segment.tif</code> 和 <code>tree_info.json</code>（共 3 MB）；
+一句话结论：<b>放 <code>output/</code>（检测结果，370 MB）+ <code>segment.tif</code> 和 <code>tree_info.json</code>（共 3 MB）；
 891 MB 的 <code>dsm.tif</code> 和 4.7 GB 的正射影像都不用放。</b>
 </div>
 
 <h2>一、必须放的：<code>output/</code> 整个目录</h2>
 <div class="card">
-<div class="kv"><span>整个 output/ 目录</span><span class="mono"><b>324 MB</b></span></div>
-<div class="kv"><span>├─ arcgis/（ArcGIS 交付包，最重要）</span><span class="mono">24 MB</span></div>
-<div class="kv"><span>├─ jobs/（瓦片缓存 + 运行日志）</span><span class="mono">133 MB</span></div>
+<div class="kv"><span>整个 output/ 目录</span><span class="mono"><b>370 MB</b></span></div>
+<div class="kv"><span>├─ arcgis/（ArcGIS 交付包，最重要）</span><span class="mono">28 MB</span></div>
+<div class="kv"><span>├─ jobs/（瓦片缓存 + 运行日志）</span><span class="mono">140 MB</span></div>
 <div class="kv"><span>├─ chm.tif（冠层高度模型）</span><span class="mono">60 MB</span></div>
 <div class="kv"><span>└─ wgr17-elev-gaps.geojson（最新检测结果）</span><span class="mono">25 MB</span></div>
 </div>
@@ -174,7 +174,7 @@ border-bottom:1px dashed var(--line)}
 <div class="card">
 <pre class="mono" style="background:#f4f7f4;padding:14px;border-radius:8px;overflow-x:auto;line-height:1.7">Google Drive/
 └── ForestGapDetection/
-    ├── output/                  ← 直接同步整个目录（324 MB）
+    ├── output/                  ← 直接同步整个目录（370 MB）
     │   ├── arcgis/              ← ArcGIS 交付包（要交出去的）
     │   ├── jobs/                ← 瓦片缓存与日志
     │   ├── chm.tif              ← 冠层高度模型
