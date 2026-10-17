@@ -430,6 +430,46 @@ kbd {
   white-space: pre-wrap;
 }
 
+/* ---------- 估算参数（退让档位）---------- */
+.est-params {
+  margin: 10px 12px;
+}
+.est-params-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12.5px;
+  margin-bottom: 8px;
+}
+.accent {
+  color: var(--accent);
+}
+.seg {
+  display: flex;
+  gap: 4px;
+}
+.seg-btn {
+  flex: 1;
+  background: var(--bg);
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 0;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.seg-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.seg-btn.active {
+  background: rgba(61, 220, 151, 0.14);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ---------- 错误边界 ---------- */
 .crash {
   margin: 12px;

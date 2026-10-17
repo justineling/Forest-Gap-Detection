@@ -1,5 +1,6 @@
 import { useAppStore } from '../store/useAppStore'
 import { ALL_CLASSES, CLASS_STYLES, GROUP_META, GROUP_ORDER } from '../lib/classes'
+import { CLEARANCE_PRESETS } from '../lib/estimate'
 import type { GapClass, PriorityGroup } from '../types'
 
 export default function LeftPanel() {
@@ -8,6 +9,8 @@ export default function LeftPanel() {
   const toggleClass = useAppStore((s) => s.toggleClass)
   const setGroupVisible = useAppStore((s) => s.setGroupVisible)
   const select = useAppStore((s) => s.select)
+  const clearanceM = useAppStore((s) => s.clearanceM)
+  const setClearance = useAppStore((s) => s.setClearance)
 
   const stats = new Map<GapClass, { n: number; area: number }>()
   for (const c of ALL_CLASSES) stats.set(c, { n: 0, area: 0 })
@@ -100,6 +103,28 @@ export default function LeftPanel() {
             </section>
           )
         })}
+      </div>
+
+      <div className="card est-params">
+        <div className="est-params-head">
+          <b>排坑退让距离</b>
+          <span className="mono accent">{clearanceM.toFixed(1)} m</span>
+        </div>
+        <div className="seg">
+          {CLEARANCE_PRESETS.map((p) => (
+            <button
+              key={p.value}
+              className={clearanceM === p.value ? 'seg-btn active' : 'seg-btn'}
+              onClick={() => setClearance(p.value)}
+              title={p.hint}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <div className="kpi-hint">
+          {CLEARANCE_PRESETS.find((p) => p.value === clearanceM)?.hint}
+        </div>
       </div>
 
       <div className="panel-foot">

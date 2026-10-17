@@ -8,7 +8,7 @@ import type {
   RasterMeta,
 } from '../types'
 import { ALL_CLASSES, CLASS_STYLES, GROUP_META } from '../lib/classes'
-import { estimate } from '../lib/estimate'
+import { estimate, DEFAULT_GRID } from '../lib/estimate'
 import { centroid, polygonAreaM2 } from '../lib/geometry'
 
 const MAX_LOGS = 300
@@ -36,6 +36,8 @@ export interface AppState {
   // —— 估算（需求 5）——
   estimateResult: EstimateResult | null
   estimating: boolean
+  /** 排坑退让距离（m）。默认 0.5 —— 依据见 lib/estimate.ts 的 DEFAULT_GRID 注释 */
+  clearanceM: number
 
   // —— 编辑计数（需求 4 留痕）——
   manualAdded: number
@@ -55,6 +57,7 @@ export interface AppState {
   updateGapGeometry: (id: string, geom: PolygonGeometry) => void
   setGapClass: (id: string, cls: GapClass) => void
   setRoi: (geom: PolygonGeometry | null) => void
+  setClearance: (m: number) => void
   runEstimate: () => void
   pushLog: (msg: string) => void
 }
@@ -74,6 +77,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   estimateResult: null,
   estimating: false,
+  clearanceM: DEFAULT_GRID.clearance_m,
 
   manualAdded: 0,
   manualDeleted: 0,
@@ -217,12 +221,20 @@ export const useAppStore = create<AppState>()((set, get) => ({
       ),
     })),
 
+  setClearance: (m) =>
+    set((s) => ({
+      clearanceM: m,
+      // 退让变了，旧估算结果立刻失效（避免界面显示过期株数）
+      estimateResult: null,
+      logs: appendLog(s.logs, `排坑退让距离改为 ${m} m`),
+    })),
+
   runEstimate: () => {
-    const { gaps } = get()
+    const { gaps, clearanceM } = get()
     set({ estimating: true })
-    // 同步计算（前端原型）：总量约 1,700 个多边形、几千个候选点，实测 < 200 ms
+    // 同步计算（前端原型）：1,726 个多边形、几千个候选点，实测 < 400 ms
     const t0 = performance.now()
-    const res = estimate(gaps)
+    const res = estimate(gaps, { clearance_m: clearanceM })
     const ms = Math.round(performance.now() - t0)
     set((s) => ({
       estimateResult: res,

@@ -37,13 +37,39 @@ export interface GridSpec {
   clearance_m: number
 }
 
-/** 实测默认规格（来自 `output/*.geojson` 的 planting_grid / grid_survey） */
+/**
+ * 实测默认规格（来自 `output/*.geojson` 的 planting_grid / grid_survey）。
+ *
+ * ⚠️ `clearance_m = 0.5` 是**业务拍板值**（2026-10-17），不是拍脑袋定的：
+ *
+ * `open_patch` 多边形的边界是周边存活油棕的**树冠叶尖外缘**（本身距老树干
+ * 已有约 4.0~4.2 m），而不是树干中心。所以"从多边形边界退让 R"= 新苗距老树干
+ * `4.2 + R` 米。
+ *
+ * 实测 449 块 open_patch 的等效宽度（2A/P，UTM 49N 精算）：
+ *   P10 = 2.93 m · P25 = 3.79 m · **P50 = 4.68 m** · P75 = 5.73 m · P90 = 7.27 m
+ * 即**过半连片空地是窄条**（单行缺株带的典型净宽约 5~6 m）。
+ *
+ * 不同退让下的"理论可排点块数"（宽 - 2R > 1 m）：
+ *   0.5 m → 437/449 ｜ 1.0 m → 398 ｜ 1.5 m → 308 ｜ **2.0 m → 189** ｜ 3.0 m → 51
+ * 排坑实测：0.5 m → 3,594 株 ｜ 1.0 m → 3,009 ｜ **2.0 m → 2,152**
+ *
+ * → 用 2.0 m 会把最典型的"单行缺株带"整片判为不可种（实测 123 块排坑为 0），
+ *   而 0.5 m 时新苗距老树干实际已有 4.5~8.3 m，符合农学要求。
+ */
 export const DEFAULT_GRID: GridSpec = {
   plant_pitch_m: 8.45,
   row_pitch_m: 7.32,
   azimuth_deg: 0.67,
-  clearance_m: 2.0,
+  clearance_m: 0.5,
 }
+
+/** UI 上提供的退让档位（默认 0.5，其余供用户按地块实际情况调整） */
+export const CLEARANCE_PRESETS: Array<{ value: number; label: string; hint: string }> = [
+  { value: 0.5, label: '0.5 m', hint: '默认：边界已是树冠外缘，实际距老树干 4.5~8.3 m' },
+  { value: 1.0, label: '1.0 m', hint: '更保守：适合边界贴得较紧的地块' },
+  { value: 2.0, label: '2.0 m', hint: '很保守：会排除大部分窄条单行缺株带' },
+]
 
 /** 参与补种估算的类别（＝ by_priority.definite_plant） */
 export const PLANTABLE_CLASSES: GapClass[] = ['open_patch', 'vacant_slot', 'manual_add']

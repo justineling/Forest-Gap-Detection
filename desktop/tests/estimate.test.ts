@@ -13,7 +13,7 @@
  * 数据：默认读 output/wgr17-final-gaps.geojson（真实结果）。
  * 该文件不入库（output/ 走 Google Drive），缺失时自动跳过并说明。
  */import { existsSync, readFileSync } from 'node:fs'
-import { estimate, SINGLE_TREE_AREA_M2 } from '../src/lib/estimate'
+import { estimate, SINGLE_TREE_AREA_M2, DEFAULT_GRID } from '../src/lib/estimate'
 import { polygonAreaM2 } from '../src/lib/geometry'
 import type { GapFeature } from '../src/types'
 
@@ -60,7 +60,7 @@ check(
 )
 
 // ---------- B. 双口径估算 ----------
-console.log('\nB. 双口径估算（默认退让 2.0 m）')
+console.log(`\nB. 双口径估算（默认退让 ${DEFAULT_GRID.clearance_m} m）`)
 const t0 = Date.now()
 const res = estimate(features)
 const ms = Date.now() - t0
