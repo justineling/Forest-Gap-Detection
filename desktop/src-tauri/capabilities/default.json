@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "默认权限：只需要核心能力（窗口/事件/IPC）。子进程托管走标准库 std::process，不需要 shell 插件权限。",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }

@@ -30,6 +30,9 @@ use tauri::{Emitter, Manager, RunEvent};
 /// 瓦片 / 辅助服务端口（与 `desktop/src/api/backend.ts` 的 BACKEND_BASE 一致）
 const BACKEND_PORT: u16 = 8765;
 
+/// "还没有选择正射影像"的哨兵错误。前端据此显示引导卡片而不是报错。
+const NEED_IMAGE: &str = "NEED_IMAGE";
+
 #[derive(Default)]
 struct Services {
     tile: Mutex<Option<Child>>,
@@ -213,6 +216,123 @@ fn bundled_data_root(app: &tauri::AppHandle) -> PathBuf {
     PathBuf::from(".")
 }
 
+// ============================================================================
+//  用户配置（记住"上次用的影像 / 结果文件"）
+//  ---------------------------------------------------------------------------
+//  为什么必须持久化：打包版没有"仓库根"，用户不可能每次都去某个隐藏目录放文件。
+//  让他在界面里选一次影像，路径存到 `%LOCALAPPDATA%\fgd\settings.json`，
+//  下次启动直接用 —— 这是"小白能用"的最低门槛。
+// ============================================================================
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+struct AppConfig {
+    /// 正射影像路径（.tif）
+    image: Option<String>,
+    /// 检测结果路径（.geojson）；为空时瓦片服务会自己找默认位置
+    gaps: Option<String>,
+}
+
+fn config_path() -> Option<PathBuf> {
+    let local = std::env::var("LOCALAPPDATA").ok()?;
+    Some(PathBuf::from(local).join("fgd").join("settings.json"))
+}
+
+fn load_config() -> AppConfig {
+    let Some(p) = config_path() else {
+        return AppConfig::default();
+    };
+    let Ok(text) = std::fs::read_to_string(&p) else {
+        return AppConfig::default();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn save_config(cfg: &AppConfig) -> Result<(), String> {
+    let p = config_path().ok_or("拿不到 LOCALAPPDATA 环境变量")?;
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败：{e}"))?;
+    }
+    let text = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化失败：{e}"))?;
+    std::fs::write(&p, text).map_err(|e| format!("写配置失败：{e}"))?;
+    Ok(())
+}
+
+/// 前端启动时问"我现在该显示什么"：要不要引导用户选影像？
+#[derive(serde::Serialize)]
+struct AppStatus {
+    /// 后端执行方式（打包运行时 / 开发态解释器），排障用
+    backend: Option<String>,
+    /// 瓦片服务是否在监听
+    tile_running: bool,
+    /// 当前配置的影像与结果路径
+    image: Option<String>,
+    gaps: Option<String>,
+    /// 数据根目录（提示用户"文件该放哪"时显示）
+    data_root: String,
+    /// true = 还没有可用影像，前端应显示「选择影像」引导
+    needs_setup: bool,
+}
+
+/// 找数据的基准目录：开发态是仓库根（`drone data/`、`output/` 都在这），
+/// 打包态是可写的数据根（`%LOCALAPPDATA%\fgd\data`）。
+///
+/// ⚠️ 不能一律用 `bundled_data_root` —— 开发态那样会去 `%LOCALAPPDATA%` 找，
+/// 明明仓库里就有影像却弹"请选择影像"，非常反直觉。
+fn data_base(app: &tauri::AppHandle) -> PathBuf {
+    match resolve_backend(app) {
+        Some(Backend::Dev { root, .. }) => root,
+        _ => bundled_data_root(app),
+    }
+}
+
+/// 从配置 + 默认探测里找影像。
+/// 顺序：用户上次选的 → 数据根下的 `drone data/WGR17-002.tif` → 数据根下的 `WGR17-002.tif`
+fn resolve_image(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let cfg = load_config();
+    if let Some(p) = cfg.image {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return Some(pb);
+        }
+    }
+    let data = data_base(app);
+    for cand in [
+        data.join("drone data").join("WGR17-002.tif"),
+        data.join("drone data").join("WGR17.tif"),
+        data.join("WGR17-002.tif"),
+        data.join("WGR17.tif"),
+    ] {
+        if cand.exists() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// 结果文件：配置优先，其次数据根下的常见位置。
+fn resolve_gaps(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let cfg = load_config();
+    if let Some(p) = cfg.gaps {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return Some(pb);
+        }
+    }
+    let data = data_base(app);
+    for name in ["wgr17-final-gaps.geojson", "wgr17-elev-gaps.geojson"] {
+        for sub in ["output", ""] {
+            let cand = if sub.is_empty() {
+                data.join(name)
+            } else {
+                data.join(sub).join(name)
+            };
+            if cand.exists() {
+                return Some(cand);
+            }
+        }
+    }
+    None
+}
+
 /// 写一行日志到 `%LOCALAPPDATA%\fgd\logs\app.log` 并同步打到 stderr。
 ///
 /// 为什么需要它：release 版是 `windows_subsystem = "windows"`，没有控制台，
@@ -289,19 +409,27 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     //   Dev     → python scripts/tile_server.py
     //   Bundled → desktop_entry.exe --run-tile-server [--source ... --gaps ...]
     //             （打包版没有仓库根，必须显式给影像与结果的绝对路径）
+    // 影像：配置优先 → 数据根默认探测。**没有影像就不启服务**，
+    // 让前端显示「选择影像」引导（而不是给用户看一句开发者才懂的命令）。
+    let image = resolve_image(app);
+    let gaps = resolve_gaps(app);
+
     let mut args: Vec<String> = Vec::new();
     if backend.is_bundled() {
         args.push("--run-tile-server".into());
-        let data = bundled_data_root(app);
-        let src = data.join("drone data").join("WGR17-002.tif");
-        if src.exists() {
-            args.push("--source".into());
-            args.push(src.to_string_lossy().to_string());
+        match &image {
+            Some(p) => {
+                args.push("--source".into());
+                args.push(p.to_string_lossy().to_string());
+            }
+            None => {
+                log_line("还没有选择正射影像，跳过瓦片服务（前端会显示选择引导）");
+                return Err(NEED_IMAGE.to_string());
+            }
         }
-        let gaps = data.join("output").join("wgr17-final-gaps.geojson");
-        if gaps.exists() {
+        if let Some(g) = &gaps {
             args.push("--gaps".into());
-            args.push(gaps.to_string_lossy().to_string());
+            args.push(g.to_string_lossy().to_string());
         }
     } else if let Backend::Dev { root, .. } = &backend {
         let script = root.join("scripts").join("tile_server.py");
@@ -309,6 +437,15 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
             return Err(format!("找不到 {}", script.display()));
         }
         args.push(script.to_string_lossy().to_string());
+        // 开发态也尊重用户选过的路径（否则"选了却不生效"很困惑）
+        if let Some(p) = &image {
+            args.push("--source".into());
+            args.push(p.to_string_lossy().to_string());
+        }
+        if let Some(g) = &gaps {
+            args.push("--gaps".into());
+            args.push(g.to_string_lossy().to_string());
+        }
     }
 
     let data_root = bundled_data_root(app);
@@ -497,6 +634,76 @@ fn detect_status(state: tauri::State<'_, Services>) -> bool {
         .unwrap_or(false)
 }
 
+/// 前端启动时问一次：现在有没有可用影像？要不要显示引导？
+#[tauri::command]
+fn get_status(app: tauri::AppHandle) -> AppStatus {
+    let cfg = load_config();
+    let image = resolve_image(&app);
+    AppStatus {
+        backend: resolve_backend(&app).map(|b| b.describe()),
+        tile_running: port_open(BACKEND_PORT),
+        image: image.as_ref().map(|p| p.display().to_string()),
+        gaps: cfg
+            .gaps
+            .clone()
+            .or_else(|| resolve_gaps(&app).map(|p| p.display().to_string())),
+        data_root: data_base(&app).display().to_string(),
+        needs_setup: image.is_none(),
+    }
+}
+
+/// 用户选了影像（或结果文件）→ 存配置 + 重启瓦片服务。
+///
+/// `restart_tile_server` 内部会先 kill 旧进程再起新的，所以这里直接复用，
+/// 但要把旧进程杀掉后等端口释放（它已经做了）。
+#[tauri::command]
+fn set_data_paths(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Services>,
+    image: Option<String>,
+    gaps: Option<String>,
+) -> Result<AppStatus, String> {
+    let mut cfg = load_config();
+    if let Some(p) = image {
+        let pb = PathBuf::from(&p);
+        if !pb.exists() {
+            return Err(format!("影像文件不存在：{p}"));
+        }
+        cfg.image = Some(p);
+    }
+    if let Some(g) = gaps {
+        let pb = PathBuf::from(&g);
+        if !pb.exists() {
+            return Err(format!("结果文件不存在：{g}"));
+        }
+        cfg.gaps = Some(g);
+    }
+    save_config(&cfg)?;
+    log_line(&format!(
+        "用户选择数据：影像={:?} 结果={:?}",
+        cfg.image, cfg.gaps
+    ));
+
+    // 重启瓦片服务（旧的可能在跑着"没有影像"的实例，或者指向旧影像）
+    if let Some(mut child) = state.tile.lock().map_err(|e| e.to_string())?.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    for _ in 0..40 {
+        if !port_open(BACKEND_PORT) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    match start_tile_server(&app, &state) {
+        Ok(msg) => log_line(&msg),
+        Err(e) if e == NEED_IMAGE => {}
+        Err(e) => log_line(&format!("重启瓦片服务失败：{e}")),
+    }
+
+    Ok(get_status(app))
+}
+
 #[tauri::command]
 fn backend_url() -> String {
     format!("http://127.0.0.1:{BACKEND_PORT}")
@@ -534,6 +741,8 @@ fn restart_tile_server(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 原生文件选择框：让用户在界面里选影像/结果，而不是去某个隐藏目录放文件
+        .plugin(tauri_plugin_dialog::init())
         .manage(Services::default())
         .invoke_handler(tauri::generate_handler![
             backend_url,
@@ -541,15 +750,20 @@ pub fn run() {
             restart_tile_server,
             run_detect,
             cancel_detect,
-            detect_status
+            detect_status,
+            get_status,
+            set_data_paths
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             let state = app.state::<Services>();
             match start_tile_server(&handle, &state) {
                 Ok(msg) => log_line(&msg),
+                Err(e) if e == NEED_IMAGE => {
+                    log_line("首次启动：等待用户在界面里选择正射影像");
+                }
                 Err(e) => log_line(&format!(
-                    "瓦片服务未启动：{e}（前端会提示「影像瓦片服务未连接」，多边形仍可查看/编辑）"
+                    "瓦片服务未启动：{e}（前端会显示排查提示，多边形仍可查看/编辑）"
                 )),
             }
             Ok(())
