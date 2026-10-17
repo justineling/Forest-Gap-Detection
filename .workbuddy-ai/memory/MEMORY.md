@@ -114,84 +114,49 @@
 - 遗留：`office` 门槛下调后"道路变宽处被标为办公区"的语义噪声
   （要更干净需新增 `hard_surface` 类别）。
 
-## ★ 2026-10-17 桌面端（Tauri）需求评审与前端原型
+## ★ 2026-10-17 桌面端（Tauri）—— 需求评审 → 原型 → 对账收口
 
 ### 技术栈：以 `架构方案.html` 的冻结决策为准，**否决**外部方案的 3 处
-- 前端 **React 18 + TS**（不用 Vue 3）· 地图 **MapLibre GL 4**（不用 Leaflet）
-- 绘图/编辑 **Terra Draw**（Leaflet-Geoman 只支持 Leaflet）
-- Python 后端 **保留 stdio NDJSON sidecar**（不用 FastAPI HTTP 微服务）；
-  **只有瓦片走 HTTP**（浏览器必须能 `<img src>` 取图）
-- 瓦片服务语言 **待用户拍板**：架构文档原定 Rust GDAL，本机实测建议原型期用 Python
-  （算法已全在 Python 且逐位可复现，重写地理内核等于把"已验证"换成"未验证"）
-- 决策文档：`docs/01-需求与架构/桌面端交互需求与实现映射.md`；PRD 见附录 C（v0.4）
+前端 **React 18 + TS**（不用 Vue 3）· 地图 **MapLibre GL 4**（不用 Leaflet）·
+绘图 **Terra Draw**（Geoman 只支持 Leaflet）· 后端 **stdio NDJSON sidecar**
+（不用 FastAPI；契约已冻结 95/95），**只有瓦片走 HTTP** ·
+瓦片服务**保留 Python**（建金字塔后 700 ms 达标；Rust 端再链 gdal 会撞 dll/proj.db 冲突）。
 
-### 两项需求算法侧**根本不存在**（不是"要改"，是"没有"）
-- **ROI/KML 裁剪**：`process_image.py` 的 `kml_source=None` / `used_kml=False` 是硬编码；
-  `sidecar.py` 收到 `kml` 只发 `W1002` 告警后忽略 → 新需求 **R-P0-11（P0）**
-- **补种点位生成**：`grep -rn "replant\|planting_point" scripts/*.py` **零命中**
-  → 新需求 **R-P1-7（P1）**，方案＝网格排坑模拟（复用 `GridModel`）
-- ROI 与现有 `--forest-mask` 是**同构**机制（多边形→栅格掩膜→裁剪），实现成本低
+### 分支 `feat/desktop-app` 的 `desktop/` 子目录
+React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 CSS 代 Tailwind）
++ **Tauri v2 外壳**（`src-tauri/`，`cargo check` 通过）。
 
-### 前端原型（分支 `feat/desktop-app`，`desktop/` 子目录）
-- React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 CSS 代 Tailwind）
-- `scripts/tile_server.py`（**新增，零新依赖**：标准库 `http.server` + rasterio）：
-  `/meta` · `/tiles/{z}/{x}/{y}.png` · `/gaps` · `POST /export` · `--build-overviews`
-- 双口径估算：面积折算 `floor(area/66.67)` + 网格排坑（8.45/7.32/0.67°/退让 2 m），
-  两者差值作为质量指标
-- **`npm test` 是本模块的验收基线（43 项断言，约 5 秒）**：
-  `desktop/tests/store.test.ts`（需求③④）+ `desktop/tests/estimate.test.ts`（需求⑤）。
-  换机器若无 `output/` 会自动跳过 estimate 部分并说明。
-- **排坑退让默认 0.5 m**（2026-10-17 拍板，不是 2.0 m）：`open_patch` 边界是
-  **树冠叶尖外缘**（距树干约 4.2 m），不是树干中心。实测 449 块等效宽度（2A/P，UTM）
-  P50 仅 **4.68 m**、<6 m 有 355 块。2.0 m 退让会让 **123 块**典型单行缺株带排不出点。
-  排坑：0.5 m→3,594 株 / 1.0→3,009 / 2.0→2,152 / 3.0→1,569。UI 保留三档。
-  ⚠️ 依据写在 `lib/estimate.ts` 的 `DEFAULT_GRID` 注释里，**不要改回去**。
-- **ROI 圈选裁剪已实现**（`--roi`，R-P0-11）：两层裁剪（瓦片级读盘前跳过 + 像素级掩膜）、
-  ROI 保护（瓦片太少时网格勘察回退全图）、指纹**仅在启用时**加入（否则缓存全失效）。
-  A/B：瓦片 528→121（-77%）、耗时 1,048→400 s（-62%）、圈外泄漏 0、
-  面积差异 **-0.39%**（公平口径：基准也要裁到同一范围再比）。
-- **补种点位生成已实现**（R-P1-7）：`scripts/planting_points.py`（权威结算）+
-  `export_arcgis.py`（GeoJSON×2 / SHP×2 / KML Folder / CSV）。
-  退让用 `buffer(-d)` + `prepared.contains`（与逐点算距离**数学等价**，实测逐块一致）。
-  0.5 m → **3,912 点**（网格 3,656 + 株位 256）。
-  ⚠️ **与前端 TS 差 +7~9%**（3,912 vs 3,594），已定位为**网格原点相位不同**
-  （Python 用 `planting_grid.origin`，前端用要素顶点均值）——**不是算法差异**。
-  ⚠️ **精度限制（D4 后果）**：树心到最近格点 P50 **3.15 m**（随机基准 2.1 m），
-  局部重拟合也只 7.3% 对齐率 → `open_patch` 点位"间距对、相位可能偏 3 m"，
-  **不宜宣称"精确复现原株位"**；`vacant_slot` 用质心不受影响。
-- ⚠️ **写含反引号的中文内容到文件时，别用 `python -c "..."`**：bash 会把反引号
-  当命令替换**静默吃掉内容**（踩过，把记忆文件写坏）。用 Write/Edit 工具或落盘脚本。
-- **金字塔默认不碰源文件**（`--ovr-mode auto`）：有 gdaladdo 用 `-ro` 生成外置 .ovr，
-  否则复制副本建内部金字塔。⚠️ **"只读模式打开就能自动生成 .ovr"在 rasterio 里不成立**
-  （`DatasetReader` 没有 `build_overviews` 方法；`rio overview` 无只读选项）。
-- **三个必踩的坑**（详见 `desktop/README.md`）：
-  1. `rasterio.windows.Window.intersection` **无交集时抛 `WindowError`**，不是返回空窗口；
-  2. 本影像 **4 波段**（第 4 波段恒 255 = Alpha）——4 波段源送进 3 波段目标 `reproject` 直接报错；
-  3. **影像没有金字塔** → 低缩放级瓦片 z=15 约 35 s、z=13 约 104 s 一张；
-     `--build-overviews` 建一次后 **z=13 变 700 ms（149×）**。
-     ⚠️ 代价是**就地修改源文件**：本 BigTIFF 写进文件内部（非 `.ovr` 边车），
-     **3.48 GB → 4.66 GB（+1.19 GB）**；回退需 GDAL CLI `gdaladdo -clean`
-     （本机 venv 的 `rio` 无清理命令），最稳是重拷原图。**STEP 01「建金字塔」不是可选项。**
-- **估算模块的 3 个坑**（类型检查完全看不出来，只有跑真实数据才暴露）：
-  ① 网格索引 `i` 的范围**必须逐 j 计算**（`i = (du - j*skew)/pitch`，
-  `j*skew` 可达 ±50 格位）——用全局范围算死会让远处要素一个格点都取不到；
-  ② 经纬度→米**不能用 111320 常数**（纬度 1.18° 处子午圈每度只有 110,577 m，
-  否则面积系统性偏大 +0.67%；用曲率半径 M/N 后误差 0.09%）；
-  ③ **必须按类别分口径**：`vacant_slot` 两个口径都记 1 株（面积法会算成 0，网格法会大量落空）。
-- 环境限制：**headless 浏览器此前被沙箱拦**（静默退出、不产文件）；
-  **用户把权限改成「允许完全访问」后立即可用** —— 已能做像素级视觉验证。
-  可复用手法：① 纯色截图＝页面没渲染（PIL 统计唯一颜色数，1 种即异常）；
-  ② `--dump-dom` 看 `#root` 是否为空；③ grep DOM 时**注意 CSS 类名会假阳性**
-  （`.toolbar` 在 `<style>` 里也有），要 grep 只出现在组件里的中文文案；
-  ④ `--enable-logging=stderr --v=1` 抓 console 错误原文；⑤ 先用静态 HTML
-  验证截图机制本身，把"环境问题"与"页面问题"分开。
-- ⚠️ **坑 8（最隐蔽）：组件抛错会卸载整棵 React 树 → 整页白屏**。
-  Terra Draw 的 MapLibre adapter 在 `start()` 时注册 source/layer，style 未就绪时抛
-  `Style is not done loading.`；它在 effect 里 → React 18 卸载整棵树。
-  **两处修法缺一不可**：① Terra Draw 创建+start **必须放进 `map.on('load')` 回调**；
-  ② 每个区域包 **ErrorBoundary**。实测 6,886 B/1 色 → 607,510 B/112,028 色。
-  **教训：「逻辑被测试覆盖」≠「界面能渲染」—— 43 项断言全绿时页面是白的。**- 业务数字（**待用户拍板**）：退让 2 m → 排坑 2,152 株 vs 面积口径 4,420 株（差异 51.3%）；
-  敏感度 0.5 m → 3,594 / 1.0 → 3,009 / 2.0 → 2,152 / 3.0 → 1,569。
+- **`npm test` 是本模块验收基线**（43 项断言，~5 秒）：`tests/store.test.ts`（需求③④）
+  + `tests/estimate.test.ts`（需求⑤）。换机器无 `output/` 会自动跳过 estimate 并说明。
+- 新增 `scripts/tile_server.py`（零新依赖）：`/meta` · `/tiles/{z}/{x}/{y}.png` · `/gaps`
+  · **`/planting-points?clearance=`** · `POST /export` · `--build-overviews` · `--ovr-mode`
+- 双口径估算：面积折算 `floor(area/66.67)` + 网格排坑（8.45/7.3179/0.6656°/退让 0.5 m）
+- **退让 0.5 m 是业务拍板**（3,691 株）：`open_patch` 边界是**树冠叶尖外缘**
+  （距树干约 4.2 m），449 块等效宽度 2A/P 的 P50 仅 **4.68 m**；2 m 退让会让
+  123 块单行缺株带排不出点。⚠️ 依据写在 `lib/estimate.ts` 的 `DEFAULT_GRID` 注释，**不要改回去**。
+- **前后端株数已对齐 0.00%**（3,691 = 3,691）：`/gaps` 响应**动态补**
+  `planting_grid.anchor_lon/lat`（结果中心最近格点，只在内存 enrich，不改磁盘），
+  前端 `estimate()` 用它当原点。残余 1.0/2.0 m 档 +0.6~0.9%（GEOS buffer vs 逐点距离）。
+- **点位必须基于 `wgr17-final-gaps.geojson`**（交付版）；`-elev-gaps` 是未应用森林掩膜的
+  中间版，会多算 221 个点（把未开发林算成可补种）。
+- **`output/*.geojson` 是 `blocks[].gaps` 结构，没有顶层 `features`** ——
+  前端按 `features` 读会静默拿到空数组（界面上一个多边形都不显示且不报错）。
+  修法：`api/backend.ts` 的 `normalizeCollection()`。
+
+### 坑（完整版见 `desktop/README.md` 13 条，这里只留最容易返工的）
+1. `Window.intersection` 无交集时**抛 `WindowError`**，不是返回空窗口
+2. 影像 **4 波段**（第 4 恒 255 = Alpha）—— 4 波段源送进 3 波段目标 `reproject` 直接报错
+3. **影像没有金字塔** → 低缩放级瓦片 z=13 要 104 s；`--build-overviews` 后 **0.7 s（149×）**。
+   代价：BigTIFF **写进文件内部**，3.48 → 4.66 GB（`--ovr-mode auto` 默认改副本，不碰源文件）
+4. 估算模块：网格索引 `i` **必须逐 `j` 算**（`j*skew` 可达 ±50 格位）；
+   经纬度→米**不能用 111320 常数**（用曲率半径，面积误差 0.76%→0.09%）；
+   `vacant_slot` 两个口径都记 1 株
+5. **组件抛错会卸载整棵 React 树 → 整页白屏**：Terra Draw 的 `start()` 必须在
+   `map.on('load')` 内 + 每个区域包 `ErrorBoundary`。
+   **教训：「逻辑被测试覆盖」≠「界面能渲染」—— 43 项断言全绿时页面是白的。**
+6. Tauri：Windows 缺 `icons/icon.ico` 会让 `cargo check` 直接失败（只有 png 不够）；
+   退出不 kill 子进程 → 孤儿 python 占住 8765，下次启动复用**旧版本**服务
+
 
 ### docgen 教训（新）
 自动重生成文档时**路径必须可移植**：`gen_gdrive.py` 曾硬编码 `D:/WGR`，
@@ -209,42 +174,26 @@
 - **测试**：`scripts/test_sidecar_contract.py` 期望 **95/95**，是改动前后的验收基线（约 1 分钟，合成影像）。
 - PowerShell 5.1 读 `.ps1` 必须有 UTF-8 BOM。
 
-## 5. 待办（截至 2026-10-14 深夜）
-- **P0** 重跑整幅 + 重导 ArcGIS → ✅ 已完成（728 秒 / 1048 块 / 285,424 m²；
-  交付包 `output/arcgis/`）。影像用 `C:\Users\Justine\Downloads\WGR17-002.tif`。
-  10-14 已用新结果重导（1442 要素 / 7 类分层，`scripts/export_arcgis.py`）。
-- **P1** 水体真实检出验证 → ✅ 已完成（10-14 目视：2 处真水✅ / 2 处白路误报❌
-  → `water_lum_max=160` 修复；现 water 8 块 / 605 m²）
-- **P2** `docs/README.md` 登记 → ✅ 已完成
-- **P3** git 提交 → ✅ 已完成（b532228 / ddc64dc / 2985e2d；10-14 追加
-  5157db6 / 1de8c49 / 7f7c1f8 / df4d899 / 377265b，**均未推送，等用户 push**）
-- **P4** 草地被误判成油棕 → ✅ 方案 B 已实施（10-14，df4d899）：
-  `_grid_period_filter` 全局格点贴合（连通域像素距最近格点中位 ≤3.5 m 判
-  油棕受光面/幼林，剔除出草地候选；网格质量 <0.15 不剔）。全量需补种
-  1350→1250 块 / 267,598→248,008 m²（-19,590 m² 伪草地）。⚠️ 仍待用户
-  指认 1~2 处已知草地真值坐标做终检（已知局限：与密林同瓦片的大片草荒
-  可能被误剔）
-- **P5** road 改判量级严重偏低 → ✅ **已解决**（2026-10-13 晚）。
-  改为「几何差集」：`gap_units &= ~(road|water|office)` 按像素扣除 + 掩膜单独成层。
-  不可种植 1,812 m² → **37,443 m²**（road 180 块 / water 18 块 / office 4 块），
-  需补种 285,424 → **239,710 m²**。⚠️ `--unplantable-overlap` 已失效（仅保留兼容）。
-- **P6（新）** 性能：`order_tiles_by_validity` 已加磁盘缓存（省 95 秒）；
-  栅格层 `min_area` 粗筛实测为**负优化**（1336s→2400s）已撤销并注释记录教训。
-  当前全量 939.7 秒（528 瓦片），距 12 分钟目标差 ~4 分钟（环境波动 2.45~4.65
-  秒/瓦片）
+## 5. 待办（截至 2026-10-17）
 
-## 6. 性能基线（2026-10-13 优化后）
-- 单瓦片 **3.0 秒**（2304² 含 128px 外扩）；整幅 528 瓦片 **728 秒**（仅空地）。
-  叠加不可种植几何差集 + 草地回检全链后 **939.7 秒**（10-14 实测，环境波动
-  2.45~4.65 秒/瓦片）。
+- ✅ 全部 P0~P6 旧待办已完成（重跑整幅 / 水体验证 / 文档登记 / 草地回检 /
+  road 几何差集 / 性能优化）。当前全量 **1,048 秒 / 528 瓦片**。
+- ⏳ **多进程跑批**（4~8 核把 1,048 s 压到 3 分钟内）—— 缺陷看板 P2 第 7 项
+- ⏳ **打包分发**：Python 目录进 Tauri `resources/`（裁定 `--onedir`，
+  严禁 `--onefile`）；文件对话框、安装包签名
+- ⏳ **合并策略实现**：重跑时「保留人工编辑 / 完全覆盖」两档（IoU>0.5 重放删除与改判）
+- ⏳ `active_learning.py` 仍未跑过
+
+## 6. 性能基线（2026-10-17）
+
+- 单瓦片 **~2 秒**（2304² 含 128px 外扩）；全量 528 瓦片 **1,048 秒**（ROI 20.9% → 400 秒）
 - **关键教训**：连通域统计**不要**逐域做全图 `lab == i` / `comp.sum()`，
-  改用 `np.bincount(lab.ravel())` 一次算完 + 只在各自 bbox 内取局部数组。
-  本次由此把 43 秒/瓦片降到 3 秒/瓦片，等价性已逐像素验证。
+  改用 `np.bincount(lab.ravel())` 一次算完 + 只在各自 bbox 内取局部数组
+  （43 秒/瓦片 → 3 秒/瓦片，等价性已逐像素验证）
 - **另一教训**：栅格层 `min_area` 粗筛是负优化（1336s→2400s）——连通域绝大多数
-  本就 > 30 m² 门槛，预筛不掉东西却多付 label + 布尔索引开销。
+  本就 > 30 m² 门槛，预筛不掉东西却多付 label + 布尔索引开销
 
 ---
-
 ## ★ 重要更正：「油棕-南部」其实是「未开发森林-南部」（2026-10-16 用户核实）
 
 ### 事实
