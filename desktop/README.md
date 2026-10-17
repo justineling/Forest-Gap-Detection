@@ -139,6 +139,22 @@ powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smok
 | 单张瓦片 | ✅ z=15 61 KB / 598 ms · z=17 150 KB / 538 ms（真实影像，非空白） |
 | 多进程 + ROI 检测 | ✅ `workers=2` + `limit 4`，ROI 528→121→4，**exit 0，30.9 秒**，输出 227 KB |
 
+**端到端实测（装成安装包 → 启动 → 加载影像）**
+
+安装包 `Forest Gap Detection_0.1.0_x64-setup.exe` = **67.66 MiB**
+（179 MB 运行时经 NSIS 压缩），静默装到 `%LOCALAPPDATA%\Forest Gap Detection`：
+
+| 检查 | 结果 |
+|---|---|
+| 安装包内容 | ✅ 1,447 个 `py-runtime` 文件 · `desktop_entry.exe` / `proj.db`×2 / `gdal_data` 162 项 |
+| 安装后自检 | ✅ `frozen: true` · `proj_ok` · `gdal_driver_ok` · exit 0 |
+| 启动桌面端 | ✅ 日志：`瓦片服务后端：打包运行时 ...\py-runtime\desktop_entry\desktop_entry.exe` |
+| 瓦片服务 | ✅ `/meta` → `ok=True` · 47130×44686 · EPSG:4326 · 0.033 m/px |
+| 进程 | ✅ `fgd-desktop.exe` + `desktop_entry.exe` 并存 |
+
+> **排障入口**：release 版没有控制台，所有关键信息写在
+> `%LOCALAPPDATA%\fgd\logs\app.log`（后端形态与绝对路径、瓦片服务是否起来、数据根）。
+
 ### 检测链路：Tauri ↔ sidecar（stdio NDJSON）
 
 ```
@@ -563,3 +579,46 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     pyproj 只作兜底 —— PROJ 向前兼容，pyproj 读新库没问题。
     这个坑**只在冻结态出现**（开发态两个库各自找自己的数据，互不干扰），
     所以必须靠 `--self-test` 里的 `gdal_driver_ok` 才能发现。
+
+21. **`resources` 用 `**/*` 会把子目录展平 → MSI 打包失败**
+
+    ```
+    error LGHT0204: ICE30: The target file 'Mountain' is installed in
+    '...\py-runtime\desktop_entry\' by two different components
+    ```
+
+    PyInstaller 的 `tzdata/zoneinfo/` 下有 `Canada/Mountain` 与 `US/Mountain`
+    （还有 `Pacific` 既是文件又是目录）。`"../runtime/desktop_entry/**/*"`
+    把它们**平铺**到同一个目标目录 → 同名冲突。
+
+    **修法**：用**目录映射**（不带通配符）：
+    `"../runtime/desktop_entry": "py-runtime/desktop_entry"`，子目录结构才会保留。
+
+22. **`bundle.icon` 只列 png → 打包阶段直接失败**
+
+    ```
+    failed to bundle project: `Couldn't find a .ico icon`
+    ```
+
+    `cargo check` 与 `tauri dev` 都不报，只有 bundle 需要 `.ico`
+    （Windows 资源文件）。要同时列 `icons/icon.ico` 与多尺寸 png。
+
+23. **目录映射后，后端路径多一层 → 装好了却"找不到后端"**
+
+    映射产物是 `py-runtime/desktop_entry/desktop_entry.exe`（多一层
+    `desktop_entry/`），而 `resolve_backend` 只找了 `py-runtime/desktop_entry.exe`。
+    这个错**不会报错**，只会让 `start_tile_server` 返回"找不到后端"、
+    前端提示"影像瓦片服务未连接"。
+
+    **修法**：搜索路径同时认两种布局；并靠 `app.log` 里的
+    「瓦片服务后端：…」一行确认实际用的是哪个 exe。
+
+24. **反复"静默安装 → 手动删目录 → 再安装"会让 NSIS 弹 `Unable to install`**
+
+    测试安装包时图快，用 `rm -rf` 直接删安装目录（绕过 `uninstall.exe`），
+    注册表/文件锁状态就不一致了；再跑安装器时 NSIS 检测到冲突，
+    会弹一个安装向导 + 一个 "Unable to install" 错误框。
+
+    **正确姿势**：卸载走 `uninstall.exe` 或「设置 → 应用」；
+    测试时想换目录就换个 `/D=` 目标，不要手删。
+    （这次的弹窗就是测试副作用，与安装包本身无关。）
