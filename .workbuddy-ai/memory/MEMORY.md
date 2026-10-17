@@ -167,6 +167,14 @@ React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 
   数据根 `%LOCALAPPDATA%\fgd\data`（自动创建，Program Files 不可写）。
   ⚠️ `[profile.release]` **不要** `codegen-units=1` + full LTO（内存紧张时 rustc
   会以 0xc0000005 崩，报错完全看不出原因），用 `codegen-units=4` + `lto="thin"`。
+- **安装包已端到端跑通**：`..._0.1.0_x64-setup.exe` = **67.66 MiB**（NSIS），
+  装到 `%LOCALAPPDATA%\Forest Gap Detection` 后启动 → `/meta` ok · 47130×44686 · 0.033 m/px。
+  ⚠️ 三个**只在装完才暴露**的坑：① `resources` 用 `**/*` 会把 `tzdata/zoneinfo/`
+  的 `Canada/Mountain` 与 `US/Mountain` 展平 → WiX ICE30，必须用**目录映射**；
+  ② `bundle.icon` 必须含 `.ico`（cargo check / dev 都不报）；③ 目录映射让 exe 多一层，
+  `resolve_backend` 要兼容两种布局（否则不报错、只显示"瓦片服务未连接"）。
+  release 无控制台 → 排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
+  ⚠️ 测试时**别手删安装目录**（绕过 uninstall.exe 会让 NSIS 弹 "Unable to install"）。
 - 三个 bat：`启动桌面端.bat`（开发）/ `构建安装包.bat`（发布）/ `_环境准备.bat`（共享）。
   必须 **UTF-8 无 BOM + CRLF**；`call 文件.bat 标签` 靠 shift+goto 分发且**顶层不能 setlocal**；
   搬家自愈**只对项目内 target** 生效（否则会删掉共享的 `CARGO_TARGET_DIR`）。
