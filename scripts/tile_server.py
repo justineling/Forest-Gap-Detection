@@ -250,32 +250,110 @@ def blank_png() -> bytes:
     return buf.getvalue()
 
 
-def build_overviews(path: Path, levels: tuple[int, ...] = (2, 4, 8, 16, 32, 64)) -> bool:
-    """一次性为影像建金字塔。
+def _find_gdaladdo() -> str | None:
+    """在 PATH 与常见 GDAL 安装目录里找 gdaladdo（有它才能零额外空间生成外置 .ovr）。"""
+    import shutil as _sh
 
-    为什么必须做：本影像没有 overviews，低缩放级的瓦片窗口会覆盖大半个影像，
-    GDAL 只能按全分辨率读 → **实测 35 s（z=15）/ 104 s（z=13）一张瓦片**，
-    交互完全不可用。建完金字塔后同一张瓦片是 **0.5~0.7 s**（实测快 90~150 倍）。
+    exe = _sh.which("gdaladdo")
+    if exe:
+        return exe
+    candidates = [
+        Path(r"C:/Program Files/GDAL/gdaladdo.exe"),
+        Path(r"C:/OSGeo4W64/bin/gdaladdo.exe"),
+        Path(r"C:/OSGeo4W/bin/gdaladdo.exe"),
+        ROOT / ".venv" / "Scripts" / "gdaladdo.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
 
-    ⚠️ **会就地修改源文件**：对 BigTIFF，GDAL 把概览写进文件内部
-    （不是 `.ovr` 边车）。本影像实测 3.48 GB → **4.66 GB（+1.19 GB）**，
-    用时 174 s。想回退需要用 GDAL CLI `gdaladdo -clean <file>`；
-    本机 venv 内没有 gdaladdo/rio CLI，最稳的回退方式是重新拷一份原始影像。
+
+def ensure_overviews(
+    source: Path, cache_dir: Path, mode: str = "auto"
+) -> tuple[Path, str]:
+    """确保影像有金字塔，且**默认不修改用户的原始文件**。
+
+    为什么需要这一步：本影像没有 overviews，低缩放级瓦片窗口会覆盖大半个影像，
+    GDAL 只能按全分辨率读 → 实测 z=13 约 104 秒、z=15 约 35 秒一张瓦片。
+    建完金字塔后 z=13 降到 700 ms（149×）。
+
+    ⚠️ 但**建金字塔不能污染用户的原始数据**。本 BigTIFF 在可写模式下
+    GDAL 会把概览**写进文件内部**（实测 3.48 GB → 4.66 GB，且无法用 rio 回退）。
+    因此这里按策略选路径：
+
+    | mode | 行为 | 是否改源文件 | 额外磁盘 |
+    |---|---|---|---|
+    | `auto`（默认） | 有金字塔→原图；有 gdaladdo→`-ro` 外置 `.ovr`；否则→**复制副本**建内部金字塔 | **否** | 0 或约等于原图 |
+    | `copy` | 总是复制副本 | 否 | 约等于原图 |
+    | `gdal` | 必须用 `gdaladdo -ro` 生成外置 `.ovr`，没有则报错 | 否 | 约 1/3 原图 |
+    | `inplace` | 就地写入（**旧行为，会改源文件**） | **是** | +1.19 GB |
+
+    返回 `(实际用于服务的影像路径, 说明文字)`。
     """
-    with rasterio.open(path, "r+") as ds:
+    import shutil as _sh
+
+    with rasterio.open(source) as ds:
         if ds.overviews(1):
-            print("  影像已有金字塔，跳过", file=sys.stderr)
-            return True
-        print(f"  正在建金字塔 {list(levels)}（一次性；BigTIFF 会写进文件内部）…", file=sys.stderr)
-        sys.stderr.flush()
-        t0 = time.time()
-        try:
-            ds.build_overviews(list(levels), Resampling.average)
-        except Exception as e:
-            print(f"  ❌ 建金字塔失败：{e}", file=sys.stderr)
-            return False
-        print(f"  ✅ 金字塔完成，用时 {time.time() - t0:.1f} s", file=sys.stderr)
-        return True
+            return source, "源影像已有金字塔"
+
+    levels = ["2", "4", "8", "16", "32", "64"]
+
+    # ---- 策略 1：有 gdaladdo 就用只读模式生成外置 .ovr（零额外空间，不碰原图）----
+    if mode in ("auto", "gdal"):
+        exe = _find_gdaladdo()
+        if exe:
+            print(f"  用 {exe} -ro 生成外置 .ovr（源文件不动）…", file=sys.stderr)
+            sys.stderr.flush()
+            t0 = time.time()
+            cmd = [
+                exe, "-ro",
+                "--config", "COMPRESS_OVERVIEW", "DEFLATE",
+                "--config", "GDAL_TIFF_OVR_BLOCKSIZE", "256",
+                str(source), *levels,
+            ]
+            r = __import__("subprocess").run(cmd, capture_output=True, text=True)
+            if r.returncode == 0:
+                ovr = Path(str(source) + ".ovr")
+                return source, f"已生成外置 .ovr（{time.time() - t0:.0f}s，源文件未改动，{ovr.name}）"
+            print(f"  ⚠️ gdaladdo 失败：{r.stderr.strip()[:200]}", file=sys.stderr)
+        elif mode == "gdal":
+            raise RuntimeError("找不到 gdaladdo，无法生成外置 .ovr（请安装 GDAL 或用 --ovr-mode copy）")
+
+    # ---- 策略 2：就地写入（旧行为，会改源文件，需显式指定）----
+    if mode == "inplace":
+        print("  ⚠️ --ovr-mode inplace：将就地写入源文件（不可逆，请确认有原图副本）", file=sys.stderr)
+        with rasterio.open(source, "r+") as ds:
+            t0 = time.time()
+            ds.build_overviews([int(v) for v in levels], Resampling.average)
+        return source, f"已就地写入源文件（{time.time() - t0:.0f}s，⚠️ 源文件已被修改）"
+
+    # ---- 策略 3：复制副本再建内部金字塔（最安全的兜底）----
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    copy_path = cache_dir / source.name
+    if copy_path.exists():
+        with rasterio.open(copy_path) as ds:
+            if ds.overviews(1):
+                return copy_path, "复用已有副本（源文件未改动）"
+
+    need = source.stat().st_size * 2  # 副本 + 金字塔，留余量
+    free = _sh.disk_usage(cache_dir).free
+    if free < need:
+        raise RuntimeError(
+            f"磁盘空间不足：需要约 {need / 1024**3:.1f} GB，可用 {free / 1024**3:.1f} GB。"
+            f"可改用 --ovr-mode gdal（需安装 GDAL）或自行腾出空间。"
+        )
+
+    print(f"  复制副本 → {copy_path}（源文件不动，请稍候）…", file=sys.stderr)
+    sys.stderr.flush()
+    t0 = time.time()
+    _sh.copy2(source, copy_path)
+    with rasterio.open(copy_path, "r+") as ds:
+        ds.build_overviews([int(v) for v in levels], Resampling.average)
+    return copy_path, (
+        f"已复制副本并建金字塔（{time.time() - t0:.0f}s，源文件未改动；"
+        f"副本 {copy_path}，可随时删除）"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -468,7 +546,15 @@ def main() -> int:
     ap.add_argument(
         "--build-overviews",
         action="store_true",
-        help="启动前为影像建金字塔（一次性，写入 .ovr）。没有它低缩放级瓦片要 35~100 s/张",
+        help="启动前确保影像有金字塔（默认**不修改源文件**，策略见 --ovr-mode）",
+    )
+    ap.add_argument(
+        "--ovr-mode",
+        choices=["auto", "copy", "gdal", "inplace"],
+        default="auto",
+        help="金字塔策略：auto=有 gdaladdo 则生成外置 .ovr，否则复制副本（都不碰源文件）；"
+        "copy=总是复制副本；gdal=强制外置 .ovr（需 gdaladdo）；"
+        "inplace=就地写入源文件（不可逆，需显式指定）",
     )
     args = ap.parse_args()
 
@@ -481,8 +567,24 @@ def main() -> int:
             print(f"   尝试过 {p}", file=sys.stderr)
         return 2
 
+    source = Path(source)
     if args.build_overviews:
-        build_overviews(Path(source))
+        try:
+            source, ovr_note = ensure_overviews(
+                source, ROOT / "output" / ".tile-cache", args.ovr_mode
+            )
+        except RuntimeError as e:
+            print(f"❌ {e}", file=sys.stderr)
+            return 3
+        print(f"  金字塔：{ovr_note}", file=sys.stderr)
+        if source != Path(args.source or source):
+            print(f"  实际服务影像：{source}", file=sys.stderr)
+    else:
+        with rasterio.open(source) as _ds:
+            if not _ds.overviews(1):
+                print("  ⚠️ 影像无金字塔：低缩放级瓦片会非常慢"
+                      "（z=13 约 104 s、z=15 约 35 s）。", file=sys.stderr)
+                print("     加 --build-overviews 即可（默认不会修改源文件）", file=sys.stderr)
 
     gaps = Path(args.gaps) if args.gaps else next(
         (p for p in GAPS_CANDIDATES if p.exists()), None

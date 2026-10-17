@@ -102,7 +102,8 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     "job":              (str,   "wgr17-full"),
     "work_dir":         (str,   "output/jobs"),
     "out_json":         (str,   None),
-    "kml":              (str,   None),
+    "kml":              (str,   None),   # 已废弃，请用 roi（保留兼容）
+    "roi":              (str,   ""),     # ROI 圈选：只检测该多边形内（.geojson/.kml）
     "tile_size":        (int,   2048),
     "overlap":          (int,   128),
     "limit":            (int,   None),
@@ -242,12 +243,12 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     if values["progress_every"] is not None and values["progress_every"] < 1:
         raise ParamError(f"progress_every 必须 ≥ 1，收到 {values['progress_every']}")
 
-    # KML 本版未启用：传入即告警（契约 W1002）
-    if values.get("kml"):
+    # KML 裁剪已由 roi 取代（契约 W1002）
+    if values.get("kml") and not values.get("roi"):
         warnings.append({
             "code": "W1002",
-            "message": "kml 参数已传入但本版未启用（P1 功能），已忽略；"
-                       "本次按单 block 处理整幅影像",
+            "message": "kml 参数已废弃，请改用 roi（同样支持 .kml 与 .geojson）；"
+                       "本次仍按整幅影像处理",
         })
 
     # --- 组装 args 命名空间 ---
@@ -256,6 +257,8 @@ def normalize_params(raw: dict) -> tuple[SimpleNamespace, list[dict]]:
     args.job = values["job"]
     args.work_dir = values["work_dir"]
     args.out_json = values["out_json"]
+    # ROI 圈选（2026-10-17）：只检测该多边形内；圈外瓦片跳过不读盘
+    args.roi = values["roi"]
     args.tile_size = values["tile_size"]
     args.overlap = values["overlap"]
     args.limit = values["limit"]
@@ -323,6 +326,7 @@ def params_echo(args: SimpleNamespace) -> dict:
         "job": args.job,
         "work_dir": args.work_dir,
         "out_json": args.out_json,
+        "roi": args.roi,
         "tile_size": args.tile_size,
         "overlap": args.overlap,
         "limit": args.limit,
@@ -484,6 +488,10 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,
     }
+    # ⚠️ ROI 只在**启用时**加入指纹：否则无 ROI 的既有瓦片缓存会全部失效
+    #    （重跑一次全量要 1,048 秒）。未启用时指纹与旧版逐位一致。
+    if args.roi:
+        fp_params["roi_path"] = args.roi
     fp = PI.fingerprint(str(in_path), fp_params)
     diag(f"任务 {args.job}  参数指纹 {fp}")
 
@@ -523,13 +531,46 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                      f"其中含有效数据 {len(good)} 块、纯 NoData {len(blank)} 块；"
                      f"本次处理 {len(tiles)} 块")
 
+        # --- ROI 圈选（2026-10-17，R-P0-11）---
+        # 与 process_image.main() 保持等价：瓦片级跳过 + 像素级掩膜（在 process_tile 内）
+        roi_geom = None
+        if args.roi:
+            try:
+                roi_geom, roi_info = PI.load_roi(args.roi, ds.crs)
+            except Exception as e:  # noqa: BLE001
+                emit("warn", code="W1003",
+                     message=f"ROI 加载失败，已按全图处理：{e}")
+                roi_geom = None
+            else:
+                if roi_geom is None:
+                    emit("warn", code="W1003",
+                         message=f"ROI 无有效多边形，已按全图处理："
+                                 f"{roi_info.get('reason')}")
+                else:
+                    before = len(tiles)
+                    tiles = PI.tiles_in_roi(ds, tiles, roi_geom)
+                    emit("log", level="info", stage="roi",
+                         message=f"ROI 圈选 {roi_info['area_m2'] / 1e4:.2f} 公顷："
+                                 f"瓦片 {before} → {len(tiles)} 块"
+                                 f"（跳过圈外 {before - len(tiles)} 块，不读盘）")
+
         if not tiles:
             raise SidecarError("E3001", "没有可处理的瓦片", "plan_tiles", False)
 
         # --- 网格勘察 ---
+        # ⚠️ ROI 保护：圈选范围太小（里面几乎没树）时，严格按 ROI 采样会让
+        # 7 块网格样本不足 → 株距/方位角拟合失败。采样回退全图，检测仍限 ROI。
         stage = "grid_survey"
+        survey_tiles = tiles
+        if (roi_geom is not None and len(tiles) < max(4, args.survey_samples * 2)
+                and len(good) > len(tiles)):
+            survey_tiles = good
+            emit("warn", code="W1004",
+                 message=f"ROI 内仅 {len(tiles)} 块瓦片，网格勘察回退到全图 "
+                         f"{len(good)} 块采样（保证网格拟合稳定；空地检测仍限 ROI 内）")
+
         grid, report = PI.survey_grid(
-            ds, tiles, px_m, sample_n=args.survey_samples,
+            ds, survey_tiles, px_m, sample_n=args.survey_samples,
             prior_pitch_m=args.prior_pitch_m, pct=args.pct, sigma=args.sigma,
             exg_threshold=args.exg_threshold, use_saturation=args.use_saturation,
             exg_lo=args.exg_lo, exg_hi=args.exg_hi,
@@ -648,7 +689,8 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                 try:
                     res = PI.process_tile(ds, tile, px_m, grid, args, tiles_dir,
                                           elevation=elevation,
-                                          elev_params=elev_params)
+                                          elev_params=elev_params,
+                                          roi_geom=roi_geom)
                     res["fingerprint"] = fp
                     res["generated_at"] = _now()
                     PI.atomic_write_json(tf, res)
