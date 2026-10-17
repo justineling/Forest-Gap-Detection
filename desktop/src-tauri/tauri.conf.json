@@ -27,10 +27,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
-    "icon": ["icons/icon.png"],
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
     "resources": {
-      "../runtime/desktop_entry/**/*": "py-runtime/desktop_entry/"
+      "../runtime/desktop_entry": "py-runtime/desktop_entry"
     }
   }
 }

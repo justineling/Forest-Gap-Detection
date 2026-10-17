@@ -138,8 +138,17 @@ fn resolve_backend(app: &tauri::AppHandle) -> Option<Backend> {
             }
         }
     }
+    // ⚠️ 两种布局都要认：
+    //   · `py-runtime/desktop_entry/desktop_entry.exe` —— 当前 tauri.conf.json 的
+    //     目录映射 `"../runtime/desktop_entry": "py-runtime/desktop_entry"` 的产物
+    //   · `py-runtime/desktop_entry.exe` —— 若将来把映射改成 `"py-runtime"`
+    //   少写一个变体就会出现"装好了却提示找不到后端"（实测踩过）。
     for dir in &search_dirs {
-        for name in ["desktop_entry.exe", "desktop_entry"] {
+        for name in [
+            "desktop_entry.exe",
+            "desktop_entry/desktop_entry.exe",
+            "desktop_entry",
+        ] {
             let cand = dir.join(name);
             if cand.exists() {
                 return Some(Backend::Bundled(cand));
@@ -204,6 +213,34 @@ fn bundled_data_root(app: &tauri::AppHandle) -> PathBuf {
     PathBuf::from(".")
 }
 
+/// 写一行日志到 `%LOCALAPPDATA%\fgd\logs\app.log` 并同步打到 stderr。
+///
+/// 为什么需要它：release 版是 `windows_subsystem = "windows"`，没有控制台，
+/// `println!` / `eprintln!` 全部丢失 —— 用户报"打不开/没影像"时完全无从下手。
+/// 这个文件是唯一能看到"后端到底找到没、瓦片服务起来没"的地方。
+fn log_line(msg: &str) {
+    eprintln!("[fgd] {msg}");
+    let Ok(local) = std::env::var("LOCALAPPDATA") else {
+        return;
+    };
+    let dir = PathBuf::from(local).join("fgd").join("logs");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("app.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "[{stamp}] {msg}");
+    }
+}
+
 /// 按后端形态构造命令，统一注入环境变量与 `CREATE_NO_WINDOW`。
 fn build_command(backend: &Backend, args: &[String], bundled_cwd: &Path) -> Command {
     let mut cmd = match backend {
@@ -246,6 +283,7 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     let backend = resolve_backend(app).ok_or(
         "找不到后端：请先跑 scripts/build_desktop_runtime.ps1 打包，或配置好 .venv",
     )?;
+    log_line(&format!("瓦片服务后端：{}", backend.describe()));
 
     // 两种形态的启动参数不同：
     //   Dev     → python scripts/tile_server.py
@@ -291,10 +329,13 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     }
 
     *svc.tile.lock().unwrap() = Some(child);
-    Ok(format!(
-        "已用 {} 启动瓦片服务（端口 {BACKEND_PORT}）",
-        backend.describe()
-    ))
+    let msg = format!(
+        "已用 {} 启动瓦片服务（端口 {BACKEND_PORT}，数据根 {}）",
+        backend.describe(),
+        data_root.display()
+    );
+    log_line(&msg);
+    Ok(msg)
 }
 
 // ============================================================================
@@ -506,8 +547,10 @@ pub fn run() {
             let handle = app.handle().clone();
             let state = app.state::<Services>();
             match start_tile_server(&handle, &state) {
-                Ok(msg) => println!("[fgd] {msg}"),
-                Err(e) => eprintln!("[fgd] 瓦片服务未启动：{e}\n       前端会提示「影像瓦片服务未连接」，多边形仍可查看/编辑"),
+                Ok(msg) => log_line(&msg),
+                Err(e) => log_line(&format!(
+                    "瓦片服务未启动：{e}（前端会提示「影像瓦片服务未连接」，多边形仍可查看/编辑）"
+                )),
             }
             Ok(())
         })
