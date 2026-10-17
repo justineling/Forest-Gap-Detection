@@ -83,6 +83,61 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 | ④ add / delete / edit polygon | ✅ 已跑通（有回归测试） | Terra Draw（`MapCanvas.tsx` 的绘制/选择模式）+ `store` 的 `addGap` / `deleteGap` / `updateGapGeometry` / `setGapClass` |
 | ⑤ 估算可种植数量 + 导出 | ✅ 已跑通 | 估算：`src/lib/estimate.ts`（已对齐算法锚点，与 Python 差 0.00%）· 点位：`GET /planting-points`（Python/UTM 权威结算，右面板一键下载 GeoJSON/CSV）· 交付包：`POST /export` |
 
+### 检测链路：Tauri ↔ sidecar（stdio NDJSON）
+
+```
+点「② 开始检测」
+   ↓ invoke('run_detect', { params })     ← params 严格对齐 sidecar 参数表
+Rust: spawn python sidecar.py --params-json <json>
+   ├─ 线程 A：stdout → 逐行 JSON → emit('sidecar-event') → 前端日志/进度
+   └─ 线程 B：stderr → emit('sidecar-log')   → 前端状态栏
+   ↓ 收到 event=result
+前端: fetch('/gaps') → mergeManualEdits() → 替换要素（重放人工编辑）
+```
+
+**三条硬约束（都是会"卡死/白屏/静默错数"的）**
+
+1. **必须两个线程分别读 stdout 与 stderr**。Windows 匿名管道缓冲区只有 ~64 KB，
+   只读 stdout 时 stderr 会被每个瓦片的日志填满 → Python 的 `log()` 阻塞在 write
+   上 → 整个 sidecar 永久卡死。症状是"进度停在 30%、CPU 归零、没有任何报错"。
+2. **参数名必须严格对齐**：`chm_path` / `segment_path` / `target_density_per_ha`
+   （不是 `chm` / `segment` / `target_density`）。写错不会报错，只会回一条
+   `W1001 未知字段已忽略` 然后**照常跑完** —— 结果退化成"纯 RGB + 默认密度"。
+3. **`limit` 必须在 `roi` 之后应用**（先圈定范围再截断试跑数量）。
+   顺序反了时 `--limit 3 --roi 中部` 会得到 0 个瓦片并报 E3001。
+
+**ROI 传递**：前端画的多边形以 `roi_geojson` 传进来，Rust 落成临时 `.geojson`
+再作为 `roi` 路径给 sidecar（sidecar 的 `roi` 只接受文件路径）。
+
+**取消**：`cancel_detect` 直接 kill 子进程；窗口关闭时也会清（否则关窗后
+后台还在跑 350 秒的批处理）。
+
+**浏览器模式（Headless Chrome）**：`isTauri()` 判断 `'__TAURI_INTERNALS__' in window`，
+浏览器下 `runDetect` 返回"请用桌面应用打开"的提示而**不碰任何 Tauri API**；
+`@tauri-apps/api` 用动态 `import()`，所以浏览器产物里不会多出运行时依赖
+（构建后能看到 `core-*.js` 0.2 kB / `event-*.js` 1.1 kB 两个独立分包）。
+
+### 编辑后重跑的合并策略（`lib/mergeEdits.ts`）
+
+算法重跑后 `gap_id` 全部重编。直接替换会让**用户上一轮删掉的误报复活、
+改判的类别被算法改回去**。所以重跑要能把人工操作「重放」到新结果上。
+
+| 模式 | 行为 |
+|---|---|
+| `keep_manual`（默认） | 保留全部人工新增；重放删除与改判 |
+| `overwrite` | 完全回到算法结果，丢弃全部人工痕迹 |
+
+匹配判据（**不算真正的多边形 IoU**，前端零依赖）：
+
+1. **质心落入**：新要素质心落在旧多边形内 → 同一对象（强判据）
+2. **外接框 IoU > 0.5 且面积比 ∈ [0.5, 2]** → 兜底（弱判据，会写 warning）
+
+重放改判时保留 `original_class` / `edited` / `edited_by`，并新增
+`replayed_from`（指向旧 `gap_id`）以便事后核对"这次重放是不是猜错了"。
+
+删除快照存在 store 的 `deletedFeatures`（**存几何不存 id** —— 重跑后 id 全变了，
+只能靠几何认）。
+
 ### 多进程跑批（`--workers`，2026-10-17）
 
 ```bash
@@ -107,11 +162,14 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 **逐位一致性验证**：ROI 那组 639 个要素的几何 + 属性（排除 `generated_at`）
 与 13 个 `summary` 字段**全部完全相等**。
 
-> ⚠️ 全量 6 workers 那组**不能**与 10-16 的历史文件逐位对比 —— 中间影像被建过金字塔
-> （3.48 → 4.66 GB），`order_tiles_by_validity` 用 overview 判定有效性，
-> 降采样方式一变，边界瓦片的"有效/空白"判定会翻转 → 采样瓦片不同 →
-> 网格从 8.45/7.32 变成 8.35/7.23（-1.2%），类别分布抖动 ±15 块。
-> **这是影像文件层面的变化，与 workers 无关**；同一影像文件下 workers=1/4 已实测逐位一致。
+> ℹ️ **建金字塔后网格从 8.45/7.32 变成 8.35/7.23 —— 这是变准了，不是变差了。**
+> 中间影像被建过金字塔（3.48 → 4.66 GB），`order_tiles_by_validity` 用 overview
+> 判定有效性，降采样方式一变，边界瓦片的"有效/空白"判定会翻转 → 采样瓦片不同。
+> 而 **8.35 m × 7.23 m 恰好是早期用「频域自相关」与「树心 NND 峰值」两套独立方法
+> 互证出来的真实物理株行距**（MEMORY.md §3）—— 没建金字塔时全分辨率跨步近邻抽样
+> 有混叠噪声，才把网格略微撑大到 8.45/7.32；建完后 `survey_grid` 收敛到了真值。
+> 所以这是**影像文件层面的改善**，与 workers 无关；同一影像文件下 workers=1/4
+> 已实测逐位一致。跨影像版本的对比仍需重新立基线。
 
 **四条护栏（缺一条就会"提速了但数字变了"或"反而更慢"）**
 
@@ -407,3 +465,27 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 
     修法：**只对项目内的 `src-tauri\target` 做搬家检测**，
     `CARGO_TARGET_DIR` 指向项目外时直接跳过（并打印一行提示）。
+
+**IPC 桥接侧**
+
+17. **只读 stdout 不读 stderr → sidecar 永久死锁**
+
+    Windows 匿名管道缓冲区约 64 KB。跑批时每个瓦片都会往 stderr 写日志，
+    若 Rust 只读 stdout、打算"等进程结束再读 stderr"，缓冲区很快填满 →
+    Python 的 `log()` 阻塞在 `write` 上 → 整个进程卡死。
+    **症状极具误导性**：进度条停在 30% 不动、CPU 归零、**没有任何报错**。
+    修法：spawn 之后立刻起**两个线程**分别 `BufReader::new(stdout).lines()` 与
+    `stderr.lines()`，各自 `emit` 到前端。
+
+18. **sidecar 参数名写错不会报错，只会静默退化**
+
+    正确名字是 `chm_path` / `segment_path` / `target_density_per_ha`。
+    写成 `chm` / `segment` / `target_density` 时只回一条
+    `W1001 未知字段已忽略`，然后**照常跑完** —— 结果变成"纯 RGB + 默认密度"，
+    数字看起来合理但语义完全不同。前端传参处必须与 `sidecar.PARAM_SPECS` 逐字对齐。
+
+19. **`limit` 必须在 `roi` 之后应用**
+
+    顺序反了（先截前 N 块再按 ROI 过滤）时，如果前 N 块恰好都在圈外，
+    会得到 0 个瓦片并报 `E3001 没有可处理的瓦片`。
+    正确顺序：**先 ROI 过滤缩小范围，再 limit 截断试跑数量**。
