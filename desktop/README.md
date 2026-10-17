@@ -35,6 +35,31 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 **刻意不引入 `tauri-plugin-shell`** —— 标准库 `std::process` 就够，少一层权限配置。
 细节见 `src-tauri/src/lib.rs` 顶部注释与交接简报 §16。
 
+### 一键脚本（推荐，双击即用）
+
+| 脚本 | 给谁用 | 做什么 |
+|---|---|---|
+| `启动桌面端.bat` | **开发** | 检查环境 → 缺什么自动装（调 `scripts/一键配置环境.bat`）→ 挑端口 → `tauri dev` |
+| `构建安装包.bat` | **发布** | 检查环境 → `npm run build` → `tauri build` → 报告产物并自动弹安装程序 |
+| `_环境准备.bat` | 上面两个的**共享模块** | 阶段提示 / 心跳 / 端口探测 / 旧产物归档 / 搬家自愈 |
+
+三个脚本都遵循同一套约定（与同作者的 KIRA Manager 脚本一致）：
+
+- **自动下载环境**：`.venv` / `node_modules` / `cargo` 缺任一项 → 自动调项目自带的环境向导
+- **心跳**：长任务（npm install / Rust 编译 / 链接）每 ~10 秒打一行"已用 X 分 Y 秒"，
+  避免用户以为卡死。心跳是**独立进程 + 哨兵文件**，不用 taskkill（不会误杀别的窗口），
+  且**自限时**（默认 90 分钟，主脚本异常退出也不会留孤儿）
+- **端口兜底**：5173 被占 → 自动换 5174~5199，并生成**临时 tauri 配置**覆盖
+  `devUrl` 与 `beforeDevCommand`（因为 `vite.config` 的 `strictPort=true` 会直接失败，
+  而 `tauri.conf.json` 的 devUrl 写死 5173 —— 必须两边同时改）；8765 被占 → 提示并给出占用 PID
+- **旧产物归档**：构建前把上次的安装包挪到 `bundle/_stale/`，构建后查找**只可能**命中本次产物。
+  零命中就如实说"本次未产出"，**绝不弹上一次的旧包**
+- **搬家自愈**：编译缓存里记的是绝对路径，项目移动后自动清理（**仅限项目内 `src-tauri/target`**，
+  `CARGO_TARGET_DIR` 指向项目外时跳过 —— 那是多项目共用目录，删了会伤到别人）
+
+> ⚠️ 三个 `.bat` 必须存成 **UTF-8 无 BOM + CRLF 行尾**。
+> 用 LF 行尾时 cmd 会把中文路径拆断（实测报 `'D://...//2.' is not recognized`）。
+
 > ⚠️ **`--build-overviews` 会就地修改源影像**（对本 BigTIFF 是**写入文件内部**，
 > 不是 `.ovr` 边车）：实测 **3.48 GB → 4.66 GB（+1.19 GB）**，耗时 174 s。
 > 换来的是瓦片从 **104 s → 0.7 s**（z=13）、**35 s → 0.6 s**（z=15）。
@@ -57,6 +82,57 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 | ③ 按 class 渲染 + 勾选过滤 | ✅ 已跑通（有回归测试） | `src/lib/classes.ts`（8 类 + 人工新增，配色与 `export_arcgis.py` 一致）· `src/components/LeftPanel.tsx` |
 | ④ add / delete / edit polygon | ✅ 已跑通（有回归测试） | Terra Draw（`MapCanvas.tsx` 的绘制/选择模式）+ `store` 的 `addGap` / `deleteGap` / `updateGapGeometry` / `setGapClass` |
 | ⑤ 估算可种植数量 + 导出 | ✅ 已跑通 | 估算：`src/lib/estimate.ts`（已对齐算法锚点，与 Python 差 0.00%）· 点位：`GET /planting-points`（Python/UTM 权威结算，右面板一键下载 GeoJSON/CSV）· 交付包：`POST /export` |
+
+### 多进程跑批（`--workers`，2026-10-17）
+
+```bash
+# 全量重算，4~6 个进程（8 核机器推荐 4；本机实测见下表）
+.venv/Scripts/python.exe scripts/process_image.py \
+  --input "drone data/WGR17-002.tif" --chm output/chm.tif \
+  --segment "drone data/segment.tif" --workers 4 --force
+
+# 桌面端 / sidecar 调用时传 workers 参数（契约参数，不进指纹）
+# 只跑圈选范围时 ROI 已经能省 60%+，两者叠加效果最好
+```
+
+**实测（本机 8 核）**
+
+| 场景 | workers | 耗时 | 加速比 | 逐位一致 |
+|---|---|---|---|---|
+| ROI 121 瓦片 | 1（串行） | **462 s** | 1.00× | 基准 |
+| ROI 121 瓦片 | 4 | **195 s** | **2.37×** | ✅ 639 要素全等 |
+| 全量 528 瓦片 | 1（历史基线） | 1,048 s | 1.00× | 基准 |
+| 全量 528 瓦片 | 6 | **350 s** | **3.00×** | 见下注 |
+
+**逐位一致性验证**：ROI 那组 639 个要素的几何 + 属性（排除 `generated_at`）
+与 13 个 `summary` 字段**全部完全相等**。
+
+> ⚠️ 全量 6 workers 那组**不能**与 10-16 的历史文件逐位对比 —— 中间影像被建过金字塔
+> （3.48 → 4.66 GB），`order_tiles_by_validity` 用 overview 判定有效性，
+> 降采样方式一变，边界瓦片的"有效/空白"判定会翻转 → 采样瓦片不同 →
+> 网格从 8.45/7.32 变成 8.35/7.23（-1.2%），类别分布抖动 ±15 块。
+> **这是影像文件层面的变化，与 workers 无关**；同一影像文件下 workers=1/4 已实测逐位一致。
+
+**四条护栏（缺一条就会"提速了但数字变了"或"反而更慢"）**
+
+1. **按 `tile_idx` 排序后再累加** —— 并发完成顺序是随机的，而串行版是按 tiles
+   顺序累加 `all_features` / `class_totals` / `area_total`。不排序 → 浮点加法顺序变化
+   → 末位抖动 → 破坏"逐位可复现"红线。做法：worker 返回 `(idx, ...)`，
+   主进程 `results.sort(key=idx)` 后再累加。
+2. **子进程只开一次大文件句柄** —— Windows 用 spawn，`DatasetReader` 不可 pickle。
+   若每瓦片都 `rasterio.open` 一次正射影像 + CHM + segment，528 瓦片就是 1,500+ 次
+   4.6 GB 文件的头部解析，提速全被吃掉。做法：`ProcessPoolExecutor(initializer=...)`。
+3. **锁死底层线程数** —— numpy/scipy/GDAL 默认各自多线程；6 worker × 每进程 8~16 线程
+   = 上百线程抢 CPU 与磁盘锁，实测会比单进程还慢。做法：initializer 里设
+   `OMP/MKL/OPENBLAS/NUMEXPR/GDAL_NUM_THREADS=1`。
+4. **子进程绝不写 stdout** —— sidecar 的 stdout 是 NDJSON 数据通道。进度事件全部
+   由主进程在 `as_completed` 循环里输出，并调 `multiprocessing.freeze_support()`
+   为打包做准备。
+
+> ⚠️ `workers` **不进参数指纹**：进程数不影响单瓦片结果，改它不该让 528 个瓦片的
+> 缓存全部失效（重跑一次 1,048 秒）。
+> ⚠️ 瓦片数少于 `max(4, workers*2)` 时自动退回串行 —— Windows 每个子进程启动约 1 秒，
+> 小批量起进程池反而更慢（也让契约测试的合成小影像保持确定性）。
 
 ### 跑测试
 
@@ -292,3 +368,42 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 
     `RunEvent::Exit` 里必须 kill 掉 tile_server，否则孤儿 python 进程一直占着 8765，
     下次启动会误判"服务已在运行"而复用**旧版本**的服务进程（改了代码却不生效）。
+
+**一键脚本侧**（`.bat` 的两个坑，都实测踩过）
+
+14. **`.bat` 必须是 UTF-8 无 BOM + CRLF 行尾**
+
+    用 LF 行尾时 cmd 会把含中文的路径行**拆断**，报出这种毫无线索的错误：
+
+    ```text
+    'D://学习目标_笔记//2.' is not recognized as an internal or external command
+    'e' is not recognized as an internal or external command
+    ```
+
+    看起来像路径被空格切了，实际是**行尾 + 编码**共同作用。修法：
+    `python -c "b=open(p,'rb').read(); open(p,'wb').write(b.replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))"`
+
+15. **`call 文件.bat 标签 参数` 不是"跳到文件内标签"**
+
+    cmd 里 `call other.bat stage_begin 1 5 "..."` 会把 `stage_begin` 当成 `%1`
+    **传给文件、文件从头执行**。共享模块必须自己分发：
+
+    ```bat
+    set "FG_LIB_ENTRY=%~1"
+    if not defined FG_LIB_ENTRY exit /b 0
+    shift
+    goto %FG_LIB_ENTRY%
+    ```
+
+    并且**顶层不能 `setlocal`** —— 否则 `FG_NEED_*` / `FG_DEV_PORT` 这些结果变量
+    在 `call` 返回后全部丢失，调用方永远拿到空值（实测症状：`check_runtime`
+    三项都打印"已就绪"，但 `FG_NEED_PY` 是空的）。
+
+16. **搬家自愈会误删共享的 `CARGO_TARGET_DIR`**（最危险的一个）
+
+    本机把 `CARGO_TARGET_DIR` 指到了 `D://forest-gap-tools//rust//target`。
+    那个目录里没有本项目的路径标记，`.d` 文件记录的也是**别的项目**的路径 →
+    "搬家检测"判定为项目移动过 → `rmdir /s /q` 清空 → **把别的项目的编译缓存删了**。
+
+    修法：**只对项目内的 `src-tauri\target` 做搬家检测**，
+    `CARGO_TARGET_DIR` 指向项目外时直接跳过（并打印一行提示）。
