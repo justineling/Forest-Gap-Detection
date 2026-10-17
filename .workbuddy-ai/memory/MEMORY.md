@@ -175,6 +175,11 @@ React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 
   `resolve_backend` 要兼容两种布局（否则不报错、只显示"瓦片服务未连接"）。
   release 无控制台 → 排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
   ⚠️ 测试时**别手删安装目录**（绕过 uninstall.exe 会让 NSIS 弹 "Unable to install"）。
+- **首次使用引导已做**（`WelcomeWizard` + `tauri-plugin-dialog`）：用户装完不再看到
+  "后端离线 / 请运行 xxx.py"，而是"选影像 → 开始使用"两步。
+  配置存 `%LOCALAPPDATA%\fgd\settings.json`；缺影像返回哨兵 `NEED_IMAGE`（不报错）。
+  ⚠️ **dev 与 bundled 的数据基准必须分开**（`data_base()`）：dev 用仓库根、
+  bundled 用 `%LOCALAPPDATA%\fgd\data`，否则开发态明明有影像却弹"请选择影像"。
 - 三个 bat：`启动桌面端.bat`（开发）/ `构建安装包.bat`（发布）/ `_环境准备.bat`（共享）。
   必须 **UTF-8 无 BOM + CRLF**；`call 文件.bat 标签` 靠 shift+goto 分发且**顶层不能 setlocal**；
   搬家自愈**只对项目内 target** 生效（否则会删掉共享的 `CARGO_TARGET_DIR`）。
