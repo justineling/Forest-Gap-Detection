@@ -143,7 +143,18 @@ React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 
   前端按 `features` 读会静默拿到空数组（界面上一个多边形都不显示且不报错）。
   修法：`api/backend.ts` 的 `normalizeCollection()`。
 
-### 坑（完整版见 `desktop/README.md` 13 条，这里只留最容易返工的）
+### 多进程与一键脚本（2026-10-17）
+
+- `--workers`（默认 1，0=自动 min(6, cpu//2)）：全量 **1,048 → 350 s**、ROI 462 → 195 s。
+  四条护栏：**按 tile_idx 排序后累加** / initializer 只开一次句柄 / 锁死 BLAS+GDAL 线程 /
+  子进程不写 stdout。**`workers` 不进指纹**。瓦片 < max(4, workers*2) 自动退回串行。
+- ⚠️ **建金字塔会改变网格勘察结果**：`order_tiles_by_validity` 用 overview 判有效性，
+  降采样方式一变 → 采样瓦片不同 → 网格 8.45/7.32 → 8.35/7.23。跨影像版本对比必须重立基线。
+- 三个 bat：`启动桌面端.bat`（开发）/ `构建安装包.bat`（发布）/ `_环境准备.bat`（共享）。
+  必须 **UTF-8 无 BOM + CRLF**；`call 文件.bat 标签` 靠 shift+goto 分发且**顶层不能 setlocal**；
+  搬家自愈**只对项目内 target** 生效（否则会删掉共享的 `CARGO_TARGET_DIR`）。
+
+### 坑（完整版见 `desktop/README.md` 16 条，这里只留最容易返工的）
 1. `Window.intersection` 无交集时**抛 `WindowError`**，不是返回空窗口
 2. 影像 **4 波段**（第 4 恒 255 = Alpha）—— 4 波段源送进 3 波段目标 `reproject` 直接报错
 3. **影像没有金字塔** → 低缩放级瓦片 z=13 要 104 s；`--build-overviews` 后 **0.7 s（149×）**。
@@ -178,7 +189,8 @@ React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 
 
 - ✅ 全部 P0~P6 旧待办已完成（重跑整幅 / 水体验证 / 文档登记 / 草地回检 /
   road 几何差集 / 性能优化）。当前全量 **1,048 秒 / 528 瓦片**。
-- ⏳ **多进程跑批**（4~8 核把 1,048 s 压到 3 分钟内）—— 缺陷看板 P2 第 7 项
+- ✅ **多进程跑批已完成**（2026-10-17，`--workers`）：全量 1,048 s → **350 s**（6 workers，3.0×），
+  ROI 121 瓦片 462 s → 195 s（4 workers，2.37×），逐位可复现。四条护栏见 desktop/README
 - ⏳ **打包分发**：Python 目录进 Tauri `resources/`（裁定 `--onedir`，
   严禁 `--onefile`）；文件对话框、安装包签名
 - ⏳ **合并策略实现**：重跑时「保留人工编辑 / 完全覆盖」两档（IoU>0.5 重放删除与改判）
@@ -186,7 +198,8 @@ React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 
 
 ## 6. 性能基线（2026-10-17）
 
-- 单瓦片 **~2 秒**（2304² 含 128px 外扩）；全量 528 瓦片 **1,048 秒**（ROI 20.9% → 400 秒）
+- 单瓦片 **~2 秒**（2304² 含 128px 外扩）；全量 528 瓦片 **1,048 秒**（串行）
+  → **350 秒**（`--workers 6`）；ROI 121 瓦片 462 → 195 秒（`--workers 4`）
 - **关键教训**：连通域统计**不要**逐域做全图 `lab == i` / `comp.sum()`，
   改用 `np.bincount(lab.ravel())` 一次算完 + 只在各自 bbox 内取局部数组
   （43 秒/瓦片 → 3 秒/瓦片，等价性已逐像素验证）
