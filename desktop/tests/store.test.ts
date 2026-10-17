@@ -183,6 +183,50 @@ check(
   '新增要素后旧的估算结果被清空',
 )
 
+// ---------- 重跑合并（序 5）：store 层集成 ----------
+console.log('\n⑥ 重跑合并（applyRerun）—— 删除与改判要能被重放')
+{
+  const S2 = useAppStore
+  // 造两个算法要素：A 会被用户删掉，B 会被改判
+  const a = feat('A1', 'open_patch', 111.2200, 1.1900)
+  const b = feat('B1', 'open_patch', 111.2300, 1.1900)
+  S2.getState().setGaps([a, b], null)
+
+  // 用户操作：删 A、把 B 改判成「林间空隙」
+  S2.getState().deleteGap('A1')
+  S2.getState().setGapClass('B1', 'alley_gap')
+  check(S2.getState().deletedFeatures.length === 1, '删除后留下快照（用于重放）', String(S2.getState().deletedFeatures.length))
+
+  // 算法重跑：同一位置出了新 id（A2/B2），形状略变
+  const a2 = feat('A2', 'open_patch', 111.22003, 1.19003)
+  const b2 = feat('B2', 'open_patch', 111.23003, 1.19003)
+  const stats = S2.getState().applyRerun([a2, b2], 'keep_manual')
+
+  check(stats.replayed_deletes === 1, '重放删除 1 次', String(stats.replayed_deletes))
+  check(stats.replayed_edits === 1, '重放改判 1 次', String(stats.replayed_edits))
+  const ids = S2.getState().gaps.map((f) => f.properties.gap_id)
+  check(!ids.includes('A2'), 'A2 被丢弃（用户标为误报的那块没复活）', ids.join(','))
+  check(ids.includes('B2'), 'B2 保留')
+  const b2feat = S2.getState().gaps.find((f) => f.properties.gap_id === 'B2')
+  check(
+    b2feat?.properties.class === 'alley_gap',
+    'B2 的类别沿用用户改判值（没被算法改回去）',
+    String(b2feat?.properties.class),
+  )
+  check(
+    b2feat?.properties.replayed_from === 'B1',
+    '留痕 replayed_from 指向旧 id',
+    String(b2feat?.properties.replayed_from),
+  )
+  check(S2.getState().deletedFeatures.length === 0, '合并后换基线：删除记录清空')
+
+  // 完全覆盖：人工痕迹全丢
+  S2.getState().deleteGap('B2')
+  const st2 = S2.getState().applyRerun([feat('C1', 'open_patch', 111.2400, 1.1900)], 'overwrite')
+  check(st2.replayed_deletes === 0 && st2.replayed_edits === 0, 'overwrite 不重放任何人工操作')
+  check(S2.getState().gaps.length === 1, 'overwrite 只留算法结果', String(S2.getState().gaps.length))
+}
+
 // ---------- 汇总 ----------
 console.log(`\n${failures === 0 ? '✅ 全部通过' : `❌ ${failures} 项失败`}`)
 process.exit(failures === 0 ? 0 : 1)

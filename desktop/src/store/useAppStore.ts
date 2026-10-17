@@ -11,6 +11,7 @@ import type {
 import { ALL_CLASSES, CLASS_STYLES, GROUP_META } from '../lib/classes'
 import { estimate, DEFAULT_GRID } from '../lib/estimate'
 import { centroid, polygonAreaM2 } from '../lib/geometry'
+import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeEdits'
 
 const MAX_LOGS = 300
 
@@ -36,6 +37,14 @@ export interface AppState {
    * 没有 → 退回几何原点，相位任意（离线演示数据时会这样）。
    */
   plantingGrid: PlantingGrid | null
+  /**
+   * 被用户删掉的要素**快照**（不是 id 集合）。
+   *
+   * 为什么留几何：算法重跑后 gap_id 全部重编，只能靠几何判断
+   * "新结果里哪一块就是用户当初删掉的那块"，才能重放删除。
+   * 见 `lib/mergeEdits.ts`。
+   */
+  deletedFeatures: GapFeature[]
 
   // —— ROI（需求 2）——
   roi: PolygonGeometry | null
@@ -66,6 +75,13 @@ export interface AppState {
   setRoi: (geom: PolygonGeometry | null) => void
   setClearance: (m: number) => void
   runEstimate: () => void
+  /**
+   * 算法重跑后合并新结果（PRD 附录 C · R-P1-8）。
+   *
+   * 不直接 setGaps —— 那会把用户上一轮的删除/改判全丢掉。
+   * 走 `mergeManualEdits` 把人工操作重放到新结果上，返回统计供 UI 汇报。
+   */
+  applyRerun: (newFeatures: GapFeature[], mode?: MergeMode) => MergeStats
   pushLog: (msg: string) => void
 }
 
@@ -80,6 +96,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   visibleClasses: initialVisibility(),
   selectedId: null,
   plantingGrid: null,
+  deletedFeatures: [],
 
   roi: null,
 
@@ -104,6 +121,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((s) => ({
       gaps: features,
       plantingGrid: plantingGrid ?? null,
+      // 载入新一轮结果 = 换基线，上一轮的删除记录不再适用
+      deletedFeatures: [],
       estimateResult: null,
       logs: appendLog(
         s.logs,
@@ -166,6 +185,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       if (!feat) return s
       return {
         gaps: s.gaps.filter((f) => f.properties.gap_id !== id),
+        // 留快照：重跑时要靠几何把"用户删掉的那块"从新结果里认出来
+        deletedFeatures: [...s.deletedFeatures, feat],
         selectedId: s.selectedId === id ? null : s.selectedId,
         manualDeleted: s.manualDeleted + 1,
         estimateResult: null,
@@ -264,6 +285,36 @@ export const useAppStore = create<AppState>()((set, get) => ({
           `排坑口径 ${res.by_grid.toLocaleString()} 株，差异 ${res.divergence_pct}%`,
       ),
     }))
+  },
+
+  applyRerun: (newFeatures, mode = 'keep_manual') => {
+    const s = get()
+    const r = mergeManualEdits({
+      prevFeatures: s.gaps,
+      deletedFeatures: s.deletedFeatures,
+      newFeatures,
+      mode,
+    })
+    set({
+      gaps: r.features,
+      // 合并完就换基线：新结果的 gap_id 已经是新的，旧删除记录不再适用
+      deletedFeatures: [],
+      selectedId: null,
+      estimateResult: null,
+      logs: appendLog(
+        s.logs,
+        `重跑合并（${mode === 'keep_manual' ? '保留人工' : '完全覆盖'}）：` +
+          `人工新增 ${r.stats.kept_manual}` +
+          (mode === 'keep_manual'
+            ? ` · 重放删除 ${r.stats.replayed_deletes} · 重放改判 ${r.stats.replayed_edits}`
+            : ` · 丢弃 ${r.stats.dropped_manual}`) +
+          ` · 算法要素 ${r.stats.passthrough} · 合计 ${r.stats.total}`,
+      ),
+    })
+    for (const w of r.warnings) {
+      set((cur) => ({ logs: appendLog(cur.logs, `⚠️ ${w}`) }))
+    }
+    return r.stats
   },
 
   pushLog: (msg) => set((s) => ({ logs: appendLog(s.logs, msg) })),

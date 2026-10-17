@@ -38,6 +38,11 @@ export interface GapProps {
   edited_by?: string
   original_class?: GapClass
   source?: 'algo' | 'manual'
+  /**
+   * 重跑后重放改判时写入：这条要素的人工类别是从哪个旧 gap_id 重放过来的。
+   * 用于事后核对"这次重放是不是猜错了"（见 `lib/mergeEdits.ts`）。
+   */
+  replayed_from?: string
 }
 
 /** 最小 GeoJSON 类型（不引 @types/geojson，避免多余依赖） */

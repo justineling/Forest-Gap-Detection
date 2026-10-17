@@ -6,7 +6,7 @@ import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import StatusBar from './components/StatusBar'
 import { useAppStore } from './store/useAppStore'
-import { exportBundle, fetchGaps, probeBackend } from './api/backend'
+import { exportBundle, fetchGaps, onSidecarEvent, onSidecarLog, probeBackend } from './api/backend'
 import type { GapCollection } from './types'
 
 export default function App() {
@@ -19,12 +19,26 @@ export default function App() {
   const gaps = useAppStore((s) => s.gaps)
   const pushLog = useAppStore((s) => s.pushLog)
 
-  const loadGaps = useCallback(async () => {
+  const applyRerun = useAppStore((s) => s.applyRerun)
+
+  /**
+   * 载入检测结果。
+   *
+   * `rerun=true` 时走「合并人工编辑」而不是直接替换 —— 重跑后 gap_id 全部重编，
+   * 直接替换会让用户上一轮删掉的误报复活、改判的类别被算法覆盖回去。
+   */
+  const loadGaps = useCallback(async (opts?: { rerun?: boolean }) => {
     setLoadingGaps(true)
     try {
       const fc = await fetchGaps()
+      const feats = fc.features ?? []
+      if (opts?.rerun) {
+        applyRerun(feats, 'keep_manual')
+        setLoadingGaps(false)
+        return
+      }
       // 把算法网格一起带上 —— 前端估算的格点相位才能与 Python 侧逐株一致
-      setGaps(fc.features ?? [], fc.planting_grid ?? null)
+      setGaps(feats, fc.planting_grid ?? null)
     } catch (e) {
       // 后端不在线时退回内置样例，保证界面可独立演示
       try {
@@ -39,7 +53,7 @@ export default function App() {
     } finally {
       setLoadingGaps(false)
     }
-  }, [setGaps, pushLog])
+  }, [setGaps, pushLog, applyRerun])
 
   // 启动：探测后端 → 自动载入结果
   useEffect(() => {
@@ -59,6 +73,48 @@ export default function App() {
     // 仅启动执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 日志 / 自动重载结果
+  // ⚠️ 浏览器模式（Headless Chrome）下 onSidecarEvent 直接返回空订阅，
+  //    不会碰 Tauri API —— 否则会抛错并卸载整棵 React 树（白屏）。
+  useEffect(() => {
+    let alive = true
+    let unEvent: (() => void) | undefined
+    let unLog: (() => void) | undefined
+
+    void onSidecarEvent((ev) => {
+      const t = String(ev.event ?? '')
+      if (t === 'progress') {
+        const done = ev.done ?? ev.current ?? ev.tiles_done ?? '?'
+        const total = ev.total ?? ev.tiles_total ?? '?'
+        pushLog(`检测进度 ${done}/${total}`)
+      } else if (t === 'result') {
+        pushLog('检测完成，正在重新载入结果（合并人工编辑）…')
+        void loadGaps({ rerun: true })
+      } else if (t === 'error') {
+        pushLog(`检测失败 [${String(ev.code ?? '-')}] ${String(ev.message ?? '')}`)
+      } else if (t === 'log') {
+        const m = String(ev.message ?? '')
+        if (m) pushLog(m)
+      } else if (t === 'raw') {
+        pushLog(`[sidecar] ${String(ev.line ?? '')}`)
+      }
+    }).then((u) => {
+      if (alive) unEvent = u
+      else u()
+    })
+
+    void onSidecarLog((line) => pushLog(`[py] ${line}`)).then((u) => {
+      if (alive) unLog = u
+      else u()
+    })
+
+    return () => {
+      alive = false
+      unEvent?.()
+      unLog?.()
+    }
+  }, [loadGaps, pushLog])
 
   const onExport = useCallback(async () => {
     setExporting(true)
