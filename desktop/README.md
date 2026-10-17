@@ -83,6 +83,62 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 | ④ add / delete / edit polygon | ✅ 已跑通（有回归测试） | Terra Draw（`MapCanvas.tsx` 的绘制/选择模式）+ `store` 的 `addGap` / `deleteGap` / `updateGapGeometry` / `setGapClass` |
 | ⑤ 估算可种植数量 + 导出 | ✅ 已跑通 | 估算：`src/lib/estimate.ts`（已对齐算法锚点，与 Python 差 0.00%）· 点位：`GET /planting-points`（Python/UTM 权威结算，右面板一键下载 GeoJSON/CSV）· 交付包：`POST /export` |
 
+### 打包分发：Python 运行时（`scripts/build_desktop_runtime.ps1`）
+
+桌面端要拉起**两个** Python 进程（tile_server 常驻 + sidecar 按需）。
+如果各打一个 `--onedir`，rasterio/numpy/scipy/shapely/pyproj 的动态库会被复制
+两遍（~350 MB → ~700 MB）。所以做了**单入口**：
+
+```
+desktop_entry.exe --run-tile-server [...]   # 转发给 tile_server
+desktop_entry.exe [sidecar 参数...]         # 默认走 sidecar
+desktop_entry.exe --self-test               # 冻结态自检（JSON 输出）
+```
+
+打包结果：`desktop/runtime/desktop_entry/`（**179 MB**），
+`tauri.conf.json` 把它映射成 `py-runtime/desktop_entry/`。
+
+```bat
+:: 一条命令：装 PyInstaller（如需）→ 打包 → 可选冒烟
+powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smoke
+```
+
+**四条打包红线**
+
+1. **`multiprocessing.freeze_support()` 必须是 `__main__` 的第一行**。
+   打包后进程池的子进程是「重新执行同一个 exe」并带 `--multiprocessing-fork`；
+   若先跑 argparse，这个参数会被当未知参数拦掉 → `--workers > 1` 直接崩。
+2. **`--collect-all rasterio / pyproj / shapely`**：这些包的 Cython `.pyd` 与数据
+   文件（`proj.db` / `gdal_data`）静态分析抓不全，漏了就是运行期
+   `ModuleNotFoundError` / `Cannot find proj.db`。
+3. **`PROJ_DATA` 必须指向 rasterio 的 `proj_data`，不是 pyproj 的**
+   （见坑 20）。冻结态还要自己定位（`sys._MEIPASS`），因为这两个库只认环境变量。
+4. **打包态的工作目录必须可写**：装到 `Program Files` 时安装目录只读，
+   写 `output/` 与瓦片缓存会失败。数据根按
+   `FGD_DATA_ROOT` → `resources/data` → `%LOCALAPPDATA%\fgd\data`（自动创建）
+   → 主程序同级 的顺序解析。
+
+**Rust 侧双模寻址**（生产优先、开发兜底）：
+
+| 顺序 | 位置 | 场景 |
+|---|---|---|
+| 1 | `FGD_BACKEND` 环境变量 | 排障时强制指定 |
+| 2 | `resources/py-runtime/desktop_entry.exe` | 安装包 |
+| 3 | 主程序同级 `py-runtime/desktop_entry.exe` | 免安装 zip |
+| 4 | 仓库 `.venv/Scripts/python.exe` + `scripts/*.py` | 日常开发 |
+
+打包态还会把 params 里的**相对路径**（`drone data/...`、`output/chm.tif`）
+补成数据根下的绝对路径 —— 打包版没有"仓库根"这回事。
+
+**冻结态实测（脱离 .venv 直接调 exe）**
+
+| 项 | 结果 |
+|---|---|
+| `--self-test` | ✅ `proj_ok: true` · `gdal_driver_ok: true` · exit 0 |
+| 瓦片服务 `/meta` | ✅ 47130×44686 · EPSG:4326 · 0.033 m/px · 金字塔=True |
+| 单张瓦片 | ✅ z=15 61 KB / 598 ms · z=17 150 KB / 538 ms（真实影像，非空白） |
+| 多进程 + ROI 检测 | ✅ `workers=2` + `limit 4`，ROI 528→121→4，**exit 0，30.9 秒**，输出 227 KB |
+
 ### 检测链路：Tauri ↔ sidecar（stdio NDJSON）
 
 ```
@@ -489,3 +545,21 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     顺序反了（先截前 N 块再按 ROI 过滤）时，如果前 N 块恰好都在圈外，
     会得到 0 个瓦片并报 `E3001 没有可处理的瓦片`。
     正确顺序：**先 ROI 过滤缩小范围，再 limit 截断试跑数量**。
+
+20. **`proj.db` 版本冲突：rasterio 与 pyproj 各带一份，版本可能不同**
+
+    ```
+    CRSError: The EPSG code is unknown. PROJ: proj_create_from_database:
+    ... proj.db contains DATABASE.LAYOUT.VERSION.MINOR = 4
+    whereas a number >= 5 is expected. It comes from another PROJ installation.
+    ```
+
+    本机实测：rasterio 1.4.4（GDAL 3.10.3）自带 `rasterio/proj_data/proj.db`
+    是 **MINOR=5**，而 pyproj 3.7.2 的 pip 包里带的是 **MINOR=4**（旧）。
+    若把 `PROJ_DATA` 指向 pyproj 那份，rasterio 的 GDAL 直接拒绝加载 →
+    所有 `CRS.from_epsg(...)` 失败、瓦片服务全崩。
+
+    **修法：`PROJ_DATA` 优先指向 rasterio 的 `proj_data`**（更新），
+    pyproj 只作兜底 —— PROJ 向前兼容，pyproj 读新库没问题。
+    这个坑**只在冻结态出现**（开发态两个库各自找自己的数据，互不干扰），
+    所以必须靠 `--self-test` 里的 `gdal_driver_ok` 才能发现。
