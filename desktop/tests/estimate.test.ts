@@ -15,11 +15,25 @@
  */import { existsSync, readFileSync } from 'node:fs'
 import { estimate, SINGLE_TREE_AREA_M2, DEFAULT_GRID } from '../src/lib/estimate'
 import { polygonAreaM2 } from '../src/lib/geometry'
-import type { GapFeature } from '../src/types'
+import type { GapFeature, PlantingGrid } from '../src/types'
 
 /** 结果文件在仓库根，而 npm script 的 cwd 是 desktop/ —— 两个位置都试 */
 const GAPS_CANDIDATES = ['output/wgr17-final-gaps.geojson', '../output/wgr17-final-gaps.geojson']
 const GAPS_FILE = GAPS_CANDIDATES.find((p) => existsSync(p))
+
+/**
+ * 种植网格锚点文件（由 `scripts/planting_points.py --emit-grid` 生成）。
+ *
+ * 为什么需要它：前端若用「所有要素第一个顶点的均值」当原点，相位是**任意**的，
+ * 实测与 Python 差 +8.8%（3,594 vs 3,912 株）。带 anchor 才能逐株对账。
+ */
+const GRID_CANDIDATES = ['output/planting-grid.json', '../output/planting-grid.json']
+const GRID_FILE = GRID_CANDIDATES.find((p) => existsSync(p))
+const plantingGrid: PlantingGrid | undefined = GRID_FILE
+  ? (JSON.parse(readFileSync(GRID_FILE, 'utf8')) as PlantingGrid & {
+      reference_totals?: Record<string, number>
+    })
+  : undefined
 
 let failures = 0
 function check(ok: boolean, label: string, detail = ''): void {
@@ -62,8 +76,9 @@ check(
 // ---------- B. 双口径估算 ----------
 console.log(`\nB. 双口径估算（默认退让 ${DEFAULT_GRID.clearance_m} m）`)
 const t0 = Date.now()
-const res = estimate(features)
+const res = estimate(features, plantingGrid ? { planting_grid: plantingGrid } : {})
 const ms = Date.now() - t0
+console.log(`        网格原点来源: ${res.origin_source}（${GRID_FILE ?? '无锚点文件'}）`)
 check(res.by_grid > 0, '排坑口径 > 0', `${res.by_grid} 株`)
 check(res.by_area > 0, '面积口径 > 0', `${res.by_area} 株`)
 check(
@@ -158,6 +173,55 @@ if (slot) {
     'vacant_slot：两个口径都等于块数（每块 1 株）',
     `块数 ${slot.n} · 面积口径 ${slot.a} · 排坑 ${slot.b}`,
   )
+}
+
+// ---------- F. 与 Python 侧逐株对账（网格原点对齐）----------
+console.log('\nF. 与 Python 侧对账（网格原点对齐）')
+if (!plantingGrid) {
+  console.log(`        ⚠️ 跳过：找不到 ${GRID_CANDIDATES.join(' / ')}`)
+  console.log('           生成方式：scripts/planting_points.py --emit-grid output/planting-grid.json')
+} else {
+  check(
+    res.origin_source === 'planting_grid',
+    '原点来源 = planting_grid（算法锚点）',
+    `实际 ${res.origin_source}`,
+  )
+  check(
+    typeof plantingGrid.anchor_lon === 'number' && typeof plantingGrid.anchor_lat === 'number',
+    '锚点经纬度存在',
+    `(${plantingGrid.anchor_lon}, ${plantingGrid.anchor_lat})`,
+  )
+
+  // 不带锚点（几何原点）—— 记录差多少，作为"为什么必须对齐"的活证据
+  const resGeo = estimate(features)
+  console.log(
+    `        几何原点（任意相位）: ${resGeo.by_grid} 株  ·  ` +
+      `算法锚点: ${res.by_grid} 株  ·  差 ${(((res.by_grid - resGeo.by_grid) / resGeo.by_grid) * 100).toFixed(1)}%`,
+  )
+  check(resGeo.origin_source === 'geometry', '不传锚点时应退回几何原点', resGeo.origin_source)
+
+  const refs = (plantingGrid as PlantingGrid & { reference_totals?: Record<string, number> })
+    .reference_totals
+  if (refs) {
+    console.log('\n        三档对账（Python 权威 vs 前端）：')
+    let worst = 0
+    for (const clr of [0.5, 1.0, 2.0]) {
+      const py = refs[clr.toFixed(1)]
+      if (typeof py !== 'number') continue
+      const ts = estimate(features, { clearance_m: clr, planting_grid: plantingGrid }).by_grid
+      const pct = py > 0 ? ((ts - py) / py) * 100 : 0
+      worst = Math.max(worst, Math.abs(pct))
+      console.log(
+        `          退让 ${clr.toFixed(1)} m → Python ${String(py).padStart(5)}  ` +
+          `前端 ${String(ts).padStart(5)}  差 ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`,
+      )
+    }
+    // 残余差异只来自 GEOS `buffer(-d)` 与应用侧「逐点算到边界距离」的数值精度
+    // （退让越大越明显：实测 0.5 m 完全一致、2.0 m 差 0.9%）
+    check(worst < 1.5, '三档株数差异均 < 1.5%（对齐锚点后）', `最大 ${worst.toFixed(2)}%`)
+  } else {
+    check(false, 'planting-grid.json 应含 reference_totals（重新跑 --emit-grid 生成）', '')
+  }
 }
 
 // ---------- 汇总 ----------

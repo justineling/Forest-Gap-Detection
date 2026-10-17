@@ -1,4 +1,10 @@
-import type { EstimateResult, GapFeature, GapClass, PlantingPoint } from '../types'
+import type {
+  EstimateResult,
+  GapFeature,
+  GapClass,
+  PlantingGrid,
+  PlantingPoint,
+} from '../types'
 import { CLASS_STYLES } from './classes'
 import {
   centroid,
@@ -35,6 +41,11 @@ export interface GridSpec {
   row_pitch_m: number
   azimuth_deg: number
   clearance_m: number
+  /**
+   * 三角形错行沿行方向的偏移（m）。不传则用 `plant_pitch_m / 2`
+   * ——实测 `planting_grid.skew_offset_m = 4.225 = 8.45 / 2`，两者一致。
+   */
+  skew_m?: number
 }
 
 /**
@@ -85,7 +96,8 @@ export function estimateByArea(areaSqm: number): number {
 /** 单个多边形的网格排坑（返回经纬度点位） */
 function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, number]): PlantingPoint[] {
   const { plant_pitch_m: pitch, row_pitch_m: row, clearance_m: clr } = grid
-  const skew = pitch / 2 // 三角形错行：偶数行偏移半个株距
+  // 三角形错行：偶数行偏移半个株距（实测 planting_grid.skew_offset_m = pitch/2）
+  const skew = grid.skew_m ?? pitch / 2
   const th = (grid.azimuth_deg * Math.PI) / 180
   const ux = Math.cos(th)
   const uy = Math.sin(th)
@@ -169,34 +181,57 @@ function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, num
 export interface EstimateOptions extends GridSpec {
   /** 只估算这些 gap_id；不传则用全部可种植要素 */
   onlyIds?: Set<string>
+  /**
+   * 算法侧的种植网格模型（来自 `/gaps` 响应的 `planting_grid`）。
+   *
+   * ⚠️ **传它才能与 Python 侧逐株对账**。不传时前端会退回"所有要素第一个顶点
+   * 的均值"当原点 —— 那是一个**任意相位**，实测与 Python 差 +8.8%
+   * （3,594 vs 3,912 株）。差异 100% 来自原点相位，不是退让算法
+   * （两种退让写法在同一原点下 464 块逐块一致）。
+   */
+  planting_grid?: PlantingGrid
+  /** 显式指定原点（经纬度）；优先级最高 */
+  origin?: [number, number]
 }
 
 export function estimate(
   features: GapFeature[],
   opts: Partial<EstimateOptions> = {},
 ): EstimateResult {
+  const pg = opts.planting_grid
   const grid: GridSpec = {
-    plant_pitch_m: opts.plant_pitch_m ?? DEFAULT_GRID.plant_pitch_m,
-    row_pitch_m: opts.row_pitch_m ?? DEFAULT_GRID.row_pitch_m,
-    azimuth_deg: opts.azimuth_deg ?? DEFAULT_GRID.azimuth_deg,
+    plant_pitch_m: opts.plant_pitch_m ?? pg?.plant_pitch_m ?? DEFAULT_GRID.plant_pitch_m,
+    row_pitch_m: opts.row_pitch_m ?? pg?.row_pitch_m ?? DEFAULT_GRID.row_pitch_m,
+    azimuth_deg:
+      opts.azimuth_deg ?? pg?.azimuth_deg ?? pg?.row_azimuth_deg ?? DEFAULT_GRID.azimuth_deg,
     clearance_m: opts.clearance_m ?? DEFAULT_GRID.clearance_m,
+    skew_m: opts.skew_m ?? pg?.skew_offset_m,
   }
 
   const target = features.filter(
     (f) => isPlantable(f.properties.class) && (!opts.onlyIds || opts.onlyIds.has(f.properties.gap_id)),
   )
 
-  // 全局局部原点：取所有目标要素第一个顶点的均值，保证网格相位一致
-  let lon0 = 0
-  let lat0 = 0
-  for (const f of target) {
-    const o = geometryOrigin(f.geometry)
-    lon0 += o[0]
-    lat0 += o[1]
+  // 网格原点：优先用算法锚点，其次显式指定，最后退回几何原点（相位任意）
+  let origin: [number, number]
+  let originSource: EstimateResult['origin_source']
+  if (opts.origin) {
+    origin = opts.origin
+    originSource = 'explicit'
+  } else if (pg && typeof pg.anchor_lon === 'number' && typeof pg.anchor_lat === 'number') {
+    origin = [pg.anchor_lon, pg.anchor_lat]
+    originSource = 'planting_grid'
+  } else {
+    let lon0 = 0
+    let lat0 = 0
+    for (const f of target) {
+      const o = geometryOrigin(f.geometry)
+      lon0 += o[0]
+      lat0 += o[1]
+    }
+    origin = target.length ? [lon0 / target.length, lat0 / target.length] : [0, 0]
+    originSource = 'geometry'
   }
-  const origin: [number, number] = target.length
-    ? [lon0 / target.length, lat0 / target.length]
-    : [0, 0]
 
   // 网格相位：以原点为基准对齐到最近的格点（避免原点偏移半个格子）
   const points: PlantingPoint[] = []
@@ -263,6 +298,8 @@ export function estimate(
     per_gap: per_gap.sort((a, b) => b.area_sqm - a.area_sqm),
     points,
     grid,
+    origin,
+    origin_source: originSource,
   }
 }
 

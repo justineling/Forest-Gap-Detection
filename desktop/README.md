@@ -22,6 +22,19 @@ npm run dev      # → http://localhost:5173
 
 浏览器打开 `http://localhost:5173` 即可。
 
+**跑成桌面应用**（Tauri v2 外壳已就绪）
+
+```bash
+cd desktop
+npm run tauri:dev      # 起窗口，自动拉起 vite（8765 的服务已在跑则复用）
+npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
+```
+
+外壳会：① 起窗口加载前端；② 若 8765 未监听则用仓库 `.venv` 拉起
+`scripts/tile_server.py`（可用 `FGD_PYTHON` 覆盖解释器）；③ 退出时 kill 子进程。
+**刻意不引入 `tauri-plugin-shell`** —— 标准库 `std::process` 就够，少一层权限配置。
+细节见 `src-tauri/src/lib.rs` 顶部注释与交接简报 §16。
+
 > ⚠️ **`--build-overviews` 会就地修改源影像**（对本 BigTIFF 是**写入文件内部**，
 > 不是 `.ovr` 边车）：实测 **3.48 GB → 4.66 GB（+1.19 GB）**，耗时 174 s。
 > 换来的是瓦片从 **104 s → 0.7 s**（z=13）、**35 s → 0.6 s**（z=15）。
@@ -40,10 +53,10 @@ npm run dev      # → http://localhost:5173
 | 需求 | 状态 | 实现位置 |
 |---|---|---|
 | ① 导入文件并渲染地图 | ✅ 已跑通 | `scripts/tile_server.py`（`/meta` + `/tiles/{z}/{x}/{y}.png`）· `src/components/MapCanvas.tsx` |
-| ② 圈选 Target Block，只检测圈内 | 🟡 **前端已就绪，算法侧待实现** | 前端：工具栏「① 圈选 Target Block」→ `store.setRoi` · 算法侧：`process_image.py` 的 ROI 裁剪尚不存在（见决策文档 R-P0-11） |
+| ② 圈选 Target Block，只检测圈内 | ✅ **前后端都已就绪** | 前端：工具栏「① 圈选 Target Block」→ `store.setRoi` · 算法侧：`process_image.py --roi`（两层裁剪；A/B 瓦片 -77%、耗时 -62%、面积差 -0.39%） |
 | ③ 按 class 渲染 + 勾选过滤 | ✅ 已跑通（有回归测试） | `src/lib/classes.ts`（8 类 + 人工新增，配色与 `export_arcgis.py` 一致）· `src/components/LeftPanel.tsx` |
 | ④ add / delete / edit polygon | ✅ 已跑通（有回归测试） | Terra Draw（`MapCanvas.tsx` 的绘制/选择模式）+ `store` 的 `addGap` / `deleteGap` / `updateGapGeometry` / `setGapClass` |
-| ⑤ 估算可种植数量 + 导出 | 🟡 前端双口径已跑通（有回归测试）；交付包导出走后端 | 估算：`src/lib/estimate.ts` · 导出：`POST /export`（geojson / csv / kml） |
+| ⑤ 估算可种植数量 + 导出 | ✅ 已跑通 | 估算：`src/lib/estimate.ts`（已对齐算法锚点，与 Python 差 0.00%）· 点位：`GET /planting-points`（Python/UTM 权威结算，右面板一键下载 GeoJSON/CSV）· 交付包：`POST /export` |
 
 ### 跑测试
 
@@ -232,3 +245,50 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 
    > 这个坑极易被误判成"环境问题"而查错方向：本地浏览器打开时 style 加载快、
    > 时序刚好躲过去；headless / 网络慢 / 低配机器上就复现。
+
+**数据契约侧**（这三个都不会报错，只会让数字悄悄不对）
+
+9. **算法输出的正式结构是 `blocks[].gaps`，不是扁平 `features`**
+
+   `output/*.geojson` 的顶层是
+   `{ type, crs, planting_grid, blocks: [{ block_id, block_name, gaps: [...] }], summary }`
+   —— **没有顶层 `features`**。前端若按 `fc.features ?? []` 读，会拿到**空数组**：
+   界面显示「后端在线」、地图有影像，但**一个多边形都不出现，也不报错**。
+   更坑的是：内置样例 `public/sample-gaps.geojson` 是扁平结构，
+   所以**离线演示时反而正常**，更容易掩盖这个 bug。
+   修法：`api/backend.ts` 的 `normalizeCollection()` 统一摊平。
+
+10. **点位必须基于 `wgr17-final-gaps.geojson`（交付版），不是 `-elev-gaps`（中间版）**
+
+    两版都是 1,726 要素，但类别不同：elev 版 `open_patch` 464 / `vacant_slot` 256，
+    final 版 449 / 253（那 18 块归入 `undeveloped`）。
+    在 elev 版上跑点位得 **3,912**，在 final 版上得 **3,691** ——
+    多出来的 221 个点等于**把未开发林当成可补种**。CLI `--input` 默认已改为 final。
+
+11. **前端网格原点必须用算法锚点，不能用「要素顶点均值」**
+
+    前端自取原点时相位是**任意**的，与 Python 侧实测差 **+8.8%**（3,594 vs 3,912 那次）。
+    `/gaps` 响应会动态补 `planting_grid.anchor_lon/anchor_lat`
+    （结果中心最近的格点，**不改磁盘文件**），前端拿它当原点后 0.5 m 档
+    **3,691 = 3,691（0.00%）**。`estimate()` 的 `origin_source` 字段会告诉你实际用了哪个。
+
+    > 顺带纠正一个曾被误读的结论：树心到最近格点 P50 = 3.15 m **不是"比随机还差"**。
+    > 二维晶格随机基准是 `r₅₀ = √(A/2π) = 3.137 m`、`P(≤1m) = π/A = 5.08%`
+    > （A = 8.45×7.3179 = 61.836 m²），实测 3.15 / 5.1% 就是**完美随机**。
+    > 一维基准 `8.45/4 = 2.11 m` 是用错了模型。
+
+**Tauri 外壳侧**
+
+12. **Windows 下 `cargo check` 会因缺 `icons/icon.ico` 直接失败**
+
+    ```text
+    `…/icons/icon.ico` not found; required for generating a Windows Resource file during tauri-build
+    ```
+
+    只有 `icon.png` 不够 —— Windows 资源编译必须 `.ico`（含 16/32/64/128/256 多尺寸）。
+    已用 PIL 从 `icon.png` 生成。
+
+13. **退出时不清子进程 → 下次启动"端口被占"**
+
+    `RunEvent::Exit` 里必须 kill 掉 tile_server，否则孤儿 python 进程一直占着 8765，
+    下次启动会误判"服务已在运行"而复用**旧版本**的服务进程（改了代码却不生效）。

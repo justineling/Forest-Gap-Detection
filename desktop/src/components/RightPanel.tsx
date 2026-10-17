@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
+import { fetchPlantingPoints } from '../api/backend'
 import { ALL_CLASSES, CLASS_STYLES } from '../lib/classes'
 import type { GapClass } from '../types'
 
@@ -138,9 +140,82 @@ export default function RightPanel() {
             {estimateResult.grid.row_pitch_m} m / 错行 {estimateResult.grid.azimuth_deg}° /
             退让 {estimateResult.grid.clearance_m} m
           </div>
-          <div className="dim">已在地图上标出 {estimateResult.points.length} 个补种点位</div>
+          <div className="dim">
+            已在地图上标出 {estimateResult.points.length} 个补种点位
+            {estimateResult.origin_source === 'planting_grid'
+              ? '（已对齐算法网格锚点）'
+              : '（⚠️ 未对齐算法锚点，相位不可复现）'}
+          </div>
+          <PointExport clearance={estimateResult.grid.clearance_m} />
         </div>
       )}
     </aside>
+  )
+}
+
+/**
+ * 补种点位导出 —— **走 Python/UTM 权威结算**（`GET /planting-points`），
+ * 不用前端自算的结果放样：
+ * 前端是局部等距圆柱近似，0.5 m 档实测与 Python 完全一致（3,691 = 3,691），
+ * 但 1.0/2.0 m 档差 0.6~0.9%（GEOS `buffer(-d)` 与逐点距离的数值精度）。
+ * 现场按点位挖坑，差几个点是小事；**报数口径分裂**才是大事。
+ */
+function PointExport({ clearance }: { clearance: number }) {
+  const pushLog = useAppStore((s) => s.pushLog)
+  const [busy, setBusy] = useState(false)
+  const [total, setTotal] = useState<number | null>(null)
+
+  const download = (name: string, text: string, mime: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type: mime }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const run = async (fmt: 'geojson' | 'csv') => {
+    setBusy(true)
+    try {
+      const res = await fetchPlantingPoints(clearance)
+      if (res.error) throw new Error(res.error)
+      setTotal(res.meta?.total ?? res.features.length)
+      if (fmt === 'geojson') {
+        download(
+          `planting-points-${clearance}m.geojson`,
+          JSON.stringify(res, null, 2),
+          'application/geo+json',
+        )
+      } else {
+        const head = 'point_id,gap_id,class,source,lon,lat,utm_x,utm_y,clearance_m'
+        const rows = res.features.map((f) => {
+          const p = f.properties
+          const [lon, lat] = f.geometry.coordinates
+          return [p.point_id, p.gap_id, p.class, p.source, lon, lat, p.utm_x, p.utm_y, p.clearance_m].join(',')
+        })
+        download(`planting-points-${clearance}m.csv`, [head, ...rows].join('\n'), 'text/csv')
+      }
+      pushLog(`已导出补种点位（${res.meta?.total ?? res.features.length} 个，退让 ${clearance} m，Python 权威结算）`)
+    } catch (e) {
+      pushLog(`点位导出失败：${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="point-export">
+      <div className="row">
+        <button className="btn tiny" disabled={busy} onClick={() => run('geojson')}>
+          点位 GeoJSON
+        </button>
+        <button className="btn tiny" disabled={busy} onClick={() => run('csv')}>
+          放样 CSV
+        </button>
+      </div>
+      <div className="dim">
+        {busy ? '正在用 Python/UTM 结算…' : total != null ? `权威点位数 ${total} 个` : '点位由后端结算，可导入 GPS 放样'}
+      </div>
+    </div>
   )
 }

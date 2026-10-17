@@ -60,9 +60,78 @@ export async function probeBackend(): Promise<BackendStatus> {
   }
 }
 
+/** `/gaps` 的原始结构（算法输出的正式 schema 是 `blocks[].gaps`，不是扁平 features） */
+interface RawResult {
+  type?: string
+  features?: GapCollection['features']
+  blocks?: Array<{ block_id?: string; block_name?: string; gaps?: GapCollection['features'] }>
+  planting_grid?: GapCollection['planting_grid']
+  summary?: Record<string, unknown>
+}
+
+/**
+ * 把算法输出规整成前端的扁平 `FeatureCollection`。
+ *
+ * ⚠️ **这是踩过的坑**：`output/*.geojson` 的正式结构是
+ * `{ blocks: [{ block_id, gaps: [...] }], planting_grid, summary }`，
+ * **没有顶层 `features`**。若直接 `fc.features ?? []` 会拿到空数组 ——
+ * 界面看起来"后端连上了、地图也有影像"，但一个多边形都不显示，
+ * 也不会报错。内置样例 `public/sample-gaps.geojson` 是扁平结构，
+ * 所以离线演示时反而正常，更容易掩盖这个 bug。
+ */
+export function normalizeCollection(raw: RawResult | null | undefined): GapCollection {
+  const grid = raw?.planting_grid
+  if (raw?.features?.length) {
+    return { type: 'FeatureCollection', features: raw.features, planting_grid: grid }
+  }
+  const features: GapCollection['features'] = []
+  for (const b of raw?.blocks ?? []) {
+    for (const g of b.gaps ?? []) features.push(g)
+  }
+  return { type: 'FeatureCollection', features, planting_grid: grid }
+}
+
 /** 读取最近一次检测结果（真实数据，来自 output/*.geojson） */
 export async function fetchGaps(): Promise<GapCollection> {
-  return getJson<GapCollection>('/gaps')
+  return normalizeCollection(await getJson<RawResult>('/gaps', 30000))
+}
+
+/**
+ * 补种点位（**Python/UTM 权威结算**，不是前端自算）。
+ *
+ * 为什么不用前端 `lib/estimate.ts` 的结果直接放样：前端用局部等距圆柱近似，
+ * 0.5 m 档实测与 Python 完全一致（3,691 vs 3,691），但 1.0/2.0 m 档差
+ * 0.6~0.9%（GEOS `buffer(-d)` 与逐点距离的数值精度）。**对外交付用这个**，
+ * 前端自算只用于拖动时的即时反馈。
+ */
+export interface PlantingPointsResult {
+  type: 'FeatureCollection'
+  features: Array<{
+    type: 'Feature'
+    geometry: { type: 'Point'; coordinates: [number, number] }
+    properties: {
+      point_id: string
+      gap_id: string
+      class: string
+      source: string
+      utm_x: number
+      utm_y: number
+      clearance_m: number
+    }
+  }>
+  meta?: {
+    total: number
+    by_class: Record<string, number>
+    by_source: Record<string, number>
+    clearance_m: number
+    crs: string
+    authority: string
+  }
+  error?: string
+}
+
+export async function fetchPlantingPoints(clearanceM: number): Promise<PlantingPointsResult> {
+  return getJson<PlantingPointsResult>(`/planting-points?clearance=${clearanceM}`, 180000)
 }
 
 export interface ExportRequest {

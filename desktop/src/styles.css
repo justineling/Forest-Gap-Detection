@@ -384,6 +384,18 @@ kbd {
   font-size: 11.5px;
 }
 
+/* 补种点位导出（右面板底部） */
+.point-export {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.point-export .row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
 .empty {
   padding: 16px 12px;
   color: var(--dim);

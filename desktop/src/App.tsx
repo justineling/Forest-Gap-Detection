@@ -23,14 +23,15 @@ export default function App() {
     setLoadingGaps(true)
     try {
       const fc = await fetchGaps()
-      setGaps(fc.features ?? [])
+      // 把算法网格一起带上 —— 前端估算的格点相位才能与 Python 侧逐株一致
+      setGaps(fc.features ?? [], fc.planting_grid ?? null)
     } catch (e) {
       // 后端不在线时退回内置样例，保证界面可独立演示
       try {
         const res = await fetch('/sample-gaps.geojson')
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const fc = (await res.json()) as GapCollection
-        setGaps(fc.features ?? [])
+        setGaps(fc.features ?? [], fc.planting_grid ?? null)
         pushLog(`后端不可用（${e instanceof Error ? e.message : e}），已载入内置样例数据`)
       } catch (e2) {
         pushLog(`载入失败：${e2 instanceof Error ? e2.message : String(e2)}`)

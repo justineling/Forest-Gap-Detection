@@ -62,6 +62,37 @@ export interface GapFeature {
 export interface GapCollection {
   type: 'FeatureCollection'
   features: GapFeature[]
+  /** 算法侧的种植网格模型（`/gaps` 会补上 WGS84 锚点，见 TileServer.gaps_json） */
+  planting_grid?: PlantingGrid
+}
+
+/**
+ * 种植网格模型 —— 权威定义在 Python 侧（`planting_grid.py` 的 `GridModel`），
+ * 前端只读不改。字段与 `output/*.geojson` 的 `planting_grid` 一一对应。
+ *
+ * ⚠️ `origin_x_m / origin_y_m` 是 **UTM 49N 绝对坐标**下的数学锚点（可能离园区
+ * 几百公里），前端**不要**直接拿它当局部原点。要用 `/gaps` 端点补算的
+ * `anchor_lon / anchor_lat`（结果范围中心最近的那个格点的经纬度）。
+ */
+export interface PlantingGrid {
+  plant_pitch_m: number
+  row_pitch_m: number
+  skew_offset_m?: number
+  /** 行方位角（Python 侧字段名） */
+  row_azimuth_deg: number
+  /** 同上，前端友好的别名（`/gaps` 会补） */
+  azimuth_deg?: number
+  origin_x_m: number
+  origin_y_m: number
+  quality?: number
+  method?: string
+  density_per_ha?: number
+  /** —— 以下由 `/gaps` 端点动态补算（磁盘文件里没有）—— */
+  anchor_lon?: number
+  anchor_lat?: number
+  anchor_ix?: number
+  anchor_iy?: number
+  crs?: string
 }
 
 /** `/meta` 返回的影像元数据 */
@@ -112,5 +143,15 @@ export interface EstimateResult {
     row_pitch_m: number
     azimuth_deg: number
     clearance_m: number
+    skew_m?: number
   }
+  /** 本次实际使用的网格原点（经纬度） */
+  origin?: [number, number]
+  /**
+   * 原点来源：
+   * - `planting_grid`：算法锚点 —— 与 Python 侧逐格一致，**唯一可对外报数的口径**
+   * - `explicit`：调用方显式指定
+   * - `geometry`：几何原点（任意相位，与 Python 差 +8.8%，仅作离线降级）
+   */
+  origin_source?: 'planting_grid' | 'explicit' | 'geometry'
 }

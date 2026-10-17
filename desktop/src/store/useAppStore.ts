@@ -3,6 +3,7 @@ import type {
   EstimateResult,
   GapClass,
   GapFeature,
+  PlantingGrid,
   PolygonGeometry,
   PriorityGroup,
   RasterMeta,
@@ -29,6 +30,12 @@ export interface AppState {
   gaps: GapFeature[]
   visibleClasses: Record<GapClass, boolean>
   selectedId: string | null
+  /**
+   * 算法侧种植网格（含 `/gaps` 补算的 WGS84 锚点）。
+   * 有它 → 前端估算的格点相位与 Python 侧一致（3,912 株口径）；
+   * 没有 → 退回几何原点，相位任意（离线演示数据时会这样）。
+   */
+  plantingGrid: PlantingGrid | null
 
   // —— ROI（需求 2）——
   roi: PolygonGeometry | null
@@ -48,7 +55,7 @@ export interface AppState {
 
   // —— actions ——
   setBackend: (p: { online: boolean; meta?: RasterMeta; error?: string }) => void
-  setGaps: (features: GapFeature[]) => void
+  setGaps: (features: GapFeature[], plantingGrid?: PlantingGrid | null) => void
   toggleClass: (cls: GapClass) => void
   setGroupVisible: (group: PriorityGroup, visible: boolean) => void
   select: (id: string | null) => void
@@ -72,6 +79,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   gaps: [],
   visibleClasses: initialVisibility(),
   selectedId: null,
+  plantingGrid: null,
 
   roi: null,
 
@@ -92,11 +100,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
       backendError: error ?? null,
     })),
 
-  setGaps: (features) =>
+  setGaps: (features, plantingGrid) =>
     set((s) => ({
       gaps: features,
+      plantingGrid: plantingGrid ?? null,
       estimateResult: null,
-      logs: appendLog(s.logs, `载入 ${features.length} 个多边形`),
+      logs: appendLog(
+        s.logs,
+        `载入 ${features.length} 个多边形` +
+          (plantingGrid?.anchor_lon != null
+            ? '（已对齐算法种植网格锚点）'
+            : '（无算法网格锚点，估算相位不可复现）'),
+      ),
     })),
 
   toggleClass: (cls) =>
@@ -230,18 +245,22 @@ export const useAppStore = create<AppState>()((set, get) => ({
     })),
 
   runEstimate: () => {
-    const { gaps, clearanceM } = get()
+    const { gaps, clearanceM, plantingGrid } = get()
     set({ estimating: true })
     // 同步计算（前端原型）：1,726 个多边形、几千个候选点，实测 < 400 ms
     const t0 = performance.now()
-    const res = estimate(gaps, { clearance_m: clearanceM })
+    const res = estimate(gaps, {
+      clearance_m: clearanceM,
+      planting_grid: plantingGrid ?? undefined,
+    })
     const ms = Math.round(performance.now() - t0)
     set((s) => ({
       estimateResult: res,
       estimating: false,
       logs: appendLog(
         s.logs,
-        `估算完成（${ms} ms）：面积口径 ${res.by_area.toLocaleString()} 株 / ` +
+        `估算完成（${ms} ms，原点=${res.origin_source}）：面积口径 ` +
+          `${res.by_area.toLocaleString()} 株 / ` +
           `排坑口径 ${res.by_grid.toLocaleString()} 株，差异 ${res.divergence_pct}%`,
       ),
     }))
