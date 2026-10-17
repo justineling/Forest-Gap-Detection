@@ -81,6 +81,13 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 > 因为要检查影像与结果文件，放根目录路径更直观。脚本内部用 `pushd "%~dp0desktop"`
 > 进前端工程跑 npm，跑完 `popd`。
 
+**编译产物固定在项目内**：`desktop\src-tauri\target\`，安装包在
+`desktop\src-tauri\target\release\bundle\nsis\`。
+
+> 脚本会在编译前**临时清空当前进程的 `CARGO_TARGET_DIR`**（只影响这一次运行，
+> 不动系统环境变量），否则 cargo 会把产物甩到那个变量指向的目录去。
+> 想恢复"用外部 target"（多项目共用编译缓存）：设 `FGD_USE_EXTERNAL_TARGET=1` 再跑脚本。
+
 三个脚本都遵循同一套约定（与同作者的 KIRA Manager 脚本一致）：
 
 - **自动下载环境**：`.venv` / `node_modules` / `cargo` 缺任一项 → 自动调项目自带的环境向导

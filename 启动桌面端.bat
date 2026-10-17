@@ -134,6 +134,8 @@ echo     4. 用完直接关掉这个窗口即可（会自动清理瓦片服务�
 echo  ----------------------------------------------------
 echo.
 
+rem 中和 CARGO_TARGET_DIR：dev 编译产物也落项目内（与其它项目一致）
+call "%~dp0_环境准备.bat" prepare_build_env
 call "%~dp0_环境准备.bat" mark_project_path
 
 rem 心跳只覆盖首次编译那段（限时 25 分钟，编译完自动停，避免运行期刷屏）

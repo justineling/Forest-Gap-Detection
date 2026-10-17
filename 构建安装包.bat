@@ -17,8 +17,7 @@ if errorlevel 1 exit /b 1
 
 rem 产物根目录：尊重 CARGO_TARGET_DIR（本机指到 D:\forest-gap-tools\rust\target）
 call "%~dp0_环境准备.bat" resolve_target_dir
-set "FG_REL=%FG_TARGET%\release"
-set "FG_STALE_DIR=%FG_REL%\bundle\_stale"
+rem FG_REL / FG_STALE_DIR 在 :prepare_build_env 之后才最终确定（见阶段 4）
 
 rem ============================================================
 rem  阶段 1/4：检查构建环境（Python venv / 前端依赖 / Rust）
@@ -97,6 +96,11 @@ rem       杜绝「报告 / 弹出上一次的旧包」这种最坑的误报。
 call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\nsis\*.exe" "%FG_STALE_DIR%"
 call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\msi\*.msi" "%FG_STALE_DIR%"
 
+rem 中和 CARGO_TARGET_DIR：安装包产物固定到项目内
+rem   desktop\src-tauri\target\release\bundle\nsis\
+call "%~dp0_环境准备.bat" prepare_build_env
+set "FG_REL=%FG_TARGET%\release"
+set "FG_STALE_DIR=%FG_REL%\bundle\_stale"
 call "%~dp0_环境准备.bat" mark_project_path
 call "%~dp0_环境准备.bat" start_heartbeat "仍在构建（链接阶段可能较久）" 40
 pushd "%~dp0desktop"

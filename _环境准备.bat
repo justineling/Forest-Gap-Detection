@@ -234,11 +234,28 @@ rem  本机把 CARGO_TARGET_DIR 指到了 D:\forest-gap-tools\rust\target（省 
 rem  写死 src-tauri\target 会让「构建安装包.bat」找不到产物，所以统一走这个函数。
 rem ============================================================================
 :resolve_target_dir
+rem 编译产物**固定在项目内**（`desktop\src-tauri\target`），与其他项目保持一致。
+rem 不再跟随 CARGO_TARGET_DIR —— 那是个用户级环境变量，会把产物甩到项目外
+rem （本机曾指到 D:\forest-gap-tools\rust\target），卸载/清理/交付都很别扭。
+rem 想临时改回来：给脚本设 FGD_USE_EXTERNAL_TARGET=1 即可（排障用）。
+rem ⚠️ 先给默认值再按需覆盖：`if A if B (X) else (Y)` 在 A 为假时会**整条跳过**，
+rem    包括 else 分支 —— 那样 FG_TARGET 会变成空（实测踩过）。
+set "FG_TARGET=%~dp0desktop\src-tauri\target"
+if defined FGD_USE_EXTERNAL_TARGET if defined CARGO_TARGET_DIR set "FG_TARGET=%CARGO_TARGET_DIR%"
+exit /b 0
+
+
+:prepare_build_env
+rem 在跑 npm/cargo 之前调一次：**中和**当前进程的 CARGO_TARGET_DIR，
+rem 让 cargo 回落到默认的 `desktop\src-tauri\target`。
+rem ⚠️ 只改本进程的环境变量，**绝不** setx / 改注册表 —— 不影响用户其它项目。
 if defined CARGO_TARGET_DIR (
-    set "FG_TARGET=%CARGO_TARGET_DIR%"
-) else (
-    set "FG_TARGET=%~dp0desktop\src-tauri\target"
+    echo   [提示] 已临时忽略 CARGO_TARGET_DIR（%CARGO_TARGET_DIR%），
+    echo          编译产物固定到项目内：desktop\src-tauri\target
+    echo          （首次切换会重新编译一遍，约 5~10 分钟，之后就有缓存）
 )
+set "CARGO_TARGET_DIR="
+set "FG_TARGET=%~dp0desktop\src-tauri\target"
 exit /b 0
 
 
