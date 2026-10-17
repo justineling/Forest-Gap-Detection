@@ -7,6 +7,8 @@ interface Props {
   drawIntent: DrawIntent
   setDrawIntent: (v: DrawIntent) => void
   onLoadGaps: () => void
+  /** 打开「选择数据」引导（换影像 / 换结果文件） */
+  onOpenData: () => void
   onExport: () => void
   loadingGaps: boolean
   exporting: boolean
@@ -16,6 +18,7 @@ export default function TopToolbar({
   drawIntent,
   setDrawIntent,
   onLoadGaps,
+  onOpenData,
   onExport,
   loadingGaps,
   exporting,
@@ -69,7 +72,11 @@ export default function TopToolbar({
     pushLog('正在探测后端瓦片服务…')
     const st = await probeBackend()
     setBackend(st)
-    pushLog(st.online ? `后端在线：${st.meta?.source ?? ''}` : `后端离线：${st.error ?? ''}`)
+    pushLog(
+      st.online
+        ? `影像服务已就绪：${st.meta?.source ?? ''}`
+        : '影像服务还没连上。第一次使用请点「数据」选择正射影像；已选过则稍等几秒。',
+    )
   }
 
   return (
@@ -80,12 +87,23 @@ export default function TopToolbar({
       </div>
 
       <div className="tb-group">
-        <button className="btn" onClick={reconnect} title="重新探测本地瓦片服务">
+        <button
+          className="btn"
+          onClick={reconnect}
+          title={backendOnline ? '影像服务已就绪，点此重新检测' : '点此重新检测；若仍未连接，请点「数据」选择影像'}
+        >
           <span className={backendOnline ? 'dot ok' : 'dot bad'} />
-          {backendOnline ? '后端在线' : '后端离线'}
+          {backendOnline ? '影像已就绪' : '影像未连接'}
         </button>
         <button className="btn" onClick={onLoadGaps} disabled={loadingGaps}>
           {loadingGaps ? '载入中…' : '载入检测结果'}
+        </button>
+        <button
+          className="btn"
+          onClick={onOpenData}
+          title="更换正射影像或检测结果文件"
+        >
+          数据
         </button>
       </div>
 

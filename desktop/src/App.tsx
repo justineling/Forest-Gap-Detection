@@ -6,13 +6,27 @@ import LeftPanel from './components/LeftPanel'
 import RightPanel from './components/RightPanel'
 import StatusBar from './components/StatusBar'
 import { useAppStore } from './store/useAppStore'
-import { exportBundle, fetchGaps, onSidecarEvent, onSidecarLog, probeBackend } from './api/backend'
+import WelcomeWizard from './components/WelcomeWizard'
+import {
+  exportBundle,
+  fetchGaps,
+  getStatus,
+  isTauri,
+  onSidecarEvent,
+  onSidecarLog,
+  probeBackend,
+  type AppStatus,
+} from './api/backend'
 import type { GapCollection } from './types'
 
 export default function App() {
   const [drawIntent, setDrawIntent] = useState<DrawIntent>('none')
   const [loadingGaps, setLoadingGaps] = useState(false)
   const [exporting, setExporting] = useState(false)
+  /** 当前应用状态（后端形态 / 影像路径 / 是否要引导） */
+  const [appStatus, setAppStatus] = useState<AppStatus | null>(null)
+  /** 非 null 时显示首次使用引导 */
+  const [wizard, setWizard] = useState<AppStatus | null>(null)
 
   const setBackend = useAppStore((s) => s.setBackend)
   const setGaps = useAppStore((s) => s.setGaps)
@@ -55,24 +69,50 @@ export default function App() {
     }
   }, [setGaps, pushLog, applyRerun])
 
-  // 启动：探测后端 → 自动载入结果
+  /** 探测瓦片服务并载入结果（向导完成后也会调它） */
+  const probeAndLoad = useCallback(async () => {
+    const st = await probeBackend()
+    setBackend(st)
+    if (st.online) {
+      pushLog(
+        `影像已就绪：${st.meta?.source ?? ''}（${st.meta?.width}×${st.meta?.height}，` +
+          `${st.meta?.res_m.toFixed(2)} m/px）`,
+      )
+    } else {
+      pushLog(
+        '影像服务未连接。若是第一次使用，请点右上角「数据」选择正射影像；' +
+          '已选过则稍等几秒（首次要建索引），仍不行请查看日志文件。',
+      )
+    }
+    await loadGaps()
+  }, [setBackend, pushLog, loadGaps])
+
+  // 启动：先问"有没有影像"，没有就显示引导（而不是丢给用户一句开发者命令）
   useEffect(() => {
     ;(async () => {
-      pushLog('启动：探测本地瓦片服务…')
-      const st = await probeBackend()
-      setBackend(st)
-      if (st.online) {
-        pushLog(
-          `后端在线：${st.meta?.source ?? ''}（${st.meta?.width}×${st.meta?.height}，${st.meta?.res_m.toFixed(2)} m/px）`,
-        )
-      } else {
-        pushLog(`后端离线：${st.error ?? ''}（可先启动 scripts/tile_server.py）`)
+      pushLog('启动：检查数据与影像服务…')
+      const st = await getStatus()
+      setAppStatus(st)
+      // 浏览器模式下 `?wizard=1` 可强制预览引导页（方便截图 / 演示）
+      const force =
+        !isTauri() && new URLSearchParams(window.location.search).has('wizard')
+      if (st.needs_setup || force) {
+        setWizard(st)
+        pushLog('还没有选择正射影像 —— 已显示引导，选好文件即可开始')
+        return
       }
-      await loadGaps()
+      await probeAndLoad()
     })()
     // 仅启动执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const onWizardDone = useCallback(async () => {
+    setWizard(null)
+    const st = await getStatus()
+    setAppStatus(st)
+    await probeAndLoad()
+  }, [probeAndLoad])
 
   // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 日志 / 自动重载结果
   // ⚠️ 浏览器模式（Headless Chrome）下 onSidecarEvent 直接返回空订阅，
@@ -150,6 +190,7 @@ export default function App() {
           drawIntent={drawIntent}
           setDrawIntent={setDrawIntent}
           onLoadGaps={loadGaps}
+          onOpenData={() => setWizard(appStatus ?? ({} as AppStatus))}
           onExport={onExport}
           loadingGaps={loadingGaps}
           exporting={exporting}
@@ -169,6 +210,9 @@ export default function App() {
       <ErrorBoundary area="状态栏">
         <StatusBar />
       </ErrorBoundary>
+
+      {/* 首次使用引导：盖在最上层，选好影像后自动消失 */}
+      {wizard && <WelcomeWizard status={wizard} onDone={onWizardDone} />}
     </div>
   )
 }

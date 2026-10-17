@@ -221,6 +221,89 @@ export async function onSidecarLog(cb: (line: string) => void): Promise<() => vo
   return un
 }
 
+// ============================================================================
+//  首次使用引导：选影像 / 选结果
+//  ---------------------------------------------------------------------------
+//  为什么需要这一层：打包版没有"仓库根"，用户不可能知道要把 3.5 GB 的影像
+//  放到 `%LOCALAPPDATA%\fgd\data` 这种地方。让他在界面里选一次，路径记住，
+//  下次直接可用 —— 这是"小白能用"的最低门槛。
+// ============================================================================
+
+export interface AppStatus {
+  /** 后端执行方式（打包运行时 / 开发态解释器），排障用 */
+  backend: string | null
+  tile_running: boolean
+  image: string | null
+  gaps: string | null
+  /** 数据根目录（提示"文件该放哪"时显示） */
+  data_root: string
+  /** true = 还没有可用影像，应显示「选择影像」引导 */
+  needs_setup: boolean
+}
+
+const BROWSER_STATUS: AppStatus = {
+  backend: null,
+  tile_running: false,
+  image: null,
+  gaps: null,
+  data_root: '（浏览器模式）',
+  needs_setup: false,
+}
+
+export async function getStatus(): Promise<AppStatus> {
+  if (!isTauri()) return BROWSER_STATUS
+  try {
+    return await tauriInvoke<AppStatus>('get_status')
+  } catch {
+    return BROWSER_STATUS
+  }
+}
+
+/** 保存用户选择并重启瓦片服务（返回新状态） */
+export async function setDataPaths(opts: {
+  image?: string | null
+  gaps?: string | null
+}): Promise<AppStatus> {
+  return tauriInvoke<AppStatus>('set_data_paths', {
+    image: opts.image ?? null,
+    gaps: opts.gaps ?? null,
+  })
+}
+
+export type PickKind = 'image' | 'gaps'
+
+/**
+ * 打开系统文件选择框。
+ * 浏览器模式返回 null（前端会提示"请在桌面应用里操作"）。
+ */
+export async function pickFile(kind: PickKind): Promise<string | null> {
+  if (!isTauri()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const filters =
+    kind === 'image'
+      ? [{ name: '正射影像 (GeoTIFF)', extensions: ['tif', 'tiff'] }]
+      : [{ name: '检测结果 (GeoJSON)', extensions: ['geojson', 'json'] }]
+  const picked = await open({ multiple: false, directory: false, filters })
+  if (typeof picked === 'string') return picked
+  // 某些平台返回数组
+  if (Array.isArray(picked) && typeof picked[0] === 'string') return picked[0]
+  return null
+}
+
+/**
+ * 轮询等后端就绪（服务重启 + 建金字塔可能要几秒到几十秒）。
+ * 返回 true 表示 `/meta` 已经能应答。
+ */
+export async function waitBackend(timeoutMs = 90_000): Promise<boolean> {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    const st = await probeBackend()
+    if (st.online) return true
+    await new Promise((r) => setTimeout(r, 800))
+  }
+  return false
+}
+
 export interface ExportRequest {
   /** 编辑后的要素集合 */
   gaps: GapCollection

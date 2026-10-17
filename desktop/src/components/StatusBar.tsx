@@ -19,7 +19,9 @@ export default function StatusBar() {
     <footer className="statusbar">
       <div className="sb-left">
         <span className={backendOnline ? 'dot ok' : 'dot bad'} />
-        <span className="dim">{backendOnline ? '瓦片服务在线' : '瓦片服务离线'}</span>
+        <span className="dim">
+          {backendOnline ? '影像已就绪' : '影像未连接 —— 点右上角「数据」选择正射影像'}
+        </span>
         <span className="sep" />
         <span className="dim">ROI：{roi ? '已圈选' : '未圈选（将处理整幅）'}</span>
         <span className="sep" />
@@ -28,7 +30,12 @@ export default function StatusBar() {
         </span>
       </div>
       <div className="sb-logs" ref={boxRef}>
-        {logs.length === 0 && <span className="dim">就绪。先「载入检测结果」，再「圈选 Target Block」。</span>}
+        {logs.length === 0 && (
+          <span className="dim">
+            就绪。三步：① 点「数据」选影像 → ② 「圈选 Target Block」框出要检测的地 →
+            ③ 「开始检测」。
+          </span>
+        )}
         {logs.map((l, i) => (
           <div key={i} className="log-line">
             {l}
