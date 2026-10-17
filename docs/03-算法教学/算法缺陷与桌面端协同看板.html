@@ -311,15 +311,16 @@ h2.sec{font-size:1.15rem;margin:2.2rem 0 .9rem;padding-bottom:.4rem;border-botto
         <span class="tag t-tauri">圈选区块可大幅缓解</span>
         <span class="dtitle">D4　全图共用单一网格原点对齐率仅 46%，且连片空地内包住 558 个存活树心</span>
       </div>
-      <span class="pill">局部 300 m 细扫对齐率 79.5%~97.3%（全局仅 ~46%）</span>
+      <span class="pill">3 m 容差：全局 46.7%（≈随机 45.7%）· 局部 54.8%　｜　1 m 容差：5.1% → 7.3%</span>
     </div>
     <div class="dbody">
       <div class="ib">
         <h4>🔍 根因与现象</h4>
         <p><strong>① 相位不连续</strong>：株距（8.45 m）与方位角（0.67°）已完全锁定，
           但不同种植区块跨过林道 / 水沟后，种树<strong>起点相位</strong>会重置。全图共用一个原点时，
-          对齐率仅 ~46%（等于随机基准）；局部 300 m 窗口细扫可达 79.5%~97.3%。</p>
-        <p><strong>② 大斑块内含孤立残树</strong>（本次重测）：<strong>558 个树心落在空地多边形内</strong>
+          对齐率仅 ~46.7% —— <strong>与二维随机基准 45.7% 几乎相同</strong>
+          （随机基准 = π·3²/61.836，单株占 61.836 m²），即<strong>全局网格与真实株位毫无相关性</strong>。</p>
+        <p><strong>② 大斑块内含孤立残树</strong>（2026-10-17 重测）：<strong>558 个树心落在空地多边形内</strong>
           （占全部 15,190 个树心的 3.7%），其中 490 个落在 <code>open_patch</code>。
           不过方位已对：空地落在树心 ≤2 m 内的面积只有 <strong>2.1%</strong>，而全园自然基准是 14.5%
           —— 空地确实避开了树，这 558 个是零星漏网。</p>
@@ -330,12 +331,24 @@ h2.sec{font-size:1.15rem;margin:2.2rem 0 .9rem;padding-bottom:.4rem;border-botto
           <strong>天然消除跨区块相位跳变</strong>。且点「估算棵数」时可直接扣减多边形内的存活树心。</p>
       </div>
       <div class="ib">
-        <h4>🛠️ 解冻后修复方向</h4>
+        <h4>🛠️ 解冻后修复方向 —— <span style="color:#f59e0b">实测后已决定不做（2026-10-17）</span></h4>
+        <p><strong>② 残树挖孔仍值得做</strong>（成本低、语义清晰）：对落入 <code>open_patch</code>
+          的孤立高置信树心做<strong>半径 2.5 m 布尔挖孔</strong>（Interior Ring），排坑时避开残树。</p>
+        <p><strong>① 局域相位拟合：评估后放弃。</strong>实测把 300 m 窗口各自拟合相位后，
+          对齐率只从 5.1% 提到 <strong>7.3%</strong>（1 m 容差）/ 46.7% 到 <strong>54.8%</strong>（3 m 容差）——
+          仅略高于随机。两个物理死限决定了搬动相位救不回来：</p>
         <ul>
-          <li>网格相位从"全图唯一"改为<strong>按 Target Block 或 300 m 局部窗口独立细扫</strong>；</li>
-          <li>对落入 <code>open_patch</code> 的孤立高置信树心做 <strong>半径 2.5 m 布尔挖孔</strong>
-            （Polygon Interior Ring），排坑模拟时避开残树。</li>
+          <li><strong>树心本身抖动</strong>：DJI 树心 σ≈1.8 m，即使网格 100% 完美，
+            「≤1 m」的理论上限也只有 14.3%；</li>
+          <li><strong>株距拍频漂移</strong>：全局 8.45 m 与真实 NND 8.25 m 差 0.2 m，
+            在 300 m（约 36 棵）内累积漂移 ≈7 m，超过半个周期。</li>
         </ul>
+        <p class="dim">⚠️ 口径提醒：早期写过的「局部细扫 79.5%~97.3%」是<strong>特定小窗口 + 0.5°×8 相位网格搜索取最优</strong>
+          的结果，2026-10-17 用统一口径（全 20 个窗口、圆均值拟合）复现不出来，
+          <strong>不要当作普遍可达水平</strong>。</p>
+        <p>业务上也不需要：<code>open_patch</code> 是空地，原树已死，新苗按标准株行距铺点即可
+          （间距对、不侵到存活树冠下即可），<strong>不宣称「复现原株位」</strong>；
+          <code>vacant_slot</code> 用质心，不受影响。</p>
       </div>
       <div class="ib src">
         <h4>📌 证据（本次重跑 <code>probe_gaps_truth2.py</code>）</h4>
