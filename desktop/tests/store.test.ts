@@ -169,7 +169,9 @@ check(S.getState().manualDeleted === 1, '删除计数 +1', `实际 ${S.getState(
 console.log('\n④ 编辑留痕计数（状态栏展示）')
 const st = S.getState()
 check(st.manualAdded === 1, '新增计数 = 1', `实际 ${st.manualAdded}`)
-check(st.manualEdited === 1, '改边界计数 = 1', `实际 ${st.manualEdited}`)
+// 2026-10-18 语义调整：改判类别也算一次编辑（以前只统计改边界，状态栏的 ✎ 会漏数）
+// 本段共 2 次改判（uncertain / vacant_slot）+ 1 次改边界
+check(st.manualEdited === 3, '编辑计数 = 3（2 次改判 + 1 次改边界）', `实际 ${st.manualEdited}`)
 check(st.manualDeleted === 1, '删除计数 = 1', `实际 ${st.manualDeleted}`)
 check(S.getState().logs.length > 0, '日志已记录操作', `${S.getState().logs.length} 条`)
 
@@ -301,6 +303,138 @@ console.log('\n⑦ 检测进度与参数 —— 进度条的数据源必须可�
   check(S3.getState().detectParams.workers === 6, '参数可改')
   check(S3.getState().detectParams.targetDensity === 150, '改一个不影响另一个')
   S3.getState().setDetectParam({ workers: 4, targetDensity: 150, useRoi: true })
+}
+
+// ---------- 撤销 / 重做 + 批量操作（P1） ----------
+console.log('\n⑧ 撤销/重做与批量操作 —— 批量必须算一步')
+{
+  const S = useAppStore
+  const f1 = feat('U1', 'open_patch', 111.20, 1.19)
+  const f2 = feat('U2', 'open_patch', 111.21, 1.19)
+  const f3 = feat('U3', 'open_patch', 111.22, 1.19)
+  S.getState().setGaps([f1, f2, f3], null)
+  check(S.getState().past.length === 0, '载入新结果清空历史')
+
+  // ---- 单块删除 + 撤销 ----
+  S.getState().deleteGap('U1')
+  check(S.getState().gaps.length === 2, '删除后剩 2 块')
+  check(S.getState().past.length === 1, '压入 1 步历史')
+  S.getState().undo()
+  check(S.getState().gaps.length === 3, '撤销后恢复 3 块')
+  check(
+    S.getState().gaps.some((f) => f.properties.gap_id === 'U1'),
+    'U1 回来了',
+  )
+  check(S.getState().future.length === 1, '重做栈有 1 步')
+  S.getState().redo()
+  check(S.getState().gaps.length === 2, '重做后又是 2 块')
+
+  // ---- ★ 批量删除：一次操作 = 一步撤销 ----
+  S.getState().setGaps([f1, f2, f3], null)
+  const before = S.getState().past.length
+  S.getState().batchDeleteGaps(['U1', 'U2', 'U3'])
+  check(S.getState().gaps.length === 0, '批量删完是 0 块')
+  check(
+    S.getState().past.length === before + 1,
+    '批量删 3 块只压 1 步（不是 3 步）',
+    `${before} → ${S.getState().past.length}`,
+  )
+  S.getState().undo()
+  check(
+    S.getState().gaps.length === 3,
+    '★ 按一次 Ctrl+Z 三块全部恢复',
+    String(S.getState().gaps.length),
+  )
+
+  // ---- 批量改判 ----
+  S.getState().setGaps([f1, f2, f3], null)
+  const me0 = S.getState().manualEdited
+  S.getState().batchSetClass(['U1', 'U2'], 'undeveloped')
+  const changed = S.getState().gaps.filter((f) => f.properties.class === 'undeveloped')
+  check(changed.length === 2, '两块被改判', String(changed.length))
+  check(
+    changed.every((f) => f.properties.edited === true && f.properties.original_class === 'open_patch'),
+    '改判留痕：edited + original_class',
+  )
+  check(
+    S.getState().manualEdited === me0 + 2,
+    '人工改判计数 +2（相对增量，不受前面用例累计影响）',
+    `${me0} → ${S.getState().manualEdited}`,
+  )
+  S.getState().undo()
+  const back = S.getState().gaps.filter((f) => f.properties.class === 'open_patch')
+  check(back.length === 3, '撤销后全部回到连片空地', String(back.length))
+
+  // ---- 改判成同一类别：不该产生历史 ----
+  const pastN = S.getState().past.length
+  S.getState().batchSetClass(['U1'], 'open_patch')
+  check(S.getState().past.length === pastN, '无实际变化时不压历史')
+
+  // ---- 新操作清空重做栈 ----
+  S.getState().setGaps([f1, f2, f3], null)
+  S.getState().deleteGap('U1')
+  S.getState().undo()
+  check(S.getState().future.length === 1, '撤销后有可重做项')
+  S.getState().deleteGap('U2')
+  check(S.getState().future.length === 0, '新操作清空重做栈（避免时间线分叉）')
+
+  // ---- 历史上限 ----
+  S.getState().setGaps([f1, f2, f3], null)
+  for (let i = 0; i < 45; i++) {
+    S.getState().setGapClass('U1', i % 2 === 0 ? 'alley_gap' : 'open_patch')
+  }
+  check(S.getState().past.length === 40, '历史栈封顶 40 步', String(S.getState().past.length))
+
+  // ---- 多选 ----
+  S.getState().setGaps([f1, f2, f3], null)
+  S.getState().select('U1')
+  check(S.getState().selectedIds.length === 1 && S.getState().selectedId === 'U1', '单选')
+  S.getState().toggleSelect('U2')
+  check(S.getState().selectedIds.length === 2, 'Shift 点击加选', S.getState().selectedIds.join(','))
+  check(S.getState().selectedId === null, '多选时 selectedId 为 null（属性面板不误显示单块）')
+  S.getState().toggleSelect('U1')
+  check(S.getState().selectedIds.length === 1, '再点一次减选')
+  check(S.getState().selectedId === 'U2', '剩一个时 selectedId 自动回填')
+  S.getState().selectMany(['U1', 'U2', 'U3'])
+  check(S.getState().selectedIds.length === 3, '框选整体替换选择')
+  S.getState().clearSelection()
+  check(S.getState().selectedIds.length === 0 && S.getState().selectedId === null, '清空选择')
+
+  // ---- 删除时同步收缩选择集 ----
+  S.getState().selectMany(['U1', 'U2'])
+  S.getState().deleteGap('U1')
+  check(
+    S.getState().selectedIds.length === 1 && S.getState().selectedIds[0] === 'U2',
+    '删掉的那块从选择集里移除',
+    S.getState().selectedIds.join(','),
+  )
+
+  // ---- ★ 拖拽顶点：连续几十次 change 只能算一步 ----
+  S.getState().setGaps([f1, f2, f3], null)
+  const pastDrag = S.getState().past.length
+  for (let i = 0; i < 12; i++) {
+    S.getState().updateGapGeometry('U1', squareAt(111.2 + i * 0.00001, 1.19, 40))
+  }
+  check(
+    S.getState().past.length === pastDrag + 1,
+    '★ 连续 12 次几何更新只压 1 步（拖一次 = 撤销一次）',
+    `${pastDrag} → ${S.getState().past.length}`,
+  )
+  S.getState().undo()
+  check(
+    S.getState().gaps.find((f) => f.properties.gap_id === 'U1')?.properties.edited !== true,
+    '撤销一次即回到拖拽前（而不是回退一小段）',
+  )
+
+  // ---- 聚焦（复核清单） ----
+  S.getState().focusGap('U3')
+  const n1 = S.getState().focus?.nonce ?? 0
+  S.getState().focusGap('U3')
+  const n2 = S.getState().focus?.nonce ?? 0
+  check(n2 > n1, '连续点同一块也会触发飞行（nonce 递增）', `${n1} → ${n2}`)
+  check(S.getState().selectedId === 'U3', '聚焦同时选中')
+
+  S.getState().setGaps([], null)
 }
 
 // ---------- 汇总 ----------

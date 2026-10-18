@@ -51,6 +51,26 @@ function saveDetectParams(p: DetectParams): void {
   }
 }
 
+/**
+ * 撤销/重做步数上限。
+ *
+ * 为什么快照很便宜：要素对象**从不可变**（所有修改都用 spread 生成新对象），
+ * 所以一次快照只是 `gaps.slice()` —— 1,726 个指针约 14 KB，40 步不到 1 MB。
+ * 千万不要为了"省内存"改成深拷贝，那会变成几十 MB 并且更慢。
+ */
+const HISTORY_LIMIT = 40
+
+/** 一次可撤销操作的完整状态快照 */
+export interface HistoryEntry {
+  label: string
+  gaps: GapFeature[]
+  deletedFeatures: GapFeature[]
+  selectedIds: string[]
+  manualAdded: number
+  manualDeleted: number
+  manualEdited: number
+}
+
 const IDLE_DETECT: DetectRun = {
   running: false,
   stage: 'idle',
@@ -80,6 +100,12 @@ export interface AppState {
   // —— 数据 ——
   gaps: GapFeature[]
   visibleClasses: Record<GapClass, boolean>
+  /**
+   * 多选（真相）。
+   * `selectedId` 只是"恰好选中一个"的便捷字段 —— 多选时它为 null，
+   * 因为属性面板和 Terra Draw 的几何编辑都只对**单块**有意义。
+   */
+  selectedIds: string[]
   selectedId: string | null
   /**
    * 算法侧种植网格（含 `/gaps` 补算的 WGS84 锚点）。
@@ -112,6 +138,14 @@ export interface AppState {
 
   logs: string[]
 
+  // —— 撤销 / 重做（P1）——
+  past: HistoryEntry[]
+  future: HistoryEntry[]
+
+  // —— 地图聚焦（P1 复核清单）——
+  /** nonce 递增：同一块连续点两次也要能再飞一次 */
+  focus: { id: string; nonce: number } | null
+
   // —— 检测（P0 检测面板）——
   /** 用户可调的检测参数（持久化） */
   detectParams: DetectParams
@@ -124,6 +158,21 @@ export interface AppState {
   toggleClass: (cls: GapClass) => void
   setGroupVisible: (group: PriorityGroup, visible: boolean) => void
   select: (id: string | null) => void
+  /** Shift/Ctrl + 点击：加选 / 减选 */
+  toggleSelect: (id: string) => void
+  /** 框选结果整体替换选择 */
+  selectMany: (ids: string[]) => void
+  clearSelection: () => void
+  /** 批量删除 —— **一次操作 = 一步撤销** */
+  batchDeleteGaps: (ids: string[]) => void
+  /** 批量改判 —— 同上 */
+  batchSetClass: (ids: string[], cls: GapClass) => void
+  undo: () => void
+  redo: () => void
+  /** 把某个类别打开显示（复核清单点进隐藏类别时用） */
+  ensureVisible: (cls: GapClass) => void
+  /** 请地图飞到某块（配合复核清单） */
+  focusGap: (id: string) => void
   addGap: (geom: PolygonGeometry) => string
   deleteGap: (id: string) => void
   updateGapGeometry: (id: string, geom: PolygonGeometry) => void
@@ -150,6 +199,53 @@ export interface AppState {
 
 let manualSeq = 0
 
+/**
+ * 上一次几何编辑（用于合并连续拖拽）。
+ *
+ * ⚠️ 为什么需要：TerraDraw 在拖拽顶点时**每移动几个像素就触发一次 change**，
+ *    一次拖拽能产生几十次 `updateGapGeometry`。如果每次都压历史，
+ *    拖一次顶点就把 40 步撤销栈吃光 —— 用户随后按 Ctrl+Z 只会看到
+ *    "边界一点点回退"，而不是"回到拖之前"。
+ *
+ * 所以 1.5 秒内的同一要素连续几何更新只压**第一条**快照。
+ */
+let lastGeomEdit: { id: string; at: number } | null = null
+
+/** 抓一份可撤销快照（浅拷贝数组，要素对象共享） */
+function snap(s: AppState, label: string): HistoryEntry {
+  return {
+    label,
+    gaps: s.gaps.slice(),
+    deletedFeatures: s.deletedFeatures.slice(),
+    selectedIds: s.selectedIds.slice(),
+    manualAdded: s.manualAdded,
+    manualDeleted: s.manualDeleted,
+    manualEdited: s.manualEdited,
+  }
+}
+
+/**
+ * 把一次修改提交进历史。
+ *
+ * ⚠️ **所有会改 gaps 的 action 都必须走这里**，否则撤销会跳过那一步，
+ *    用户按 Ctrl+Z 看到的是"跳过了刚才那次修改"，比不能撤销更困惑。
+ * ⚠️ 新操作必须清空 `future` —— 否则会出现"撤销 → 改别的 → 还能重做回旧分支"
+ *    这种时间线分叉。
+ */
+function commit(s: AppState, label: string, patch: Partial<AppState>): Partial<AppState> {
+  return {
+    ...patch,
+    past: [...s.past, snap(s, label)].slice(-HISTORY_LIMIT),
+    future: [],
+    estimateResult: null,
+  }
+}
+
+/** 选择集变化时同步便捷字段 `selectedId` */
+function sel(ids: string[]): Pick<AppState, 'selectedIds' | 'selectedId'> {
+  return { selectedIds: ids, selectedId: ids.length === 1 ? ids[0] : null }
+}
+
 export const useAppStore = create<AppState>()((set, get) => ({
   backendOnline: false,
   backendError: null,
@@ -157,6 +253,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   gaps: [],
   visibleClasses: initialVisibility(),
+  selectedIds: [],
   selectedId: null,
   plantingGrid: null,
   deletedFeatures: [],
@@ -173,6 +270,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   logs: [],
 
+  past: [],
+  future: [],
+  focus: null,
+
   detectParams: loadDetectParams(),
   detect: { ...IDLE_DETECT },
 
@@ -183,12 +284,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
       backendError: error ?? null,
     })),
 
-  setGaps: (features, plantingGrid) =>
+  setGaps: (features, plantingGrid) => {
+    // 换基线时重置拖拽合并窗口，否则紧接着的第一次编辑会被误判成"上一次拖拽的后续"
+    lastGeomEdit = null
     set((s) => ({
       gaps: features,
       plantingGrid: plantingGrid ?? null,
-      // 载入新一轮结果 = 换基线，上一轮的删除记录不再适用
+      // 载入新一轮结果 = 换基线，上一轮的删除记录与历史都不再适用
+      // （撤销到"上一份数据"没有意义，而且会和新基线混在一起）
       deletedFeatures: [],
+      past: [],
+      future: [],
+      ...sel([]),
       estimateResult: null,
       logs: appendLog(
         s.logs,
@@ -197,7 +304,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
             ? '（已对齐算法种植网格锚点）'
             : '（无算法网格锚点，估算相位不可复现）'),
       ),
-    })),
+    }))
+  },
 
   toggleClass: (cls) =>
     set((s) => ({ visibleClasses: { ...s.visibleClasses, [cls]: !s.visibleClasses[cls] } })),
@@ -211,7 +319,112 @@ export const useAppStore = create<AppState>()((set, get) => ({
       return { visibleClasses: next }
     }),
 
-  select: (id) => set({ selectedId: id }),
+  select: (id) => set(sel(id ? [id] : [])),
+
+  toggleSelect: (id) =>
+    set((s) => {
+      const has = s.selectedIds.includes(id)
+      return sel(has ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id])
+    }),
+
+  selectMany: (ids) => set(sel(ids)),
+
+  clearSelection: () => set(sel([])),
+
+  ensureVisible: (cls) =>
+    set((s) => (s.visibleClasses[cls] ? {} : { visibleClasses: { ...s.visibleClasses, [cls]: true } })),
+
+  focusGap: (id) =>
+    set((s) => ({
+      ...sel([id]),
+      focus: { id, nonce: (s.focus?.nonce ?? 0) + 1 },
+    })),
+
+  undo: () =>
+    set((s) => {
+      const prev = s.past[s.past.length - 1]
+      if (!prev) return {}
+      const cur = snap(s, '当前状态')
+      return {
+        gaps: prev.gaps,
+        deletedFeatures: prev.deletedFeatures,
+        ...sel(prev.selectedIds),
+        manualAdded: prev.manualAdded,
+        manualDeleted: prev.manualDeleted,
+        manualEdited: prev.manualEdited,
+        past: s.past.slice(0, -1),
+        future: [cur, ...s.future].slice(0, HISTORY_LIMIT),
+        estimateResult: null,
+        logs: appendLog(s.logs, `↶ 撤销：${prev.label}`),
+      }
+    }),
+
+  redo: () =>
+    set((s) => {
+      const next = s.future[0]
+      if (!next) return {}
+      const cur = snap(s, '当前状态')
+      return {
+        gaps: next.gaps,
+        deletedFeatures: next.deletedFeatures,
+        ...sel(next.selectedIds),
+        manualAdded: next.manualAdded,
+        manualDeleted: next.manualDeleted,
+        manualEdited: next.manualEdited,
+        past: [...s.past, cur].slice(-HISTORY_LIMIT),
+        future: s.future.slice(1),
+        estimateResult: null,
+        logs: appendLog(s.logs, `↷ 重做：${next.label}`),
+      }
+    }),
+
+  batchDeleteGaps: (ids) =>
+    set((s) => {
+      const pick = new Set(ids)
+      const removed = s.gaps.filter((f) => pick.has(f.properties.gap_id))
+      if (removed.length === 0) return {}
+      const area = removed.reduce((a, f) => a + (f.properties.area_sqm ?? 0), 0)
+      return commit(s, `批量删除 ${removed.length} 块`, {
+        gaps: s.gaps.filter((f) => !pick.has(f.properties.gap_id)),
+        // 留几何快照：重跑时要靠它把"用户删掉的那些"认回来
+        deletedFeatures: [...s.deletedFeatures, ...removed],
+        ...sel([]),
+        manualDeleted: s.manualDeleted + removed.length,
+        logs: appendLog(
+          s.logs,
+          `批量删除 ${removed.length} 块（合计 ${Math.round(area).toLocaleString()} m²）`,
+        ),
+      })
+    }),
+
+  batchSetClass: (ids, cls) =>
+    set((s) => {
+      const pick = new Set(ids)
+      let n = 0
+      const gaps = s.gaps.map((f) => {
+        if (!pick.has(f.properties.gap_id)) return f
+        if (f.properties.class === cls) return f
+        n++
+        return {
+          ...f,
+          properties: {
+            ...f.properties,
+            original_class: f.properties.original_class ?? f.properties.class,
+            class: cls,
+            class_label: CLASS_STYLES[cls].label,
+            class_reason: '用户批量改判',
+            edited: true,
+            edited_by: 'user',
+          },
+        }
+      })
+      if (n === 0) return {}
+      return commit(s, `批量改判 ${n} 块为${CLASS_STYLES[cls].label}`, {
+        gaps,
+        manualEdited: s.manualEdited + n,
+        logs: appendLog(s.logs, `批量改判 ${n} 块为 ${CLASS_STYLES[cls].label}`),
+      })
+    }),
 
   addGap: (geom) => {
     manualSeq += 1
@@ -235,13 +448,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
         centroid_utm: [c[0], c[1]],
       },
     }
-    set((s) => ({
-      gaps: [feat, ...s.gaps],
-      manualAdded: s.manualAdded + 1,
-      selectedId: id,
-      estimateResult: null,
-      logs: appendLog(s.logs, `人工新增 ${id}（${feat.properties.area_sqm} m²）`),
-    }))
+    set((s) =>
+      commit(s, `新增 ${id}`, {
+        gaps: [feat, ...s.gaps],
+        manualAdded: s.manualAdded + 1,
+        ...sel([id]),
+        logs: appendLog(s.logs, `人工新增 ${id}（${feat.properties.area_sqm} m²）`),
+      }),
+    )
     return id
   },
 
@@ -249,19 +463,18 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((s) => {
       const feat = s.gaps.find((f) => f.properties.gap_id === id)
       if (!feat) return s
-      return {
+      return commit(s, `删除 ${id}`, {
         gaps: s.gaps.filter((f) => f.properties.gap_id !== id),
         // 留快照：重跑时要靠几何把"用户删掉的那块"从新结果里认出来
         deletedFeatures: [...s.deletedFeatures, feat],
-        selectedId: s.selectedId === id ? null : s.selectedId,
+        ...sel(s.selectedIds.filter((x) => x !== id)),
         manualDeleted: s.manualDeleted + 1,
-        estimateResult: null,
         logs: appendLog(
           s.logs,
           `删除 ${id}（原类别 ${feat.properties.class_label ?? feat.properties.class}，` +
             `${feat.properties.area_sqm} m²）`,
         ),
-      }
+      })
     }),
 
   updateGapGeometry: (id, geom) =>
@@ -281,36 +494,48 @@ export const useAppStore = create<AppState>()((set, get) => ({
           },
         }
       })
-      return {
+      const now = Date.now()
+      const coalesce =
+        lastGeomEdit !== null && lastGeomEdit.id === id && now - lastGeomEdit.at < 1500
+      lastGeomEdit = { id, at: now }
+
+      if (coalesce) {
+        // 同一次拖拽的后续帧：只更新几何，不再压历史、不再刷日志
+        return { gaps, manualEdited: s.manualEdited + 1, estimateResult: null }
+      }
+      return commit(s, `修改 ${id} 的边界`, {
         gaps,
         manualEdited: s.manualEdited + 1,
-        estimateResult: null,
         logs: appendLog(s.logs, `修改 ${id} 的边界`),
-      }
+      })
     }),
 
   setGapClass: (id, cls) =>
-    set((s) => ({
-      gaps: s.gaps.map((f) =>
-        f.properties.gap_id === id
-          ? {
-              ...f,
-              properties: {
-                ...f.properties,
-                // ⚠️ original_class 必须在覆盖 class 之前取旧值
-                original_class: f.properties.original_class ?? f.properties.class,
-                class: cls,
-                class_label: CLASS_STYLES[cls].label,
-                class_reason: '用户手工改判',
-                edited: true,
-                edited_by: 'user',
-              },
-            }
-          : f,
-      ),
-      estimateResult: null,
-      logs: appendLog(s.logs, `改判 ${id} 类别为 ${CLASS_STYLES[cls].label}`),
-    })),
+    set((s) => {
+      const cur = s.gaps.find((f) => f.properties.gap_id === id)
+      if (!cur || cur.properties.class === cls) return {}
+      return commit(s, `改判 ${id} 为${CLASS_STYLES[cls].label}`, {
+        gaps: s.gaps.map((f) =>
+          f.properties.gap_id === id
+            ? {
+                ...f,
+                properties: {
+                  ...f.properties,
+                  // ⚠️ original_class 必须在覆盖 class 之前取旧值
+                  original_class: f.properties.original_class ?? f.properties.class,
+                  class: cls,
+                  class_label: CLASS_STYLES[cls].label,
+                  class_reason: '用户手工改判',
+                  edited: true,
+                  edited_by: 'user',
+                },
+              }
+            : f,
+        ),
+        manualEdited: s.manualEdited + 1,
+        logs: appendLog(s.logs, `改判 ${id} 类别为 ${CLASS_STYLES[cls].label}`),
+      })
+    }),
 
   setRoi: (geom) =>
     set((s) => ({
@@ -361,12 +586,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
       newFeatures,
       mode,
     })
-    set({
+    set((cur) =>
+      commit(cur, '重跑合并', {
       gaps: r.features,
       // 合并完就换基线：新结果的 gap_id 已经是新的，旧删除记录不再适用
       deletedFeatures: [],
-      selectedId: null,
-      estimateResult: null,
+      ...sel([]),
       logs: appendLog(
         s.logs,
         `重跑合并（${mode === 'keep_manual' ? '保留人工' : '完全覆盖'}）：` +
@@ -376,7 +601,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
             : ` · 丢弃 ${r.stats.dropped_manual}`) +
           ` · 算法要素 ${r.stats.passthrough} · 合计 ${r.stats.total}`,
       ),
-    })
+      }),
+    )
     for (const w of r.warnings) {
       set((cur) => ({ logs: appendLog(cur.logs, `⚠️ ${w}`) }))
     }
