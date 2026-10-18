@@ -128,6 +128,11 @@ def build_report_html(d: dict) -> str:
     audit = d.get("audit") or {}
     tiers = d.get("tiers") or []
     top = d.get("top") or []
+    chm = d.get("chm") or {}
+    chm_core = chm.get("core")
+    chm_veto = chm.get("veto")
+    chm_label = chm.get("label") or ""
+    chm_default = bool(chm.get("is_default", True))
 
     total_area = sum(float(t.get("area_sqm") or 0) for t in tiers)
     total_count = sum(int(t.get("count") or 0) for t in tiers)
@@ -212,6 +217,10 @@ def build_report_html(d: dict) -> str:
   }}
   .card .k {{ font-size: 11px; color: var(--ink-2); }}
   .card .v {{ font-size: 14px; font-weight: 600; margin-top: 1px; }}
+  .card .s {{ font-size: 11px; color: var(--ink-2); margin-left: 4px; font-weight: 400; }}
+  /* 非默认 CHM 阈值：整张卡片描黄边，避免被当成基线数字引用 */
+  .card.warn-card {{ border-color: #d9a441; background: #fdf6e6; }}
+  .card.warn-card .k {{ color: #8a5a00; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 12.5px; }}
   th, td {{ padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: left; }}
   th {{ font-size: 11.5px; color: var(--ink-2); font-weight: 600; background: var(--bg-soft); }}
@@ -260,7 +269,12 @@ def build_report_html(d: dict) -> str:
   <div class="card"><div class="k">株距 × 行距</div><div class="v">{_n(grid.get("plant_pitch_m"), 2)} × {_n(grid.get("row_pitch_m"), 2)} m</div></div>
   <div class="card"><div class="k">行向方位角</div><div class="v">{_n(grid.get("azimuth_deg"), 2)}°</div></div>
   <div class="card"><div class="k">排坑退让</div><div class="v">{_n(d.get("clearance_m"), 1)} m</div></div>
+  <div class="card{' warn-card' if not chm_default else ''}">
+    <div class="k">CHM 高度阈值{' · 非默认' if not chm_default else ''}</div>
+    <div class="v">{_n(chm_core, 1)} / {_n(chm_veto, 1)} m<span class="s">{_e(chm_label)}</span></div>
+  </div>
 </div>
+{'<p class="sub" style="margin:8px 0 0;color:#8a5a00">⚠️ 本次使用<b>非 Stage 14 基线</b>的 CHM 阈值（救援 ' + _n(chm_core, 1) + ' m / 否决 ' + _n(chm_veto, 1) + ' m，' + _e(chm_label) + '）。结果<b>不可与历史交付数字直接对比</b>，苗木量与放样点数需按本报告口径引用。</p>' if not chm_default else ''}
 
 <h2>二、业务口径汇总</h2>
 {_stack_svg(tiers, total_area)}
@@ -308,7 +322,10 @@ def build_report_html(d: dict) -> str:
   ② 排坑法按 <span class="mono">{_n(grid.get("plant_pitch_m"), 2)} m × {_n(grid.get("row_pitch_m"), 2)} m</span>
   三角种植网格逐格判定，退让 <span class="mono">{_n(d.get("clearance_m"), 1)} m</span>；
   面积法按 66.67 m²/株折算（150 株/公顷）。两者差异大于 30% 时说明斑块形状破碎，应以排坑法为准。<br>
-  ③ 本报告为单文件 HTML，可直接 <span class="mono">Ctrl + P</span> 打印为 A4 PDF，无外部依赖。
+  ③ CHM 高度阈值（救援 <span class="mono">{_n(chm_core, 1)} m</span> / 否决 <span class="mono">{_n(chm_veto, 1)} m</span>，
+  {_e(chm_label)}档）决定「多高才算树」。大疆 DSM 平滑会让树高被低估约 40%，
+  换到幼龄林时需在桌面端「⚙ 检测参数」里切档，否则会大面积误判。<br>
+  ④ 本报告为单文件 HTML，可直接 <span class="mono">Ctrl + P</span> 打印为 A4 PDF，无外部依赖。
 </div>
 
 <p class="foot">Forest Gap Detection · 补种勘察一页报告 · 由桌面端自动生成</p>
@@ -343,6 +360,7 @@ def _selftest() -> int:
         ],
         "estimate": {"by_grid": 3691, "by_area": 4637, "divergence_pct": 25.7,
                      "points_total": 3691, "points_grid": 3400, "points_slot": 291},
+        "chm": {"core": 5.2, "veto": 1.2, "label": "成熟林", "is_default": True},
         "audit": {"added": 12, "edited": 37, "deleted": 64},
         "top": [
             {"gap_id": "r038912_c020480-G0001", "cls_label": "连片空地",
@@ -368,6 +386,10 @@ def _selftest() -> int:
         ("含人工留痕", "人工新增" in out and "人工剔除" in out),
         ("含 Top 表", "r038912_c020480-G0001" in out),
         ("含参数卡片", "8.35" in out and "7.23" in out and "0.67" in out),
+        ("含 CHM 阈值卡片", "CHM 高度阈值" in out and "5.2 / 1.2 m" in out),
+        # ⚠️ 不能搜 "非默认" —— CSS 注释里也有这三个字，会永远命中。
+        #    要搜**渲染出来的卡片标题**。
+        ("默认档不标「非默认」", "CHM 高度阈值 · 非默认" not in out),
         ("HTML 结构完整", out.startswith("<!DOCTYPE html>") and out.rstrip().endswith("</html>")),
     ]
     bad = 0
@@ -375,6 +397,21 @@ def _selftest() -> int:
         print(f"  [{'OK  ' if ok else 'FAIL'}] {label}")
         if not ok:
             bad += 1
+    # 非默认档：卡片描黄边 + 顶部提示"不可与历史数字对比"
+    sample2 = dict(sample)
+    sample2["chm"] = {"core": 2.2, "veto": 0.5, "label": "幼龄林", "is_default": False}
+    out2 = build_report_html(sample2)
+    checks2 = [
+        ("非默认档高亮卡片", "warn-card" in out2),
+        ("非默认档标出档位名", "幼龄林" in out2),
+        ("非默认档给出不可对比提示", "不可与历史交付数字直接对比" in out2),
+        ("非默认档写出实际阈值", "2.2 / 0.5 m" in out2),
+    ]
+    for label, ok in checks2:
+        print(f"  [{'OK  ' if ok else 'FAIL'}] {label}")
+        if not ok:
+            bad += 1
+
     # 空数据不能崩
     try:
         build_report_html({})

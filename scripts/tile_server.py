@@ -492,6 +492,16 @@ _TIER_META = {
 }
 _TIER_ORDER = ["definite_plant", "review", "not_needed", "unplantable"]
 
+# CHM 高度阈值的三档林龄预设（与 desktop/src/lib/chm.ts 保持一致）
+_CHM_PRESETS = [(5.2, 1.2, "成熟林"), (3.5, 0.8, "中龄林"), (2.2, 0.5, "幼龄林")]
+
+
+def _chm_label(core: float, veto: float) -> str:
+    for c, v, name in _CHM_PRESETS:
+        if abs(c - core) < 0.05 and abs(v - veto) < 0.05:
+            return name
+    return "自定义"
+
 
 def _tier_of(cls: str) -> str:
     if cls in _UNPLANTABLE:
@@ -694,14 +704,21 @@ def export_bundle(payload: dict, outdir: Path, base_obj: dict | None = None) -> 
             (f.get("properties") or {}).get("source") != "manual"))
         deleted = int(audit.get("deleted") or 0)
 
+        # 影像元信息：前端传来的优先；兜底从磁盘结果读（注意 params 里没有宽高，
+        # 宽高只有 processing 段才有 —— 所以这里用 crs/source_image 兜住关键字段）
         img = (payload or {}).get("image") or {}
         if not img:
-            meta = base.get("params") or {}
+            proc = base.get("processing") or {}
             img = {
                 "name": Path(str(base.get("source_image") or "")).name,
-                "width": meta.get("width"), "height": meta.get("height"),
-                "res_m": meta.get("res_m"), "crs": meta.get("crs"),
+                "width": proc.get("width"), "height": proc.get("height"),
+                "res_m": proc.get("res_m"), "crs": base.get("crs"),
             }
+
+        # CHM 阈值：**以磁盘上的结果为准**（用户可能在检测后改过滑块）
+        base_params = base.get("params") or {}
+        chm_core = float(base_params.get("elevation_core_chm") or 5.2)
+        chm_veto = float(base_params.get("elevation_veto_chm") or 1.2)
 
         pts = (points_res or {}).get("points") or []
         by_src = (points_res or {}).get("by_source") or {}
@@ -729,6 +746,12 @@ def export_bundle(payload: dict, outdir: Path, base_obj: dict | None = None) -> 
                 "points_total": len(pts),
                 "points_grid": by_src.get("grid", 0),
                 "points_slot": by_src.get("slot", 0),
+            },
+            "chm": {
+                "core": chm_core,
+                "veto": chm_veto,
+                "label": _chm_label(chm_core, chm_veto),
+                "is_default": abs(chm_core - 5.2) < 0.05 and abs(chm_veto - 1.2) < 0.05,
             },
             "audit": {"added": added, "edited": edited, "deleted": deleted},
             "top": top_rows,
