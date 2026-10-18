@@ -482,79 +482,281 @@ def ensure_overviews(
 # --------------------------------------------------------------------------
 # 导出
 # --------------------------------------------------------------------------
-def export_bundle(payload: dict, outdir: Path) -> dict:
-    """把前端编辑后的要素写成 geojson / csv / kml。
+# 不可种植类别（与前端 lib/classes.ts 的 unplantable 组一致）
+_UNPLANTABLE = {"road", "water", "office", "undeveloped"}
+_TIER_META = {
+    "definite_plant": ("确定需补种", "连片空地 + 株位空缺，可直接用于苗木量"),
+    "review": ("待复核", "证据不足，人工确认后才计入"),
+    "not_needed": ("无需补种", "林间空隙＝正常行间缝隙"),
+    "unplantable": ("不可种植", "道路 / 水体 / 办公生活区 / 未开发林，已按像素扣除"),
+}
+_TIER_ORDER = ["definite_plant", "review", "not_needed", "unplantable"]
 
-    ⚠️ Shapefile 导出不在这里做 —— 它由既有的 `scripts/export_arcgis.py` 负责
-    （需要 `blocks` 结构与 CRS 元数据）。这里只做「编辑结果」的轻量落盘。
+
+def _tier_of(cls: str) -> str:
+    if cls in _UNPLANTABLE:
+        return "unplantable"
+    if cls in ("open_patch", "vacant_slot", "manual_add"):
+        return "definite_plant"
+    if cls == "uncertain":
+        return "review"
+    return "not_needed"
+
+
+def export_bundle(payload: dict, outdir: Path, base_obj: dict | None = None) -> dict:
+    """把**用户人工复核后的要素**导出成完整交付包。
+
+    权威几何/属性全部复用 `scripts/export_arcgis.py`（ArcGIS 导入指南承诺的
+    WGS84 + UTM49N 双坐标系 GeoJSON / Shapefile、8 分类 KML、按类别分包），
+    补种点位复用 `planting_points.py`。这里只负责三件事：
+
+      ① 把编辑后的要素组装成 export_arcgis 认识的对象；
+      ② 决定输出目录；
+      ③ 生成一页汇总报告。
+
+    ⚠️ **网格参数必须来自磁盘上的算法结果**（`base_obj["planting_grid"]`），
+       不能只用前端传来的 —— 前端只有 `anchor_lon/lat`，缺 `origin_x_m/origin_y_m`，
+       拿它构造 GridModel 会让所有放样点整体平移。
     """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import export_arcgis as EA
+    from report_summary import build_report_html
+
     outdir.mkdir(parents=True, exist_ok=True)
     feats = (payload or {}).get("gaps", {}).get("features", []) or []
+    if not feats:
+        return {"ok": False, "error": "没有可导出的要素（gaps.features 为空）", "outdir": str(outdir)}
+
+    base = base_obj or {}
+    # 网格：磁盘上的算法结果优先（含 UTM 原点），前端只作兜底
+    grid = base.get("planting_grid") or (payload or {}).get("planting_grid") or {}
+    clearance = float((payload or {}).get("clearance_m") or 0.5)
+
+    # 组装：顶层 features 给 export_arcgis，blocks 给 planting_points
+    obj = {
+        "type": "FeatureCollection",
+        "features": feats,
+        "planting_grid": grid,
+        "blocks": [{"gaps": feats}],
+    }
+    features = EA.build_features(obj)
+    tr = EA.Transformer.from_crs(EA.WGS84, EA.UTM49N, always_xy=True)
+
     files: list[str] = []
+    notes: list[str] = []
 
-    gj = outdir / "gaps-edited.geojson"
-    gj.write_text(
-        json.dumps(
-            {"type": "FeatureCollection", "features": feats},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    files.append(str(gj))
+    def add(p: Path) -> None:
+        if p.exists():
+            files.append(str(p))
 
-    # CSV 统计表（业务方直接可用）
+    # ---- 1) 双坐标系 GeoJSON ----
+    EA.write_geojson_wgs84(features, obj, outdir / "gaps-all-wgs84.geojson")
+    add(outdir / "gaps-all-wgs84.geojson")
+    EA.write_geojson_utm(features, tr, outdir / "gaps-all-utm49n.geojson")
+    add(outdir / "gaps-all-utm49n.geojson")
+
+    # ---- 2) Shapefile（ArcGIS 用）----
+    try:
+        EA.write_shp_zip(features, outdir / "gaps-all-wgs84-shp.zip",
+                         projected=False, prj=EA.PRJ_WGS84)
+        add(outdir / "gaps-all-wgs84-shp.zip")
+        EA.write_shp_zip(features, outdir / "gaps-all-utm49n-shp.zip",
+                         projected=True, tr=tr, prj=EA.PRJ_UTM49N)
+        add(outdir / "gaps-all-utm49n-shp.zip")
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"Shapefile 生成失败（其余交付物不受影响）：{e}")
+
+    # ---- 3) KML（Google Earth / 奥维）----
+    try:
+        EA.write_kml(features, outdir / "gaps-all.kml")
+        add(outdir / "gaps-all.kml")
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"KML 生成失败：{e}")
+
+    # ---- 4) 按类别分包 ----
+    try:
+        by_class_dir = outdir / "by-class"
+        by_class_dir.mkdir(exist_ok=True)
+        buckets: dict[str, list] = {}
+        for props, rings in features:
+            buckets.setdefault(props["cls"], []).append((props, rings))
+        for cls, sub in buckets.items():
+            z = by_class_dir / f"gaps-{cls}-utm49n-shp.zip"
+            EA.write_shp_zip(sub, z, projected=True, tr=tr, prj=EA.PRJ_UTM49N)
+            add(z)
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"按类别分包失败：{e}")
+
+    # ---- 5) 补种点位（权威结算）----
+    points_res = None
+    if grid.get("plant_pitch_m"):
+        try:
+            points_res = EA.export_planting_points(obj, outdir, clearance_m=clearance)
+            for name in (
+                "planting-points-wgs84.geojson",
+                "planting-points-utm49n.geojson",
+                "planting-points-wgs84-shp.zip",
+                "planting-points-utm49n-shp.zip",
+                "planting-points.kml",
+                "planting-points.csv",
+            ):
+                add(outdir / name)
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"补种点位生成失败（其余交付物不受影响）：{e}")
+    else:
+        notes.append("结果里缺少 planting_grid，已跳过放样点位（只有几何交付物）")
+
+    # ---- 6) 表格（业务方直接看）----
     csv_path = outdir / "gaps-edited.csv"
     lines = ["gap_id,class,class_label,area_sqm,lon,lat,edited,source"]
     for f in feats:
-        p = f.get("properties", {}) or {}
-        c = p.get("centroid_utm") or [None, None]
-        lines.append(
-            ",".join(
-                [
-                    str(p.get("gap_id", "")),
-                    str(p.get("class", "")),
-                    str(p.get("class_label", "")),
-                    f"{float(p.get('area_sqm') or 0):.1f}",
-                    "" if c[0] is None else f"{float(c[0]):.7f}",
-                    "" if c[1] is None else f"{float(c[1]):.7f}",
-                    "1" if p.get("edited") else "0",
-                    str(p.get("source", "algo")),
-                ]
-            )
-        )
-    csv_path.write_text("\n".join(lines), encoding="utf-8-sig")
-    files.append(str(csv_path))
-
-    # KML（Google Earth 可直接打开）
-    kml_path = outdir / "gaps-edited.kml"
-    parts = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
-        "<name>Forest Gap Detection · 编辑结果</name>",
-    ]
-    for f in feats:
-        p = f.get("properties", {}) or {}
+        pr = f.get("properties", {}) or {}
         g = f.get("geometry", {}) or {}
-        polys = g.get("coordinates", [])
-        if g.get("type") == "Polygon":
-            polys = [polys]
-        for poly in polys:
-            if not poly:
-                continue
-            ring = poly[0]
-            coords = " ".join(f"{pt[0]:.7f},{pt[1]:.7f},0" for pt in ring)
-            parts.append(
-                f'<Placemark><name>{p.get("gap_id", "")} '
-                f'{p.get("class_label", "")}</name>'
-                f'<description>面积 {p.get("area_sqm", "")} m²</description>'
-                f"<Polygon><outerBoundaryIs><LinearRing><coordinates>{coords}"
-                f"</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>"
-            )
-    parts.append("</Document></kml>")
-    kml_path.write_text("".join(parts), encoding="utf-8")
-    files.append(str(kml_path))
+        lon = lat = ""
+        ring = None
+        if g.get("type") == "Polygon" and g.get("coordinates"):
+            ring = g["coordinates"][0]
+        elif g.get("type") == "MultiPolygon" and g.get("coordinates"):
+            ring = g["coordinates"][0][0]
+        if ring:
+            lon = f"{sum(pt[0] for pt in ring[:-1]) / max(1, len(ring) - 1):.7f}"
+            lat = f"{sum(pt[1] for pt in ring[:-1]) / max(1, len(ring) - 1):.7f}"
+        lines.append(",".join([
+            str(pr.get("gap_id", "")),
+            str(pr.get("class", "")),
+            str(pr.get("class_label", "")),
+            f"{float(pr.get('area_sqm') or 0):.1f}",
+            lon, lat,
+            "1" if pr.get("edited") else "0",
+            str(pr.get("source", "algo")),
+        ]))
+    csv_path.write_text("\n".join(lines), encoding="utf-8-sig")
+    add(csv_path)
 
-    return {"ok": True, "outdir": str(outdir), "files": files}
+    # ---- 7) 一页汇总报告 ----
+    report_path = outdir / "补种勘察一页报告.html"
+    try:
+        tier_acc: dict[str, dict] = {
+            k: {"key": k, "label": _TIER_META[k][0], "hint": _TIER_META[k][1],
+                "count": 0, "area_sqm": 0.0}
+            for k in _TIER_ORDER
+        }
+        for f in feats:
+            pr = f.get("properties", {}) or {}
+            t = tier_acc[_tier_of(str(pr.get("class", "")))]
+            t["count"] += 1
+            t["area_sqm"] += float(pr.get("area_sqm") or 0)
+
+        # 每块空地的放样点数（有权威点位就按 gap_id 数，否则按面积折算）
+        per_gap_plants: dict[str, int] = {}
+        if points_res and points_res.get("points"):
+            for p in points_res["points"]:
+                per_gap_plants[p["gap_id"]] = per_gap_plants.get(p["gap_id"], 0) + 1
+
+        top = sorted(
+            (f for f in feats if _tier_of(str(f.get("properties", {}).get("class", ""))) == "definite_plant"),
+            key=lambda f: float(f.get("properties", {}).get("area_sqm") or 0),
+            reverse=True,
+        )[:20]
+
+        top_rows = []
+        for f in top:
+            pr = f.get("properties", {}) or {}
+            gid = str(pr.get("gap_id", ""))
+            ring = None
+            g = f.get("geometry", {}) or {}
+            if g.get("type") == "Polygon" and g.get("coordinates"):
+                ring = g["coordinates"][0]
+            elif g.get("type") == "MultiPolygon" and g.get("coordinates"):
+                ring = g["coordinates"][0][0]
+            lon = lat = 0.0
+            if ring:
+                lon = sum(pt[0] for pt in ring[:-1]) / max(1, len(ring) - 1)
+                lat = sum(pt[1] for pt in ring[:-1]) / max(1, len(ring) - 1)
+            plants = per_gap_plants.get(gid)
+            if plants is None:
+                plants = int(float(pr.get("area_sqm") or 0) / 66.67)
+            top_rows.append({
+                "gap_id": gid,
+                "cls_label": str(pr.get("class_label") or EA.CLASS_LABEL_CN.get(
+                    str(pr.get("class", "")), "")),
+                "area_sqm": float(pr.get("area_sqm") or 0),
+                "plants": plants,
+                "lon": lon, "lat": lat,
+            })
+
+        audit = (payload or {}).get("audit") or {}
+        added = int(audit.get("added") or sum(1 for f in feats
+                                              if (f.get("properties") or {}).get("source") == "manual"))
+        edited = int(audit.get("edited") or sum(
+            1 for f in feats
+            if (f.get("properties") or {}).get("edited") and
+            (f.get("properties") or {}).get("source") != "manual"))
+        deleted = int(audit.get("deleted") or 0)
+
+        img = (payload or {}).get("image") or {}
+        if not img:
+            meta = base.get("params") or {}
+            img = {
+                "name": Path(str(base.get("source_image") or "")).name,
+                "width": meta.get("width"), "height": meta.get("height"),
+                "res_m": meta.get("res_m"), "crs": meta.get("crs"),
+            }
+
+        pts = (points_res or {}).get("points") or []
+        by_src = (points_res or {}).get("by_source") or {}
+        report_html = build_report_html({
+            "project": (payload or {}).get("project") or "Forest Gap Detection · 补种勘察",
+            "generated_at": time.strftime("%Y-%m-%d %H:%M"),
+            "image": img,
+            "roi": (payload or {}).get("roi") or {"has_roi": False},
+            "grid": {
+                "plant_pitch_m": grid.get("plant_pitch_m"),
+                "row_pitch_m": grid.get("row_pitch_m"),
+                "azimuth_deg": grid.get("row_azimuth_deg"),
+                "density_per_ha": grid.get("density_per_ha"),
+            },
+            "clearance_m": clearance,
+            "tiers": [tier_acc[k] for k in _TIER_ORDER],
+            "estimate": {
+                "by_grid": (points_res or {}).get("total") or 0,
+                "by_area": int(sum(float(t["area_sqm"]) for t in
+                                   (tier_acc["definite_plant"],)) / 66.67),
+                "divergence_pct": _divergence(
+                    (points_res or {}).get("total") or 0,
+                    sum(float(t["area_sqm"]) for t in (tier_acc["definite_plant"],)),
+                ),
+                "points_total": len(pts),
+                "points_grid": by_src.get("grid", 0),
+                "points_slot": by_src.get("slot", 0),
+            },
+            "audit": {"added": added, "edited": edited, "deleted": deleted},
+            "top": top_rows,
+        })
+        report_path.write_text(report_html, encoding="utf-8")
+        add(report_path)
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"报告生成失败：{e}")
+
+    return {
+        "ok": True,
+        "outdir": str(outdir),
+        "files": files,
+        "notes": notes,
+        "counts": {
+            "features": len(features),
+            "planting_points": len((points_res or {}).get("points") or []),
+        },
+        "report": str(report_path) if report_path.exists() else None,
+    }
+
+
+def _divergence(points_total: int, definite_area_sqm: float) -> float:
+    """排坑法 vs 面积法的差异百分比（面积法按 66.67 m²/株）。"""
+    by_area = definite_area_sqm / 66.67 if definite_area_sqm else 0.0
+    if by_area <= 0:
+        return 0.0
+    return abs(points_total - by_area) / by_area * 100.0
 
 
 # --------------------------------------------------------------------------
@@ -652,9 +854,18 @@ class Handler(BaseHTTPRequestHandler):
             outdir = Path(payload.get("outdir") or (ROOT / "output" / "desktop-export"))
             if not outdir.is_absolute():
                 outdir = ROOT / outdir
+            base_obj = None
+            gp = self.tile_server.gaps_path
+            if gp and Path(gp).exists():
+                try:
+                    base_obj = json.loads(Path(gp).read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    base_obj = None
             try:
-                self._json(export_bundle(payload, outdir))
+                self._json(export_bundle(payload, outdir, base_obj))
             except Exception as e:
+                import traceback
+                traceback.print_exc(file=sys.stderr)
                 self._json({"ok": False, "error": f"导出失败：{e}"}, 500)
             return
 

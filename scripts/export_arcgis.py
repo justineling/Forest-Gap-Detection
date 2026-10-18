@@ -115,12 +115,19 @@ def props_row(p: dict) -> dict:
     }
 
 
-def load_features(path: Path):
-    obj = json.loads(path.read_text(encoding="utf-8"))
+def build_features(obj: dict):
+    """把任意结果对象转成 `[(props_row, rings)]`。
+
+    单独抽出来是为了让**桌面端**能把「用户人工复核后的要素」直接喂进来 ——
+    以前只能从磁盘读文件，编辑结果落不了 Shapefile。
+
+    ⚠️ 两处兼容：
+      · `process_image.py` 的整幅结果把要素放在 `blocks[*].gaps` 下，顶层没有 features；
+        只读顶层会得到 0 个要素（踩过）。
+      · 桌面端传进来的是标准 FeatureCollection（顶层 features）。
+    """
     feats = obj.get("features")
     if not feats:
-        # ⚠️ process_image.py 的整幅结果把要素放在 blocks[*].gaps 下，顶层没有 features。
-        #    只读顶层会得到 0 个要素（本轮踩过）。
         feats = []
         for b in obj.get("blocks", []):
             feats.extend(b.get("gaps", []))
@@ -130,7 +137,12 @@ def load_features(path: Path):
         if not rings:
             continue
         out.append((props_row(f.get("properties") or {}), rings))
-    return obj, out
+    return out
+
+
+def load_features(path: Path):
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    return obj, build_features(obj)
 
 
 def write_geojson_wgs84(features, src_obj: dict, out: Path) -> None:
