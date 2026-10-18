@@ -207,7 +207,9 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
 ## 4. 红线与硬约定（违反会返工）
 - **Git**：绝不自动 commit，必须用户明确同意。提交前先 `git reset` 清空暂存区再按路径 `git add`
   （防 `git stash pop` 恢复的 staged 文件被误卷进提交）。核实远端真实状态用 `git ls-remote`。
-  提交信息中文 + Conventional Commits 前缀。
+  提交信息中文 + Conventional Commits 前缀。合并用 `--no-ff`（保留特性分支边界）。
+  ⚠️ **跨分支合并必然在日志/记忆文件上冲突**（纯追加结构）→ 解法是**保留双方 + 章节重编号**，
+  不要用 `-X ours/theirs`（会静默丢内容）。
 - **文档**：HTML 报告必须同时出「专业版 `<主题>.html` + 小白版 `<主题>-小白版.html`」；
   中文目录/文件名；**含图 HTML 一律把图片内联为 base64 或手写内联 SVG，禁用相对路径**。
 - **代码**：标识符纯 ASCII，中文只在注释/显示字符串；`sidecar.py` 的 **stdout 是 NDJSON 数据通道**，
