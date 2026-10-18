@@ -1038,6 +1038,79 @@ fn set_data_paths(
     Ok(get_status(app))
 }
 
+// ============================================================================
+//  文件读取 / 打开目录（P2：KML 导入与导出后的一步操作）
+// ============================================================================
+
+/// 读取文本文件（KML / GeoJSON）。
+///
+/// 为什么要 Rust 读而不是前端 `fetch('file://...')`：
+/// Tauri 的 webview 有 CSP，`file://` 默认被拦；走 IPC 一次读完最简单。
+///
+/// ⚠️ 大小上限 16 MB：KML 通常几十 KB，真给了个几百 MB 的文件说明用户
+///    选错了（比如选了 tif），直接报错比让 webview 卡死好。
+#[tauri::command]
+fn read_text_file(path: String) -> Result<String, String> {
+    const MAX_BYTES: u64 = 16 * 1024 * 1024;
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err(format!("文件不存在：{path}"));
+    }
+    let meta = std::fs::metadata(&p).map_err(|e| format!("读不到文件信息：{e}"))?;
+    if meta.len() > MAX_BYTES {
+        return Err(format!(
+            "文件太大（{:.1} MB），范围文件通常只有几十 KB —— 是不是选错了？",
+            meta.len() as f64 / 1_048_576.0
+        ));
+    }
+    let bytes = std::fs::read(&p).map_err(|e| format!("读取失败：{e}"))?;
+    // KML 有时是 GBK（老版本奥维），非法 UTF-8 时退化成有损解码而不是直接失败
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string()))
+}
+
+/// 在系统资源管理器里打开目录（或选中文件）。
+///
+/// 导出完成后用户最想做的事就是"去文件夹里拷走" —— 少点几次鼠标。
+#[tauri::command]
+fn open_path(path: String) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return Err(format!("路径不存在：{path}"));
+    }
+    // 传文件时用 /select, 让资源管理器直接选中它
+    let target = if p.is_dir() {
+        p.clone()
+    } else {
+        p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| p.clone())
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = Command::new("explorer");
+        cmd.arg(target.as_os_str());
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.spawn().map_err(|e| format!("打开资源管理器失败：{e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(target.as_os_str())
+            .spawn()
+            .map_err(|e| format!("打开访达失败：{e}"))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(target.as_os_str())
+            .spawn()
+            .map_err(|e| format!("打开文件管理器失败：{e}"))?;
+    }
+    log_line(&format!("已打开：{}", target.display()));
+    Ok(target.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn backend_url() -> String {
     format!("http://127.0.0.1:{BACKEND_PORT}")
@@ -1084,6 +1157,8 @@ pub fn run() {
             restart_tile_server,
             run_detect,
             preflight_detect,
+            read_text_file,
+            open_path,
             cancel_detect,
             detect_status,
             get_status,

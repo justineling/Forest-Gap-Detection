@@ -23,6 +23,7 @@ const MAX_LOGS = 300
 // 用 localStorage 而不是 settings.json：这是**界面偏好**（不是数据路径），
 // 换台机器重新选一次也合理，而且不需要跨 Rust 边界。
 const DETECT_PARAMS_KEY = 'fgd.detectParams'
+const OUTPUT_DIR_KEY = 'fgd.outputDir'
 export const DEFAULT_DETECT_PARAMS: DetectParams = {
   workers: 4,
   targetDensity: 150,
@@ -39,6 +40,25 @@ function loadDetectParams(): DetectParams {
     return { ...DEFAULT_DETECT_PARAMS, ...o }
   } catch {
     return { ...DEFAULT_DETECT_PARAMS }
+  }
+}
+
+function loadOutputDir(): string {
+  if (typeof localStorage === 'undefined') return ''
+  try {
+    return localStorage.getItem(OUTPUT_DIR_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function saveOutputDir(p: string): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    if (p) localStorage.setItem(OUTPUT_DIR_KEY, p)
+    else localStorage.removeItem(OUTPUT_DIR_KEY)
+  } catch {
+    /* 隐私模式：只在本次会话有效 */
   }
 }
 
@@ -151,6 +171,11 @@ export interface AppState {
   detectParams: DetectParams
   /** 运行态：驱动进度条 / 完成提示 */
   detect: DetectRun
+  /**
+   * 导出目录（空 = 用后端默认 output/desktop-export）。
+   * 存 localStorage：换台机器重新选一次也合理，不必跨 Rust 边界。
+   */
+  outputDir: string
 
   // —— actions ——
   setBackend: (p: { online: boolean; meta?: RasterMeta; error?: string }) => void
@@ -194,6 +219,7 @@ export interface AppState {
   detectFinish: (r: DetectFinished) => void
   /** 关掉完成提示 / 清掉失败态 */
   detectReset: () => void
+  setOutputDir: (dir: string) => void
   pushLog: (msg: string) => void
 }
 
@@ -276,6 +302,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   detectParams: loadDetectParams(),
   detect: { ...IDLE_DETECT },
+  outputDir: loadOutputDir(),
 
   setBackend: ({ online, meta, error }) =>
     set((s) => ({
@@ -649,6 +676,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
     })),
 
   detectReset: () => set({ detect: { ...IDLE_DETECT } }),
+
+  setOutputDir: (dir) =>
+    set(() => {
+      saveOutputDir(dir)
+      return { outputDir: dir }
+    }),
 
   pushLog: (msg) => set((s) => ({ logs: appendLog(s.logs, msg) })),
 }))

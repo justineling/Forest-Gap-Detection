@@ -1178,3 +1178,108 @@ kbd {
   flex-direction: column;
   min-height: 0;
 }
+
+/* ============================================================================
+   导出交付包对话框（ExportDialog）
+   ============================================================================ */
+.export-dialog {
+  width: min(720px, 100%);
+}
+
+.exp-row {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.exp-label {
+  display: block;
+  font-size: 12.5px;
+  margin-bottom: 7px;
+}
+.exp-path {
+  display: flex;
+  gap: 8px;
+}
+.exp-path input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.exp-path input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.exp-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.exp-summary {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.exp-summary > div {
+  flex: 1 1 120px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.exp-summary .k {
+  display: block;
+  font-size: 11px;
+  color: var(--dim);
+  margin-bottom: 2px;
+}
+.exp-summary b {
+  font-size: 13px;
+}
+
+.exp-result {
+  margin-top: 4px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
+}
+.exp-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+.exp-result-head b {
+  color: var(--accent);
+  font-size: 13.5px;
+}
+.exp-files {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 168px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.85;
+}
+.exp-report {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--accent);
+}
+.exp-notes {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  color: var(--warn);
+  line-height: 1.7;
+}

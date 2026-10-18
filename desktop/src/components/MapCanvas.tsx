@@ -292,6 +292,41 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     } as never)
   }, [roi, mapReady])
 
+  // ---------- 5b. ROI 变化 → 视野跟过去 ----------
+  //
+  // 导入 KML / 圈选完成后必须让用户**亲眼看到边界框住了哪片地**，
+  // 否则"导进去了但界面上没反应"和"没导进去"长得一模一样。
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady || !roi) return
+    let minLon = Infinity
+    let minLat = Infinity
+    let maxLon = -Infinity
+    let maxLat = -Infinity
+    const walk = (coords: unknown) => {
+      if (!Array.isArray(coords)) return
+      if (typeof coords[0] === 'number') {
+        const [lon, lat] = coords as [number, number]
+        if (lon < minLon) minLon = lon
+        if (lon > maxLon) maxLon = lon
+        if (lat < minLat) minLat = lat
+        if (lat > maxLat) maxLat = lat
+        return
+      }
+      for (const c of coords) walk(c)
+    }
+    walk((roi as { coordinates?: unknown }).coordinates)
+    if (!Number.isFinite(minLon)) return
+    if (maxLon - minLon < 1e-9 || maxLat - minLat < 1e-9) return
+    map.fitBounds(
+      [
+        [minLon, minLat],
+        [maxLon, maxLat],
+      ],
+      { padding: 80, maxZoom: 18, duration: 500 },
+    )
+  }, [roi, mapReady])
+
   // ---------- 6. 补种点位同步 ----------
   useEffect(() => {
     const map = mapRef.current

@@ -8,17 +8,20 @@ import StatusBar from './components/StatusBar'
 import DetectBar from './components/DetectBar'
 import DetectSettings from './components/DetectSettings'
 import PreflightDialog from './components/PreflightDialog'
+import ExportDialog from './components/ExportDialog'
+import { parseKmlOrGeoJsonRoi } from './lib/roiImport'
 import { useAppStore } from './store/useAppStore'
 import WelcomeWizard from './components/WelcomeWizard'
 import {
-  exportBundle,
   fetchGaps,
   getStatus,
   isTauri,
   onSidecarEvent,
   onSidecarLog,
+  pickRoiFile,
   preflightDetect,
   probeBackend,
+  readTextFile,
   runDetect,
   type AppStatus,
 } from './api/backend'
@@ -27,7 +30,8 @@ import type { DetectProgress, GapCollection, PreflightResult } from './types'
 export default function App() {
   const [drawIntent, setDrawIntent] = useState<DrawIntent>('none')
   const [loadingGaps, setLoadingGaps] = useState(false)
-  const [exporting, setExporting] = useState(false)
+  // 导出状态由 ExportDialog 自己管（它是唯一发起方）
+  const exporting = false
   /** 当前应用状态（后端形态 / 影像路径 / 是否要引导） */
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null)
   /** 非 null 时显示首次使用引导 */
@@ -37,14 +41,15 @@ export default function App() {
   /** 正在预检 / 启动（按钮显示"检查中…"） */
   const [starting, setStarting] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showExport, setShowExport] = useState(false)
 
   const setBackend = useAppStore((s) => s.setBackend)
   const setGaps = useAppStore((s) => s.setGaps)
-  const gaps = useAppStore((s) => s.gaps)
   const pushLog = useAppStore((s) => s.pushLog)
   const applyRerun = useAppStore((s) => s.applyRerun)
   const meta = useAppStore((s) => s.meta)
   const roi = useAppStore((s) => s.roi)
+  const setRoi = useAppStore((s) => s.setRoi)
   const detectParams = useAppStore((s) => s.detectParams)
   const detect = useAppStore((s) => s.detect)
   const detectBegin = useAppStore((s) => s.detectBegin)
@@ -173,6 +178,8 @@ export default function App() {
         return
       }
       await probeAndLoad()
+      // 浏览器模式下 `?p2=export` 直接打开导出对话框（截图 / 回归用）
+      if (!isTauri() && qs.get('p2') === 'export') setShowExport(true)
       // 浏览器模式下 `?p1=1` 预选 3 块 / `?p1=box` 进框选模式（截图 / 回归用）
       if (!isTauri() && qs.has('p1')) {
         if (qs.get('p1') === 'box') {
@@ -388,31 +395,35 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const onExport = useCallback(async () => {
-    setExporting(true)
-    const collection: GapCollection = { type: 'FeatureCollection', features: gaps }
-    try {
-      const res = await exportBundle({ gaps: collection })
-      pushLog(`导出完成 → ${res.outdir}（${res.files.length} 个文件）`)
-      for (const f of res.files) pushLog(`  · ${f}`)
-    } catch (e) {
-      // 后端不可用：浏览器端至少给一份编辑后的 GeoJSON
-      const blob = new Blob([JSON.stringify(collection, null, 1)], {
-        type: 'application/geo+json',
-      })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'gaps-edited.geojson'
-      a.click()
-      URL.revokeObjectURL(url)
-      pushLog(
-        `后端导出不可用（${e instanceof Error ? e.message : e}），已改为浏览器下载 gaps-edited.geojson`,
-      )
-    } finally {
-      setExporting(false)
+  /**
+   * 导入 KML / GeoJSON 作为 Target Block。
+   *
+   * 解析在前端纯函数里做（`lib/roiImport.ts`）—— 这样"三维坐标有没有剥干净"
+   * 能被 npm test 测住。导入后 `setRoi` 会触发地图 fitBounds，
+   * 用户能亲眼确认边界框住了哪片地。
+   */
+  const onImportRoi = useCallback(async () => {
+    const path = await pickRoiFile()
+    if (!path) {
+      if (!isTauri()) {
+        pushLog('浏览器模式不能读取本地文件 —— 请用「启动桌面端.bat」打开桌面应用后再导入')
+      }
+      return
     }
-  }, [gaps, pushLog])
+    try {
+      const text = await readTextFile(path)
+      const r = parseKmlOrGeoJsonRoi(text, path)
+      setRoi(r.geometry)
+      const name = r.name || path.split(/[\\/]/).pop()
+      pushLog(
+        `已导入范围「${name}」：${r.polygonCount} 个多边形取最大，` +
+          `${r.rawVertexCount} 个顶点` +
+          (r.strippedAltitude ? '（已忽略高程，只保留经纬度）' : ''),
+      )
+    } catch (e) {
+      pushLog(`导入范围失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }, [setRoi, pushLog])
 
   return (
     <div className="app">
@@ -426,13 +437,14 @@ export default function App() {
             setDrawIntent={setDrawIntent}
             onLoadGaps={loadGaps}
             onOpenData={() => setWizard(appStatus ?? ({} as AppStatus))}
-            onExport={onExport}
+            onExport={() => setShowExport(true)}
             loadingGaps={loadingGaps}
             exporting={exporting}
             detecting={detect.running}
             starting={starting}
             onDetect={onDetect}
             onOpenDetectSettings={() => setShowSettings((v) => !v)}
+            onImportRoi={onImportRoi}
           />
         </ErrorBoundary>
 
@@ -464,6 +476,13 @@ export default function App() {
 
       {/* 首次使用引导：盖在最上层，选好影像后自动消失 */}
       {wizard && <WelcomeWizard status={wizard} onDone={onWizardDone} />}
+
+      {/* 导出交付包 */}
+      {showExport && (
+        <ErrorBoundary area="导出">
+          <ExportDialog onClose={() => setShowExport(false)} />
+        </ErrorBoundary>
+      )}
 
       {/* 检测前预检：只在有问题时出现 */}
       {preflight && (

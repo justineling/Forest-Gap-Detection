@@ -17,6 +17,8 @@ interface Props {
   starting: boolean
   onDetect: () => void
   onOpenDetectSettings: () => void
+  /** 从 KML / GeoJSON 导入 Target Block 范围 */
+  onImportRoi: () => void
 }
 
 /**
@@ -38,6 +40,7 @@ export default function TopToolbar({
   starting,
   onDetect,
   onOpenDetectSettings,
+  onImportRoi,
 }: Props) {
   const backendOnline = useAppStore((s) => s.backendOnline)
   const meta = useAppStore((s) => s.meta)
@@ -117,6 +120,13 @@ export default function TopToolbar({
           title="圈出只检测的目标区块；圈外的天然林/邻园会被直接排除"
         >
           {drawIntent === 'roi' ? '圈选中…（Esc 取消）' : '① 圈选 Target Block'}
+        </button>
+        <button
+          className="btn"
+          onClick={onImportRoi}
+          title="从 KML / GeoJSON 导入范围（导入后地图会自动缩放到该区块）"
+        >
+          导入范围
         </button>
         {roi && (
           <button className="btn tiny" onClick={() => setRoi(null)} title="清除圈选">

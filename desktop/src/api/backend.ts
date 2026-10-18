@@ -145,6 +145,55 @@ export async function fetchPlantingPoints(clearanceM: number): Promise<PlantingP
 //    浏览器打包产物不会因为这条路径多出运行时依赖。
 // ============================================================================
 
+/**
+ * 选择 KML / GeoJSON 范围文件。
+ *
+ * 只返回**路径**，内容由 `readTextFile` 读 —— 解析放在前端纯函数里
+ * （`lib/roiImport.ts`），这样"三维坐标有没有剥干净"能被 npm test 测住。
+ */
+export async function pickRoiFile(): Promise<string | null> {
+  if (!isTauri()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters: [
+      { name: '范围文件 (KML / GeoJSON)', extensions: ['kml', 'geojson', 'json'] },
+      { name: '全部文件', extensions: ['*'] },
+    ],
+  })
+  if (typeof picked === 'string') return picked
+  if (Array.isArray(picked) && typeof picked[0] === 'string') return picked[0]
+  return null
+}
+
+/** 读取文本文件（KML / GeoJSON）。大小上限由 Rust 侧把关。 */
+export async function readTextFile(path: string): Promise<string> {
+  if (!isTauri()) throw new Error('浏览器模式不能读取本地文件')
+  return tauriInvoke<string>('read_text_file', { path })
+}
+
+/**
+ * 选择导出目录。
+ *
+ * 浏览器模式返回 null —— 调用方应该退化成"手动填路径"的输入框，
+ * 而不是直接失败（Headless Chrome 里没有原生对话框）。
+ */
+export async function pickOutputDir(): Promise<string | null> {
+  if (!isTauri()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const picked = await open({ multiple: false, directory: true })
+  if (typeof picked === 'string') return picked
+  if (Array.isArray(picked) && typeof picked[0] === 'string') return picked[0]
+  return null
+}
+
+/** 在资源管理器里打开目录（导出完成后的一步操作） */
+export async function openPath(path: string): Promise<void> {
+  if (!isTauri()) return
+  await tauriInvoke<string>('open_path', { path })
+}
+
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
@@ -337,10 +386,24 @@ export async function waitBackend(timeoutMs = 90_000): Promise<boolean> {
 export interface ExportRequest {
   /** 编辑后的要素集合 */
   gaps: GapCollection
-  /** 导出目录（Tauri 里由文件对话框给出；原型里是后端默认 output/desktop-export） */
+  /** 导出目录（Tauri 里由文件夹对话框给出；浏览器里可手填） */
   outdir?: string
-  /** 是否同时导出 Shapefile / KML */
-  formats?: Array<'geojson' | 'shp' | 'kml' | 'csv'>
+  /**
+   * 排坑退让距离（m）。放样点位按它结算，**必须与界面上的档位一致** ——
+   * 否则报告里的株数和用户看到的估算对不上。
+   */
+  clearance_m?: number
+  /**
+   * 算法种植网格。后端会优先用磁盘上结果文件里的完整网格
+   * （含 UTM 原点 origin_x_m/origin_y_m）；这里只是兜底。
+   */
+  planting_grid?: unknown
+  /** 人工复核留痕（新增 / 改判 / 剔除），进报告第四章 */
+  audit?: { added: number; edited: number; deleted: number }
+  /** 影像元信息，进报告第一章的参数卡片 */
+  image?: { name: string; width: number; height: number; res_m: number; crs: string }
+  /** 圈选范围（报告里区分"整幅"与"圈内"） */
+  roi?: { has_roi: boolean; area_sqm: number }
 }
 
 export interface ExportResponse {
@@ -348,6 +411,11 @@ export interface ExportResponse {
   outdir: string
   files: string[]
   error?: string
+  /** 后端附带的提醒（某类交付物生成失败时不影响其余） */
+  notes?: string[]
+  counts?: { features: number; planting_points: number }
+  /** 一页汇总报告路径 */
+  report?: string | null
 }
 
 export async function exportBundle(req: ExportRequest): Promise<ExportResponse> {
