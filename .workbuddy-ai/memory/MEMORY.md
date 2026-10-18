@@ -119,7 +119,7 @@
 技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
 Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-**验收基线**：`npm test`（store 60 + estimate 15 + mergeEdits 26）· `cargo test`（10）·
+**验收基线**：`npm test`（164 项断言）· `cargo test`（14）·
 契约测试 95/95 · `cargo check`。
 **打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
 `%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
@@ -147,6 +147,15 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
     漏处理 = 用户完全看不到。进度合并用 `??` 不用 `||`（`done=0` 是合法值）。
 11. **可选出现的条带别用固定行数 grid**：`.app` 改 `flex column` + `body{flex:1}`，
     否则孩子数变化时 `1fr` 会给错元素（地图区被压成内容高度）。
+12. **撤销栈**：快照 = `gaps.slice()`（要素不可变 → 结构共享，14 KB/步），上限 40；
+    **批量操作只压 1 步**；新操作清空 redo；`setGaps` 清空历史。
+    ⚠️ **TerraDraw 拖拽每几像素发一次 change** → 必须 1.5 s 时间窗合并，
+    否则拖一次就把栈吃光（按 Ctrl+Z 只看到边界一点点回退）。
+13. **框选必须传 `visibleClasses`**（`selectGapsInBox`）：默认只勾选「确定需补种」，
+    隐藏的 road/water 若被框选中，一次批量删除会静默抹掉 180 条道路。
+    不用 `queryRenderedFeatures`（随缩放变 / 测不到 / 不分类别）；
+    进框选模式要 disable `dragPan` + `boxZoom`（Shift+拖拽默认是拉框放大）。
+14. **快捷键要先判断焦点**：INPUT/TEXTAREA/SELECT/contenteditable 里一律让位。
 
 **其它要点**
 
