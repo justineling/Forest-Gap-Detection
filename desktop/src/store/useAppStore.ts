@@ -7,6 +7,10 @@ import type {
   PolygonGeometry,
   PriorityGroup,
   RasterMeta,
+  DetectParams,
+  DetectProgress,
+  DetectRun,
+  DetectFinished,
 } from '../types'
 import { ALL_CLASSES, CLASS_STYLES, GROUP_META } from '../lib/classes'
 import { estimate, DEFAULT_GRID } from '../lib/estimate'
@@ -14,6 +18,52 @@ import { centroid, polygonAreaM2 } from '../lib/geometry'
 import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeEdits'
 
 const MAX_LOGS = 300
+
+// —— 检测参数持久化 ——
+// 用 localStorage 而不是 settings.json：这是**界面偏好**（不是数据路径），
+// 换台机器重新选一次也合理，而且不需要跨 Rust 边界。
+const DETECT_PARAMS_KEY = 'fgd.detectParams'
+export const DEFAULT_DETECT_PARAMS: DetectParams = {
+  workers: 4,
+  targetDensity: 150,
+  useRoi: true,
+}
+
+function loadDetectParams(): DetectParams {
+  // 测试跑在 node 里，没有 localStorage —— 必须兜住，否则 store 一 import 就炸
+  if (typeof localStorage === 'undefined') return { ...DEFAULT_DETECT_PARAMS }
+  try {
+    const raw = localStorage.getItem(DETECT_PARAMS_KEY)
+    if (!raw) return { ...DEFAULT_DETECT_PARAMS }
+    const o = JSON.parse(raw) as Partial<DetectParams>
+    return { ...DEFAULT_DETECT_PARAMS, ...o }
+  } catch {
+    return { ...DEFAULT_DETECT_PARAMS }
+  }
+}
+
+function saveDetectParams(p: DetectParams): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(DETECT_PARAMS_KEY, JSON.stringify(p))
+  } catch {
+    /* 隐私模式 / 配额满：静默放弃，参数只在本次会话有效 */
+  }
+}
+
+const IDLE_DETECT: DetectRun = {
+  running: false,
+  stage: 'idle',
+  done: 0,
+  total: 0,
+  ratio: 0,
+  elapsedS: 0,
+  etaS: null,
+  gapsFound: 0,
+  gapAreaSqm: 0,
+  startedAt: null,
+  finished: null,
+}
 
 function initialVisibility(): Record<GapClass, boolean> {
   const out = {} as Record<GapClass, boolean>
@@ -62,6 +112,12 @@ export interface AppState {
 
   logs: string[]
 
+  // —— 检测（P0 检测面板）——
+  /** 用户可调的检测参数（持久化） */
+  detectParams: DetectParams
+  /** 运行态：驱动进度条 / 完成提示 */
+  detect: DetectRun
+
   // —— actions ——
   setBackend: (p: { online: boolean; meta?: RasterMeta; error?: string }) => void
   setGaps: (features: GapFeature[], plantingGrid?: PlantingGrid | null) => void
@@ -82,6 +138,13 @@ export interface AppState {
    * 走 `mergeManualEdits` 把人工操作重放到新结果上，返回统计供 UI 汇报。
    */
   applyRerun: (newFeatures: GapFeature[], mode?: MergeMode) => MergeStats
+  /** 改检测参数（自动持久化） */
+  setDetectParam: (patch: Partial<DetectParams>) => void
+  detectBegin: () => void
+  detectProgress: (p: DetectProgress) => void
+  detectFinish: (r: DetectFinished) => void
+  /** 关掉完成提示 / 清掉失败态 */
+  detectReset: () => void
   pushLog: (msg: string) => void
 }
 
@@ -109,6 +172,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
   manualEdited: 0,
 
   logs: [],
+
+  detectParams: loadDetectParams(),
+  detect: { ...IDLE_DETECT },
 
   setBackend: ({ online, meta, error }) =>
     set((s) => ({
@@ -316,6 +382,47 @@ export const useAppStore = create<AppState>()((set, get) => ({
     }
     return r.stats
   },
+
+  setDetectParam: (patch) =>
+    set((s) => {
+      const next = { ...s.detectParams, ...patch }
+      saveDetectParams(next)
+      return { detectParams: next }
+    }),
+
+  detectBegin: () =>
+    set({
+      detect: {
+        ...IDLE_DETECT,
+        running: true,
+        stage: 'starting',
+        startedAt: Date.now(),
+      },
+    }),
+
+  detectProgress: (p) =>
+    set((s) => ({
+      detect: {
+        ...s.detect,
+        running: true,
+        stage: p.stage ?? s.detect.stage,
+        // ⚠️ 用 ?? 而不是 ||：done=0 是合法值（第一块还没完成）
+        done: p.done ?? s.detect.done,
+        total: p.total ?? s.detect.total,
+        ratio: p.ratio ?? s.detect.ratio,
+        elapsedS: p.elapsed_s ?? s.detect.elapsedS,
+        etaS: p.eta_s ?? s.detect.etaS,
+        gapsFound: p.gaps_found ?? s.detect.gapsFound,
+        gapAreaSqm: p.gap_area_sqm ?? s.detect.gapAreaSqm,
+      },
+    })),
+
+  detectFinish: (r) =>
+    set((s) => ({
+      detect: { ...s.detect, running: false, stage: r.ok ? 'done' : 'failed', finished: r },
+    })),
+
+  detectReset: () => set({ detect: { ...IDLE_DETECT } }),
 
   pushLog: (msg) => set((s) => ({ logs: appendLog(s.logs, msg) })),
 }))

@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { cancelDetect, isTauri, probeBackend, runDetect } from '../api/backend'
+import { isTauri, probeBackend } from '../api/backend'
 import type { DrawIntent } from './MapCanvas'
 
 interface Props {
@@ -12,8 +11,21 @@ interface Props {
   onExport: () => void
   loadingGaps: boolean
   exporting: boolean
+  /** sidecar 正在跑 */
+  detecting: boolean
+  /** 正在预检 / 启动（比 detecting 更早） */
+  starting: boolean
+  onDetect: () => void
+  onOpenDetectSettings: () => void
 }
 
+/**
+ * 顶部工具栏。
+ *
+ * ⚠️ 检测参数**不在这里拼**：以前把 `chm_path` / `workers` 硬编码在按钮里，
+ * 用户换了别的目录的影像就会静默退化（W1004 只进日志）。现在统一由
+ * App.tsx 的 `buildDetectParams()` 从 store 里取，并且先过 `preflight_detect`。
+ */
 export default function TopToolbar({
   drawIntent,
   setDrawIntent,
@@ -22,6 +34,10 @@ export default function TopToolbar({
   onExport,
   loadingGaps,
   exporting,
+  detecting,
+  starting,
+  onDetect,
+  onOpenDetectSettings,
 }: Props) {
   const backendOnline = useAppStore((s) => s.backendOnline)
   const meta = useAppStore((s) => s.meta)
@@ -31,42 +47,6 @@ export default function TopToolbar({
   const setBackend = useAppStore((s) => s.setBackend)
   const pushLog = useAppStore((s) => s.pushLog)
   const runEstimate = useAppStore((s) => s.runEstimate)
-  const [detecting, setDetecting] = useState(false)
-
-  const onDetect = async () => {
-    setDetecting(true)
-    try {
-      const r = await runDetect({
-        params: {
-          // ⚠️ 参数名必须严格对齐 sidecar 的参数表（见交接简报 §3），
-          //    写 chm / segment / target_density 会被当成未知字段静默忽略（W1001），
-          //    结果退化成"纯 RGB + 默认密度"却照样跑完 —— 实测踩过。
-          input: meta?.source ?? 'drone data/WGR17-002.tif',
-          job: 'wgr17-desktop',
-          chm_path: 'output/chm.tif',
-          segment_path: 'drone data/segment.tif',
-          workers: 4,
-          target_density_per_ha: 150,
-        },
-        roi: roi ?? undefined,
-      })
-      pushLog(r.ok ? `已启动检测：${r.message}${roi ? '（仅检测圈选范围）' : '（整幅）'}` : r.message)
-      if (!r.ok) setDetecting(false)
-    } catch (e) {
-      pushLog(`启动检测失败：${e instanceof Error ? e.message : String(e)}`)
-      setDetecting(false)
-    }
-  }
-
-  const onCancelDetect = async () => {
-    try {
-      pushLog(await cancelDetect())
-    } catch (e) {
-      pushLog(`取消失败：${e instanceof Error ? e.message : String(e)}`)
-    } finally {
-      setDetecting(false)
-    }
-  }
 
   const reconnect = async () => {
     pushLog('正在探测后端瓦片服务…')
@@ -83,14 +63,18 @@ export default function TopToolbar({
     <header className="toolbar">
       <div className="tb-brand">
         <b>Forest Gap Detection</b>
-        <span className="dim">油棕园空地智能检测 · 桌面端原型</span>
+        <span className="dim">油棕园空地智能检测 · 桌面端</span>
       </div>
 
       <div className="tb-group">
         <button
           className="btn"
           onClick={reconnect}
-          title={backendOnline ? '影像服务已就绪，点此重新检测' : '点此重新检测；若仍未连接，请点「数据」选择影像'}
+          title={
+            backendOnline
+              ? '影像服务已就绪，点此重新检测'
+              : '点此重新检测；若仍未连接，请点「数据」选择影像'
+          }
         >
           <span className={backendOnline ? 'dot ok' : 'dot bad'} />
           {backendOnline ? '影像已就绪' : '影像未连接'}
@@ -98,11 +82,7 @@ export default function TopToolbar({
         <button className="btn" onClick={onLoadGaps} disabled={loadingGaps}>
           {loadingGaps ? '载入中…' : '载入检测结果'}
         </button>
-        <button
-          className="btn"
-          onClick={onOpenData}
-          title="更换正射影像或检测结果文件"
-        >
+        <button className="btn" onClick={onOpenData} title="更换正射影像或检测结果文件">
           数据
         </button>
       </div>
@@ -115,29 +95,33 @@ export default function TopToolbar({
         >
           {drawIntent === 'roi' ? '圈选中…（Esc 取消）' : '① 圈选 Target Block'}
         </button>
-        <button className="btn" onClick={() => setRoi(null)} disabled={!roi}>
-          清除圈选
-        </button>
+        {roi && (
+          <button className="btn tiny" onClick={() => setRoi(null)} title="清除圈选">
+            清除
+          </button>
+        )}
       </div>
 
       <div className="tb-group">
         <button
-          className={detecting ? 'btn' : 'btn'}
+          className="btn primary"
           onClick={onDetect}
-          disabled={detecting}
+          disabled={detecting || starting}
           title={
             isTauri()
-              ? '调 Python sidecar 跑检测（stdio NDJSON）；圈选过则只跑圈内'
+              ? '先检查文件是否齐全，再调 Python 跑检测（圈选过则只跑圈内）'
               : '浏览器模式不能启动检测，请用「启动桌面端.bat」打开桌面应用'
           }
         >
-          {detecting ? '检测中…' : '② 开始检测'}
+          {starting ? '检查中…' : detecting ? '检测中…' : '② 开始检测'}
         </button>
-        {detecting && (
-          <button className="btn danger" onClick={onCancelDetect} title="中止当前检测（子进程会被 kill）">
-            取消检测
-          </button>
-        )}
+        <button
+          className="btn tiny"
+          onClick={onOpenDetectSettings}
+          title="检测参数：并行进程数 / 目标密度 / 是否只跑圈内"
+        >
+          ⚙
+        </button>
         <button
           className={drawIntent === 'add_gap' ? 'btn primary' : 'btn'}
           onClick={() => setDrawIntent(drawIntent === 'add_gap' ? 'none' : 'add_gap')}

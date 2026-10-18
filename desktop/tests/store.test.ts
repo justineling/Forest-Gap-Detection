@@ -227,6 +227,82 @@ console.log('\n⑥ 重跑合并（applyRerun）—— 删除与改判要能被�
   check(S2.getState().gaps.length === 1, 'overwrite 只留算法结果', String(S2.getState().gaps.length))
 }
 
+// ---------- 检测状态（P0 检测面板） ----------
+console.log('\n⑦ 检测进度与参数 —— 进度条的数据源必须可靠')
+{
+  const S3 = useAppStore
+  S3.getState().detectReset()
+
+  // 1) 未开始时不该显示进度条
+  check(S3.getState().detect.running === false, '初始未运行')
+  check(S3.getState().detect.finished === null, '初始没有结束态')
+
+  // 2) started → running
+  S3.getState().detectBegin()
+  check(S3.getState().detect.running === true, 'detectBegin 置为运行中')
+  check(S3.getState().detect.startedAt !== null, '记录了开始时间')
+
+  // 3) progress 必须逐字段合并（sidecar 的字段名是 snake_case）
+  S3.getState().detectProgress({
+    stage: 'tile_processing',
+    done: 128,
+    total: 528,
+    ratio: 0.2424,
+    elapsed_s: 84.5,
+    eta_s: 264,
+    gaps_found: 312,
+    gap_area_sqm: 88_500,
+  })
+  const d = S3.getState().detect
+  check(d.done === 128 && d.total === 528, '进度数已更新', `${d.done}/${d.total}`)
+  check(Math.abs(d.ratio - 0.2424) < 1e-9, 'ratio 已更新')
+  check(d.etaS === 264, 'ETA 已更新（用于"预计剩余"）', String(d.etaS))
+  check(d.gapsFound === 312, '已发现空地数已更新', String(d.gapsFound))
+  check(d.elapsedS === 84.5, 'elapsed_s → elapsedS 映射正确')
+
+  // 4) done=0 是合法值，不能被 `||` 吞掉（踩过这种坑：进度条永远不动）
+  S3.getState().detectProgress({ done: 0, total: 528, ratio: 0 })
+  check(S3.getState().detect.done === 0, 'done=0 不被当成"没传"', String(S3.getState().detect.done))
+
+  // 5) 部分字段缺失时保留旧值，不能把 total 清成 0
+  S3.getState().detectProgress({ done: 300 })
+  check(
+    S3.getState().detect.total === 528,
+    '只传 done 时 total 保持旧值',
+    String(S3.getState().detect.total),
+  )
+
+  // 6) 结束
+  S3.getState().detectFinish({
+    ok: true,
+    elapsedS: 350.2,
+    gaps: 1443,
+    areaSqm: 383_426,
+    message: '1,443 块空地',
+  })
+  const f = S3.getState().detect
+  check(f.running === false, '结束后 running=false')
+  check(f.finished?.ok === true && f.finished.gaps === 1443, '结束态记录块数', String(f.finished?.gaps))
+  check(f.stage === 'done', 'stage 变为 done', f.stage)
+
+  // 7) 失败态
+  S3.getState().detectFinish({ ok: false, elapsedS: 0, gaps: 0, areaSqm: 0, message: '[E3001] 没有可处理的瓦片' })
+  check(S3.getState().detect.finished?.ok === false, '失败态可记录')
+  check(S3.getState().detect.stage === 'failed', 'stage 变为 failed')
+
+  // 8) 关闭 → 完全清空（进度条不占位置）
+  S3.getState().detectReset()
+  check(S3.getState().detect.finished === null, 'detectReset 清掉结束态')
+
+  // 9) 参数：默认值 + 修改
+  const p0 = S3.getState().detectParams
+  check(p0.workers === 4 && p0.targetDensity === 150, '默认参数 4 进程 / 150 株', JSON.stringify(p0))
+  S3.getState().setDetectParam({ workers: 6 })
+  check(S3.getState().detectParams.workers === 6, '参数可改')
+  check(S3.getState().detectParams.targetDensity === 150, '改一个不影响另一个')
+  S3.getState().setDetectParam({ workers: 4, targetDensity: 150, useRoi: true })
+}
+
 // ---------- 汇总 ----------
 console.log(`\n${failures === 0 ? '✅ 全部通过' : `❌ ${failures} 项失败`}`)
 process.exit(failures === 0 ? 0 : 1)

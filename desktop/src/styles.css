@@ -46,16 +46,24 @@ kbd {
 }
 
 /* ---------- 布局 ---------- */
+/* 用 flex 列而不是 grid 行：工具栏与检测进度条都是**可选出现**的
+   （DetectBar 空闲时不渲染），grid 的固定行数会在少一个孩子时把布局错位。 */
 .app {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
+  position: relative; /* 检测参数弹层用 absolute 定位 */
 }
 
 .body {
   display: grid;
   grid-template-columns: 288px 1fr 300px;
   min-height: 0;
+  flex: 1;
+}
+
+.statusbar {
+  flex: 0 0 auto;
 }
 
 /* ---------- 工具栏 ---------- */
@@ -667,4 +675,251 @@ kbd {
 .btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* ============================================================================
+   检测进度条（DetectBar）
+   ----------------------------------------------------------------------------
+   放在工具栏与主区之间的一条带子：跑批时一直可见，跑完变成结果摘要。
+   为什么不做成模态：350 秒里用户还要能看图、翻图层、点属性。
+   ============================================================================ */
+.detect-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.detect-bar .db-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.detect-bar .db-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 5px;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+.detect-bar .db-head b {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.db-track {
+  height: 5px;
+  border-radius: 3px;
+  background: #0b1114;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.db-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width 0.35s ease;
+}
+
+/* 还没拿到 total（正在规划瓦片）→ 走一条来回扫的条，避免停在 0% 让人以为卡死 */
+.db-fill.planning {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 35%,
+    var(--accent) 65%,
+    transparent 100%
+  );
+  animation: db-scan 1.4s linear infinite;
+}
+@keyframes db-scan {
+  from {
+    transform: translateX(-60%);
+  }
+  to {
+    transform: translateX(60%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .db-fill.planning {
+    animation: none;
+  }
+}
+
+.detect-bar.done,
+.detect-bar.failed {
+  gap: 12px;
+  padding: 9px 14px;
+}
+.detect-bar.done {
+  background: rgba(61, 220, 151, 0.09);
+  border-bottom-color: rgba(61, 220, 151, 0.35);
+}
+.detect-bar.failed {
+  background: rgba(224, 82, 82, 0.1);
+  border-bottom-color: rgba(224, 82, 82, 0.4);
+}
+.detect-bar .db-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 22px;
+}
+.detect-bar.done .db-icon {
+  background: var(--accent);
+  color: #06231a;
+}
+.detect-bar.failed .db-icon {
+  background: var(--danger);
+  color: #fff;
+}
+.detect-bar.done .db-head b {
+  color: var(--accent);
+}
+.detect-bar.failed .db-head b {
+  color: #ff9b9b;
+}
+
+/* ============================================================================
+   检测参数弹层（DetectSettings）
+   ============================================================================ */
+.tb-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.detect-settings {
+  position: absolute;
+  /* 挂在工具栏下沿：工具栏换行时不会压住按钮 */
+  top: calc(100% + 6px);
+  right: 16px;
+  z-index: 900;
+  width: 330px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+}
+
+.ds-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 13.5px;
+}
+
+.ds-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.ds-label {
+  display: block;
+  font-size: 12.5px;
+  color: var(--text);
+  margin-bottom: 7px;
+}
+.ds-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--dim);
+  line-height: 1.55;
+}
+.ds-foot {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* ============================================================================
+   预检结果（PreflightDialog）
+   ============================================================================ */
+.preflight {
+  width: min(680px, 100%);
+}
+
+.pf-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pf-item {
+  display: flex;
+  gap: 11px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.pf-item.error {
+  border-color: rgba(224, 82, 82, 0.5);
+  background: rgba(224, 82, 82, 0.08);
+}
+.pf-item.warn {
+  border-color: rgba(240, 180, 41, 0.45);
+  background: rgba(240, 180, 41, 0.07);
+}
+
+.pf-icon {
+  flex: 0 0 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: #2b353a;
+  color: var(--dim);
+}
+.pf-item.ok .pf-icon {
+  background: rgba(61, 220, 151, 0.18);
+  color: var(--accent);
+}
+.pf-item.warn .pf-icon {
+  background: rgba(240, 180, 41, 0.2);
+  color: var(--warn);
+}
+.pf-item.error .pf-icon {
+  background: rgba(224, 82, 82, 0.22);
+  color: #ff8f8f;
+}
+
+.pf-body {
+  flex: 1;
+  min-width: 0;
+}
+.pf-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+.pf-line b {
+  font-size: 13px;
+}
+.pf-detail {
+  color: var(--dim);
+}
+.pf-path {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #6f7f88;
+  word-break: break-all;
 }

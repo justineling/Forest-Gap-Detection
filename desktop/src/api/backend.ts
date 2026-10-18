@@ -7,7 +7,7 @@
  * 必须走 HTTP 的端点；真正的检测（`detect`）在 Tauri 里由 Rust 通过
  * `scripts/sidecar.py` 的 NDJSON 契约调用，不走 HTTP。
  */
-import type { GapCollection, RasterMeta } from '../types'
+import type { GapCollection, PreflightResult, RasterMeta } from '../types'
 
 /** 本地瓦片/辅助服务地址（原型用 Python 标准库实现，见 scripts/tile_server.py） */
 export const BACKEND_BASE = 'http://127.0.0.1:8765'
@@ -168,6 +168,36 @@ export type DetectStartResult =
  * Rust 侧把它写成临时 `.geojson` 再作为 `roi` 路径传给 sidecar
  * （sidecar 的 `roi` 参数是**文件路径**，不接受内联几何）。
  */
+/**
+ * 检测前预检：文件在不在、输出目录写不写得进、森林掩膜有没有。
+ *
+ * 为什么要有它：`run_detect` 里 chm / segment 缺了**不会报错** ——
+ * sidecar 只回一条 W1004 就照常跑完，结果退化成"纯 RGB"。
+ * 用户在 350 秒后拿到一份看着正常、语义完全不同的结果，是最坏的一种失败。
+ *
+ * 浏览器模式返回一个"无法预检"的 info（不抛错），保证界面仍可用。
+ */
+export async function preflightDetect(
+  params: Record<string, unknown>,
+): Promise<PreflightResult> {
+  if (!isTauri()) {
+    return {
+      ok: true,
+      items: [
+        {
+          key: 'browser',
+          label: '浏览器模式',
+          path: '',
+          status: 'info',
+          detail: '浏览器里不能预检本地文件；桌面应用会逐项检查',
+        },
+      ],
+      resolved: params,
+    }
+  }
+  return tauriInvoke<PreflightResult>('preflight_detect', { params })
+}
+
 export async function runDetect(opts: {
   params: Record<string, unknown>
   roi?: unknown
@@ -322,24 +352,4 @@ export interface ExportResponse {
 
 export async function exportBundle(req: ExportRequest): Promise<ExportResponse> {
   return postJson<ExportResponse>('/export', req)
-}
-
-/**
- * 触发检测 —— **原型阶段故意留空**。
- *
- * 原因：ROI 裁剪（PRD R-P0-11）在算法侧尚未实现（`process_image.py` 的
- * `used_kml` 至今硬编码 `False`）。在 Tauri 版里这里会变成：
- *   1. 把 ROI + 参数写进 JSON；
- *   2. Rust 侧 `spawn` `scripts/sidecar.py --params-stdin`；
- *   3. 逐行解析 NDJSON 事件 → 通过 Tauri event 推给前端。
- * 浏览器原型里无法 spawn 进程，所以只提示，不假装成功。
- */
-export function detectNotAvailableInBrowser(): string {
-  return (
-    '检测需由 Python sidecar 执行（stdio NDJSON 契约）。' +
-    '浏览器原型无法启动子进程 —— 请用 Tauri 版，或先在命令行跑：\n' +
-    '  .venv/Scripts/python.exe scripts/process_image.py --input "drone data/WGR17-002.tif" \\\n' +
-    '    --job wgr17-elev --out-json output/wgr17-elev-gaps.geojson \\\n' +
-    '    --chm output/chm.tif --segment "drone data/segment.tif" --target-density 150'
-  )
 }

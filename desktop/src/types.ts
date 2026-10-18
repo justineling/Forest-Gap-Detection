@@ -160,3 +160,83 @@ export interface EstimateResult {
    */
   origin_source?: 'planting_grid' | 'explicit' | 'geometry'
 }
+
+// ============================================================================
+//  检测（P0 检测面板）
+//  ---------------------------------------------------------------------------
+//  字段名严格对齐 `scripts/sidecar.py` 的 emit()：
+//    progress → stage / done / total / ratio / elapsed_s / eta_s /
+//               tiles_new / tiles_cached / tiles_failed / gaps_found / gap_area_sqm
+//  ⚠️ 改后端 emit 字段时必须同步这里，否则进度条会永远停在 0%
+//     （`ev.done` 取不到就是 undefined，UI 静默不更新）。
+// ============================================================================
+
+/** 用户可以调的三个检测参数（持久化到 localStorage） */
+export interface DetectParams {
+  /** 并行进程数：1=串行，0=自动 min(6, cpu//2) */
+  workers: number
+  /** 目标种植密度（株/ha），影响株位空缺的判定 */
+  targetDensity: number
+  /** 只检测圈选范围（没圈选时忽略） */
+  useRoi: boolean
+}
+
+/** sidecar 的 progress 事件（原样收下，缺失字段一律当 undefined） */
+export interface DetectProgress {
+  stage?: string
+  done?: number
+  total?: number
+  ratio?: number
+  elapsed_s?: number
+  eta_s?: number | null
+  tiles_new?: number
+  tiles_cached?: number
+  tiles_failed?: number
+  gaps_found?: number
+  gap_area_sqm?: number
+  message?: string
+}
+
+/** 一次检测结束时的结果 */
+export interface DetectFinished {
+  ok: boolean
+  elapsedS: number
+  gaps: number
+  areaSqm: number
+  message: string
+}
+
+/** 检测运行态（驱动进度条） */
+export interface DetectRun {
+  running: boolean
+  stage: string
+  done: number
+  total: number
+  ratio: number
+  elapsedS: number
+  etaS: number | null
+  gapsFound: number
+  gapAreaSqm: number
+  startedAt: number | null
+  /** 最近一次结束；null = 本次会话还没跑过 */
+  finished: DetectFinished | null
+}
+
+export type PreflightStatus = 'ok' | 'warn' | 'error' | 'info'
+
+/** 预检的单项结果 */
+export interface PreflightItem {
+  key: string
+  label: string
+  /** 解析后的绝对路径（info 类可能为空） */
+  path: string
+  status: PreflightStatus
+  detail: string
+}
+
+/** 预检汇总。`resolved` 是补全后的参数，原样交给 run_detect */
+export interface PreflightResult {
+  ok: boolean
+  items: PreflightItem[]
+  resolved: Record<string, unknown>
+}
