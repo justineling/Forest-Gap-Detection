@@ -119,7 +119,7 @@
 技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
 Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-**验收基线**：`npm test`（164 项断言）· `cargo test`（14）·
+**验收基线**：`npm test`（191 项断言）· `cargo test`（14）·
 契约测试 95/95 · `cargo check`。
 **打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
 `%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
@@ -156,6 +156,12 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
     不用 `queryRenderedFeatures`（随缩放变 / 测不到 / 不分类别）；
     进框选模式要 disable `dragPan` + `boxZoom`（Shift+拖拽默认是拉框放大）。
 14. **快捷键要先判断焦点**：INPUT/TEXTAREA/SELECT/contenteditable 里一律让位。
+15. **KML 的 `<coordinates>` 是三维的**（`lon,lat,alt`）→ 必须只取前两维，
+    否则面积与 Terra Draw 静默算错；多多边形**取最大**（KML 常含图例框）。
+16. **导出的网格参数必须来自磁盘上的算法结果**：前端 `planting_grid` 缺
+    `origin_x_m/origin_y_m`，拿去构造 GridModel 会让放样点**整体平移**。
+17. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
+    标识符；要查 `<link href>` / `<script src>` / `<img src>` / `@import` / `url(`。
 
 **其它要点**
 
