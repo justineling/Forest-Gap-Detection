@@ -6,9 +6,17 @@ import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter'
 import { useAppStore, selectVisibleGaps } from '../store/useAppStore'
 import { classColorExpr } from '../lib/classes'
 import { TILE_URL_TEMPLATE } from '../api/backend'
+import {
+  featureBBox,
+  isDegenerateBox,
+  normalizeBBox,
+  selectGapsInBox,
+} from '../lib/selection'
+import BatchBar from './BatchBar'
+import ErrorBoundary from './ErrorBoundary'
 import type { GapGeometry, PolygonGeometry, Position } from '../types'
 
-export type DrawIntent = 'none' | 'roi' | 'add_gap'
+export type DrawIntent = 'none' | 'roi' | 'add_gap' | 'box_select'
 
 interface Props {
   drawIntent: DrawIntent
@@ -24,6 +32,8 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const drawRef = useRef<TerraDraw | null>(null)
   const loadedGapIdRef = useRef<string | null>(null)
+  /** 框选时画的那个虚线矩形（纯 DOM，不进地图样式） */
+  const boxRef = useRef<HTMLDivElement>(null)
   const [mapReady, setMapReady] = useState(false)
   /** Terra Draw 初始化失败时的提示（只影响手绘/编辑，不影响看图） */
   const [drawError, setDrawError] = useState<string | null>(null)
@@ -32,7 +42,13 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   const backendOnline = useAppStore((s) => s.backendOnline)
   const gaps = useAppStore((s) => s.gaps)
   const visibleClasses = useAppStore((s) => s.visibleClasses)
-  const selectedId = useAppStore((s) => s.selectedId)
+  const selectedIds = useAppStore((s) => s.selectedIds)
+  const focus = useAppStore((s) => s.focus)
+  /**
+   * 只有**恰好选中一块**时才允许 Terra Draw 载入几何做拖拽编辑。
+   * 多选时如果还载入第一块，用户拖一下就会改掉"看起来只是高亮"的那块。
+   */
+  const singleId = selectedIds.length === 1 ? selectedIds[0] : null
   const roi = useAppStore((s) => s.roi)
   const estimateResult = useAppStore((s) => s.estimateResult)
   const select = useAppStore((s) => s.select)
@@ -137,11 +153,17 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
       // —— 交互 ——
       map.on('click', 'gaps-fill', (e) => {
         const id = e.features?.[0]?.properties?.gap_id
-        if (typeof id === 'string') select(id)
+        if (typeof id !== 'string') return
+        // Shift / Ctrl / Cmd + 点击 = 加选 / 减选（框选之外的精细多选方式）
+        const oe = e.originalEvent as MouseEvent | undefined
+        const st = useAppStore.getState()
+        if (oe && (oe.shiftKey || oe.ctrlKey || oe.metaKey)) st.toggleSelect(id)
+        else st.select(id)
       })
       map.on('click', (e) => {
         const hits = map.queryRenderedFeatures(e.point, { layers: ['gaps-fill'] })
-        if (hits.length === 0) select(null)
+        // 点空白处才清空选择；多选状态下点空白也清空（符合直觉）
+        if (hits.length === 0) useAppStore.getState().clearSelection()
       })
       map.on('mouseenter', 'gaps-fill', () => {
         map.getCanvas().style.cursor = 'pointer'
@@ -243,14 +265,18 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     } as never)
   }, [gaps, visibleClasses, mapReady])
 
-  // ---------- 4. 选中高亮 ----------
+  // ---------- 4. 选中高亮（支持多选） ----------
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady) return
-    if (map.getLayer('gaps-selected')) {
-      map.setFilter('gaps-selected', ['==', ['get', 'gap_id'], selectedId ?? '__none__'])
-    }
-  }, [selectedId, mapReady])
+    if (!map.getLayer('gaps-selected')) return
+    map.setFilter(
+      'gaps-selected',
+      selectedIds.length === 0
+        ? ['==', ['get', 'gap_id'], '__none__']
+        : (['in', ['get', 'gap_id'], ['literal', selectedIds]] as never),
+    )
+  }, [selectedIds, mapReady])
 
   // ---------- 5. ROI 同步 ----------
   useEffect(() => {
@@ -321,23 +347,23 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   useEffect(() => {
     const draw = drawRef.current
     if (!draw || !mapReady) return
-    if (loadedGapIdRef.current === selectedId) return
-    loadedGapIdRef.current = selectedId
+    if (loadedGapIdRef.current === singleId) return
+    loadedGapIdRef.current = singleId
 
     draw.clear()
-    if (!selectedId) return
-    const feat = gaps.find((f) => f.properties.gap_id === selectedId)
+    if (!singleId) return
+    const feat = gaps.find((f) => f.properties.gap_id === singleId)
     if (!feat || feat.geometry.type !== 'Polygon') return
     draw.addFeatures([
       {
-        id: selectedId,
+        id: singleId,
         type: 'Feature',
         geometry: feat.geometry,
         properties: { mode: 'polygon' },
       } as never,
     ])
     draw.setMode('select')
-  }, [selectedId, gaps, mapReady])
+  }, [singleId, gaps, mapReady])
 
   // ---------- 10. Terra Draw 改完 → 回写 store ----------
   useEffect(() => {
@@ -359,25 +385,107 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     }
   }, [mapReady, updateGapGeometry])
 
-  // ---------- 11. Delete 键删除选中 ----------
+  // ---------- 11. 框选多选（拖矩形） ----------
+  //
+  // ⚠️ MapLibre 默认把「Shift + 左键拖拽」绑成了 boxZoom（拉框放大）。
+  //    进入框选模式时必须显式 disable dragPan / boxZoom，否则用户一拖地图就缩放。
+  // ⚠️ 选中判定走 `selectGapsInBox` 纯函数（带 visibleClasses），
+  //    不用 `queryRenderedFeatures` —— 后者只认"当前渲染出来的"，
+  //    缩放级别不同结果会变，而且不区分类别可见性（会盲删隐藏层）。
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      const el = e.target as HTMLElement | null
-      if (el && /INPUT|TEXTAREA|SELECT/.test(el.tagName)) return
-      const id = useAppStore.getState().selectedId
-      if (!id) return
-      e.preventDefault()
-      useAppStore.getState().deleteGap(id)
-      loadedGapIdRef.current = null
+    const map = mapRef.current
+    if (!map || !mapReady) return
+    if (drawIntent !== 'box_select') return
+
+    map.dragPan.disable()
+    map.boxZoom.disable()
+    map.getCanvas().style.cursor = 'crosshair'
+    const boxEl = boxRef.current
+
+    let start: maplibregl.Point | null = null
+
+    const paint = (a: maplibregl.Point, b: maplibregl.Point) => {
+      if (!boxEl) return
+      const x = Math.min(a.x, b.x)
+      const y = Math.min(a.y, b.y)
+      boxEl.style.display = 'block'
+      boxEl.style.left = `${x}px`
+      boxEl.style.top = `${y}px`
+      boxEl.style.width = `${Math.abs(b.x - a.x)}px`
+      boxEl.style.height = `${Math.abs(b.y - a.y)}px`
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+
+    const finish = (a: maplibregl.Point, b: maplibregl.Point) => {
+      if (boxEl) boxEl.style.display = 'none'
+      const pa = map.unproject(a)
+      const pb = map.unproject(b)
+      const bbox = normalizeBBox([pa.lng, pa.lat], [pb.lng, pb.lat])
+      if (isDegenerateBox(bbox)) return
+      const st = useAppStore.getState()
+      const ids = selectGapsInBox(st.gaps, bbox, st.visibleClasses)
+      st.selectMany(ids)
+      st.pushLog(
+        ids.length > 0
+          ? `框选 ${ids.length} 块（只含当前可见类别）`
+          : '框选范围内没有可见的空地 —— 检查左侧类别是否勾选',
+      )
+    }
+
+    const onDown = (e: maplibregl.MapMouseEvent) => {
+      if (e.originalEvent.button !== 0) return
+      start = e.point
+      paint(start, start)
+    }
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      if (start) paint(start, e.point)
+    }
+    // mouseup 挂在 window 上：用户拖到画布外松手也能正常收尾
+    const onUp = (ev: MouseEvent) => {
+      if (!start) return
+      const rect = map.getCanvas().getBoundingClientRect()
+      const end = new maplibregl.Point(ev.clientX - rect.left, ev.clientY - rect.top)
+      const a = start
+      start = null
+      finish(a, end)
+    }
+
+    map.on('mousedown', onDown)
+    map.on('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+
+    return () => {
+      map.off('mousedown', onDown)
+      map.off('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      map.dragPan.enable()
+      map.boxZoom.enable()
+      map.getCanvas().style.cursor = ''
+      if (boxEl) boxEl.style.display = 'none'
+    }
+  }, [drawIntent, mapReady])
+
+  // ---------- 12. 复核清单点击 → 飞过去 ----------
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady || !focus) return
+    const f = useAppStore.getState().gaps.find((x) => x.properties.gap_id === focus.id)
+    if (!f) return
+    const b = featureBBox(f)
+    if (!b) return
+    map.fitBounds(
+      [
+        [b.minLon, b.minLat],
+        [b.maxLon, b.maxLat],
+      ],
+      // maxZoom 兜住小块：否则 fitBounds 会一路放大到看不出周边
+      { padding: 140, maxZoom: 19, duration: 500 },
+    )
+  }, [focus, mapReady])
 
   return (
     <div className="map-wrap">
       <div ref={containerRef} className="map-container" />
+      <div ref={boxRef} className="box-select-rect" />
       {!backendOnline && (
         <div className="map-hint">
           <b>影像瓦片服务未连接</b>
@@ -399,10 +507,16 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
         <div className="map-drawing">
           {drawIntent === 'roi'
             ? '正在圈选 Target Block：依次点击顶点，双击 / 回车闭合'
-            : '正在新增空地：依次点击顶点，双击 / 回车闭合'}
-          <span className="dim">Esc 取消</span>
+            : drawIntent === 'add_gap'
+              ? '正在新增空地：依次点击顶点，双击 / 回车闭合'
+              : '框选模式：拖一个矩形选中空地（只命中当前勾选可见的类别）'}
+          <span className="dim">Esc 退出</span>
         </div>
       )}
+
+      <ErrorBoundary area="批量操作">
+        <BatchBar />
+      </ErrorBoundary>
     </div>
   )
 }

@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { fetchPlantingPoints } from '../api/backend'
+import ReviewList from './ReviewList'
 import { ALL_CLASSES, CLASS_STYLES } from '../lib/classes'
 import type { GapClass } from '../types'
 
@@ -10,18 +11,46 @@ export default function RightPanel() {
   const deleteGap = useAppStore((s) => s.deleteGap)
   const setGapClass = useAppStore((s) => s.setGapClass)
   const estimateResult = useAppStore((s) => s.estimateResult)
+  const selectedIds = useAppStore((s) => s.selectedIds)
+  // 默认停在「复核」：打开应用时右面板若显示"请点选多边形"就是一块死面板，
+  // 而复核清单是进来就有用的东西。
+  const [tab, setTab] = useState<'props' | 'review'>('review')
+
+  // 一旦选中要素，自动切回属性 —— 这是用户点它的意图
+  useEffect(() => {
+    if (selectedIds.length > 0) setTab('props')
+  }, [selectedIds])
 
   const feat = gaps.find((f) => f.properties.gap_id === selectedId)
   const est = estimateResult?.per_gap.find((r) => r.gap_id === selectedId)
 
   return (
     <aside className="panel right">
-      <div className="panel-head">
-        <h3>属性</h3>
-        {feat && <span className="mono dim">{feat.properties.gap_id}</span>}
+      <div className="panel-head tabs">
+        <button className={tab === 'props' ? 'tab active' : 'tab'} onClick={() => setTab('props')}>
+          属性
+        </button>
+        <button className={tab === 'review' ? 'tab active' : 'tab'} onClick={() => setTab('review')}>
+          复核
+          <span className="tab-n">{gaps.length}</span>
+        </button>
+        {tab === 'props' && feat && (
+          <span className="mono dim tab-id">{feat.properties.gap_id}</span>
+        )}
       </div>
 
-      {!feat && (
+      {tab === 'review' && <ReviewList />}
+
+      {tab === 'props' && selectedIds.length > 1 && (
+        <div className="multi-hint">
+          <b>已选中 {selectedIds.length} 块</b>
+          <p className="dim">
+            用地图下方的批量操作栏改判或删除；一次操作算一步，按 <kbd>Ctrl+Z</kbd> 可整批撤销。
+          </p>
+        </div>
+      )}
+
+      {tab === 'props' && !feat && selectedIds.length <= 1 && (
         <div className="empty">
           <p>在地图上点选一个多边形查看属性。</p>
           <p className="dim">
@@ -30,7 +59,7 @@ export default function RightPanel() {
         </div>
       )}
 
-      {feat && (
+      {tab === 'props' && feat && (
         <div className="props">
           <div className="kv">
             <span>类别</span>
@@ -116,7 +145,7 @@ export default function RightPanel() {
         </div>
       )}
 
-      {estimateResult && (
+      {tab === 'props' && estimateResult && (
         <div className="panel-est-summary">
           <h4>全园估算</h4>
           <div className="kv">

@@ -47,6 +47,10 @@ export default function TopToolbar({
   const setBackend = useAppStore((s) => s.setBackend)
   const pushLog = useAppStore((s) => s.pushLog)
   const runEstimate = useAppStore((s) => s.runEstimate)
+  const past = useAppStore((s) => s.past)
+  const future = useAppStore((s) => s.future)
+  const undo = useAppStore((s) => s.undo)
+  const redo = useAppStore((s) => s.redo)
 
   const reconnect = async () => {
     pushLog('正在探测后端瓦片服务…')
@@ -89,6 +93,25 @@ export default function TopToolbar({
 
       <div className="tb-group">
         <button
+          className="btn tiny"
+          onClick={undo}
+          disabled={past.length === 0}
+          title="撤销上一步（Ctrl+Z）—— 批量操作算一步"
+        >
+          ↶ {past.length}
+        </button>
+        <button
+          className="btn tiny"
+          onClick={redo}
+          disabled={future.length === 0}
+          title="重做（Ctrl+Y / Ctrl+Shift+Z）"
+        >
+          ↷ {future.length}
+        </button>
+      </div>
+
+      <div className="tb-group">
+        <button
           className={drawIntent === 'roi' ? 'btn primary' : 'btn'}
           onClick={() => setDrawIntent(drawIntent === 'roi' ? 'none' : 'roi')}
           title="圈出只检测的目标区块；圈外的天然林/邻园会被直接排除"
@@ -100,6 +123,13 @@ export default function TopToolbar({
             清除
           </button>
         )}
+        <button
+          className={drawIntent === 'box_select' ? 'btn primary' : 'btn'}
+          onClick={() => setDrawIntent(drawIntent === 'box_select' ? 'none' : 'box_select')}
+          title="拖一个矩形批量选中框内的空地 —— 只命中当前勾选可见的类别，隐藏的道路/水体不会被选中"
+        >
+          {drawIntent === 'box_select' ? '框选中…（Esc 退出）' : '▭ 框选多选'}
+        </button>
       </div>
 
       <div className="tb-group">

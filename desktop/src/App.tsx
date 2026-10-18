@@ -173,6 +173,15 @@ export default function App() {
         return
       }
       await probeAndLoad()
+      // 浏览器模式下 `?p1=1` 预选 3 块 / `?p1=box` 进框选模式（截图 / 回归用）
+      if (!isTauri() && qs.has('p1')) {
+        if (qs.get('p1') === 'box') {
+          setDrawIntent('box_select')
+        } else {
+          const st = useAppStore.getState()
+          st.selectMany(st.gaps.slice(0, 3).map((f) => f.properties.gap_id))
+        }
+      }
     })()
     // 仅启动执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -337,6 +346,47 @@ export default function App() {
       await startDetect(params, withRoi)
     }
   }, [starting, detect.running, detectParams, roi, buildDetectParams, startDetect, pushLog])
+
+  // 全局快捷键：Ctrl+Z 撤销 / Ctrl+Y(或 Ctrl+Shift+Z) 重做 / Delete 删除选中 / Esc 退出
+  //
+  // ⚠️ 必须先判断焦点是否在输入控件里 —— 否则用户在搜索框里按 Ctrl+Z
+  //    会撤销多边形（数据没了），而输入框里的文字还留着，非常困惑。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      const typing =
+        !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)
+      const mod = e.ctrlKey || e.metaKey
+      const k = e.key.toLowerCase()
+      const st = useAppStore.getState()
+
+      if (mod && k === 'z' && !e.shiftKey) {
+        if (typing) return
+        e.preventDefault()
+        st.undo()
+        return
+      }
+      if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) {
+        if (typing) return
+        e.preventDefault()
+        st.redo()
+        return
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (typing) return
+        if (st.selectedIds.length === 0) return
+        e.preventDefault()
+        st.batchDeleteGaps(st.selectedIds)
+        return
+      }
+      if (e.key === 'Escape') {
+        setDrawIntent('none')
+        st.clearSelection()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const onExport = useCallback(async () => {
     setExporting(true)
