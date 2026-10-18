@@ -200,6 +200,39 @@ powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smok
 > **排障入口**：release 版没有控制台，所有关键信息写在
 > `%LOCALAPPDATA%\fgd\logs\app.log`（后端形态与绝对路径、瓦片服务是否起来、数据根）。
 
+### 导入范围 · 导出交付包 · 一页报告（2026-10-18）
+
+**导入范围**（工具栏「导入范围」）：选 `.kml` / `.geojson` → 解析 → 地图自动
+`fitBounds` 到该区块。解析走 `lib/roiImport.ts` 纯函数（28 项断言）。
+
+- **三维坐标会被剥掉**：大疆智图 / Google Earth / 奥维 导出的 KML 是
+  `111.205,1.179,0`（lon,lat,alt）。第 3 维混进 geometry 会让面积与 Terra Draw 全错。
+- **多多边形取最大**：一个 KML 里常同时有"目标区块 + 图例框"，合并会虚增范围。
+- KMZ（压缩包）会明确提示"请先解压"，UTM 米坐标会提示"请先转经纬度"。
+
+**导出交付包**（工具栏「导出交付包」）：
+
+```
+POST /export { gaps(编辑后), outdir, clearance_m, planting_grid, audit, image, roi }
+  → gaps-all-wgs84.geojson / gaps-all-utm49n.geojson
+  → gaps-all-{wgs84,utm49n}-shp.zip
+  → by-class/gaps-{类}-utm49n-shp.zip（8 类）
+  → gaps-all.kml
+  → planting-points-{wgs84,utm49n}.geojson / -shp.zip / .kml / .csv
+  → gaps-edited.csv
+  → 补种勘察一页报告.html
+```
+
+实测（真实数据）：**1,726 要素 → 21 个文件 + 3,691 个放样点**。
+
+输出目录用系统文件夹对话框选（浏览器模式下可手填），存 localStorage。
+导出完成后有「📂 打开文件夹」。
+
+**一页报告**（`scripts/report_summary.py`）：五章 —— 参数卡片 / 三档口径
+（内联 SVG 堆叠条 + 逐档条形）/ 苗木估算对比 / 人工复核留痕 / Top 20 明细。
+**单文件自包含**（内联 CSS + 手写 SVG，零外部依赖），`@media print` 按 A4 排版，
+`Ctrl+P` 直接出 PDF。**浅色主题**：给主管签字的东西要省墨、可黑白打印。
+
 ### 复核三件套：撤销/重做 · 框选批量 · 复核清单（2026-10-18）
 
 ```
@@ -787,3 +820,30 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     选谁由 `lib/selection.ts` 的纯函数决定 —— 可测、可复现、与缩放无关。
     另外进框选模式时**必须 disable `dragPan` / `boxZoom`**，
     MapLibre 默认把 `Shift+拖拽` 绑成拉框放大。
+
+31. **KML 的 `<coordinates>` 是三维的（`lon,lat,alt`）**
+
+    大疆智图 / Google Earth / 奥维 导出的 KML 一律带第 3 维：
+    `111.205,1.179,0`。第 3 维混进 geometry 后 `polygonAreaM2` 与 Terra Draw
+    都会算错，而且**不会报错**，只是面积偏、图形怪。
+
+    修法：解析时显式只取前两维，并回传 `strippedAltitude` 让界面提示
+    "已忽略高程"。单测里专门有一条断言 `ring.every(p => p.length === 2)`。
+
+32. **导出的网格参数必须来自磁盘上的算法结果，不能用前端传的**
+
+    前端 `/gaps` 里的 `planting_grid` 只有 `anchor_lon/lat`，
+    **缺 `origin_x_m` / `origin_y_m`（UTM 原点）**。
+    拿它构造 `GridModel` 会让所有放样点整体平移 —— 数字看着正常，点位全错。
+
+    修法：`/export` 路由把 `tile_server.gaps_path` 读出来，
+    用磁盘对象里的完整网格；前端传的只作兜底。
+
+33. **"单文件自包含"的自检不能搜 `"http://"`**
+
+    内联 SVG 必须写 `xmlns="http://www.w3.org/2000/svg"` ——
+    那是**命名空间标识符，不会发起任何请求**。用 `"http://" not in html`
+    判断会直接误判成"有外部依赖"。
+
+    修法：只查真正会拉资源的 `<link href>` / `<script src>` / `<img src>` /
+    `@import` / `url(`。
