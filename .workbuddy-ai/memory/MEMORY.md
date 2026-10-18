@@ -119,7 +119,8 @@
 技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
 Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-**验收基线**：`npm test`（store 40 + estimate 15 + mergeEdits 26）· 契约测试 95/95 · `cargo check`。
+**验收基线**：`npm test`（store 60 + estimate 15 + mergeEdits 26）· `cargo test`（10）·
+契约测试 95/95 · `cargo check`。
 **打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
 `%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
 产物固定在项目内 `desktop/src-tauri/target`（脚本会中和 `CARGO_TARGET_DIR`）。
@@ -138,6 +139,14 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
    （rasterio MINOR=5 / pyproj MINOR=4，反了则冻结态 `CRS.from_epsg` 全崩）；
    `[profile.release]` 用 `codegen-units=4` + `lto="thin"`（极限配置会让 rustc 0xc0000005 崩）。
 8. **dev 与 bundled 的数据基准必须分开**（`data_base()`），否则开发态明明有影像却弹"请选择影像"。
+9. **检测前必须预检**（`preflight_detect` / `preflight_core`）：chm / segment / 森林掩膜
+   缺了 sidecar **不报错只回 W1004 就照常跑完** → 结果退化成纯 RGB 或含未开发林。
+   ⚠️ `forest_mask_path` 曾经**从来没传过**（多 221 个放样点）；掩膜按
+   `output/forest-mask*.geojson` 前缀自动发现，**别写死文件名**。
+10. **`warn` 事件必须有处理分支**：W1001 / W1004 / W3001 都是"会算偏但不会报错"，
+    漏处理 = 用户完全看不到。进度合并用 `??` 不用 `||`（`done=0` 是合法值）。
+11. **可选出现的条带别用固定行数 grid**：`.app` 改 `flex column` + `body{flex:1}`，
+    否则孩子数变化时 `1fr` 会给错元素（地图区被压成内容高度）。
 
 **其它要点**
 
