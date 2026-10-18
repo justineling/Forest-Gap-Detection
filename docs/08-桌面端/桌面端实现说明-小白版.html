@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>这个桌面软件到底在干什么？—— 大白话版</title>
+<style>
+:root{
+  --bg:#0f172a; --card:#1e293b; --line:#334155; --fg:#f8fafc; --muted:#94a3b8;
+  --accent:#38bdf8; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --purple:#a855f7;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--fg);line-height:1.9;padding:2rem 1.4rem 3.5rem}
+.wrap{max-width:880px;margin:0 auto}
+header{border-bottom:1px solid var(--line);padding-bottom:1.3rem;margin-bottom:1.6rem}
+h1{font-size:1.55rem;color:#fff;margin-bottom:.4rem}
+.sub{color:var(--muted);font-size:.94rem}
+h2{font-size:1.16rem;margin:2.1rem 0 .8rem;padding-bottom:.35rem;border-bottom:1px solid var(--line)}
+h3{font-size:1rem;margin:1.2rem 0 .5rem;color:#e2e8f0}
+p{margin-bottom:.9rem;font-size:.97rem}
+ul,ol{margin:.3rem 0 .9rem 1.4rem;font-size:.95rem}
+li{margin-bottom:.35rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:1rem}
+.verdict{border-left:4px solid var(--accent)}
+.verdict-ok{border-left:4px solid var(--ok)}
+.verdict-warn{border-left:4px solid var(--warn)}
+.verdict-bad{border-left:4px solid var(--bad)}
+.verdict-purple{border-left:4px solid var(--purple)}
+.analogy{color:#7dd3fc;font-weight:600}
+.code{font-family:ui-monospace,Consolas,monospace;background:rgba(255,255,255,.08);
+  padding:.08rem .32rem;border-radius:4px;font-size:.87rem;color:#fde047}
+table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:.5rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:rgba(255,255,255,.04);color:var(--muted)}
+footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
+  border-top:1px solid var(--line);padding-top:1.3rem}
+.fig{margin:.8rem 0 1.2rem}
+.figcap{color:var(--muted);font-size:.82rem;text-align:center;margin-top:.3rem}
+.kbd{display:inline-block;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;
+  padding:0 .38rem;font-size:.84rem;background:rgba(255,255,255,.05);font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>这个桌面软件到底在干什么？</h1>
+  <p class="sub">大白话版 ｜ 不用懂代码，也不用懂航拍 ｜ 2026-10-18</p>
+</header>
+
+<div class="card verdict">
+  <p style="margin:0">你可以把它想成一条<b>「体检 + 开药方」的流水线</b>：
+  你把园子的航拍图交进去，它告诉你<b>哪几块地该补种、一共补多少棵、每一棵种在哪</b>，
+  最后给你一沓文件，现场拿着就能干活。</p>
+</div>
+
+<h2>一、整件事分五步</h2>
+
+<div class="fig">
+<svg viewBox="0 0 840 118" width="100%" role="img" aria-label="五步流程">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,sans-serif">
+    <circle cx="60" cy="42" r="20" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="60" y="48" text-anchor="middle" fill="#7dd3fc" font-size="15" font-weight="700">1</text>
+    <text x="60" y="86" text-anchor="middle" fill="#cbd5e1" font-size="12">选数据</text>
+    <text x="60" y="104" text-anchor="middle" fill="#64748b" font-size="10">航拍图</text>
+
+    <circle cx="220" cy="42" r="20" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="220" y="48" text-anchor="middle" fill="#7dd3fc" font-size="15" font-weight="700">2</text>
+    <text x="220" y="86" text-anchor="middle" fill="#cbd5e1" font-size="12">圈范围</text>
+    <text x="220" y="104" text-anchor="middle" fill="#64748b" font-size="10">只算这块</text>
+
+    <circle cx="380" cy="42" r="20" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+    <text x="380" y="48" text-anchor="middle" fill="#6ee7b7" font-size="15" font-weight="700">3</text>
+    <text x="380" y="86" text-anchor="middle" fill="#cbd5e1" font-size="12">检测</text>
+    <text x="380" y="104" text-anchor="middle" fill="#64748b" font-size="10">约 6 分钟</text>
+
+    <circle cx="540" cy="42" r="20" fill="#1e293b" stroke="#a855f7" stroke-width="1.5"/>
+    <text x="540" y="48" text-anchor="middle" fill="#d8b4fe" font-size="15" font-weight="700">4</text>
+    <text x="540" y="86" text-anchor="middle" fill="#cbd5e1" font-size="12">复核</text>
+    <text x="540" y="104" text-anchor="middle" fill="#64748b" font-size="10">改错的</text>
+
+    <circle cx="700" cy="42" r="20" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="700" y="48" text-anchor="middle" fill="#fcd34d" font-size="15" font-weight="700">5</text>
+    <text x="700" y="86" text-anchor="middle" fill="#cbd5e1" font-size="12">交付</text>
+    <text x="700" y="104" text-anchor="middle" fill="#64748b" font-size="10">21 个文件</text>
+
+    <line x1="82" y1="42" x2="196" y2="42" stroke="#475569" stroke-width="1.5" marker-end="url(#a1)"/>
+    <line x1="242" y1="42" x2="356" y2="42" stroke="#475569" stroke-width="1.5" marker-end="url(#a1)"/>
+    <line x1="402" y1="42" x2="516" y2="42" stroke="#475569" stroke-width="1.5" marker-end="url(#a1)"/>
+    <line x1="562" y1="42" x2="676" y2="42" stroke="#475569" stroke-width="1.5" marker-end="url(#a1)"/>
+  </g>
+</svg>
+<p class="figcap">第 2 步和第 4 步可以跳过，但跳过会有代价（下面说）</p>
+</div>
+
+<h2>二、开工前，它先给你"体检"一遍</h2>
+
+<p>就像<span class="analogy">出门干活前先检查工具箱</span>：电钻在不在、电池有没有电、材料够不够。
+软件在真正开跑之前，会先花一秒检查七样东西。</p>
+
+<p>为什么要多这一步？因为以前<b>不检查</b>，出过事：</p>
+
+<div class="card verdict-bad">
+  <p style="margin:0"><b>真实事故一</b>：某个辅助文件（叫"冠层高度模型"）不在，
+  软件<b>不会报错</b>，而是悄悄换成"只看颜色"的简化版继续跑。
+  六分钟后你拿到一份报表，数字看着挺正常，但其实少了一大块判断依据。</p>
+  <p style="margin:.7rem 0 0"><b>真实事故二</b>：还有一样"非种植区地图"（标记哪片是不能种树的天然林），
+  软件一直没把它带上。结果<b>天然林被算成了可补种的地</b> ——
+  放样点里多出 221 个根本不存在的坑。</p>
+</div>
+
+<p>现在的规则很简单：<b>缺了关键东西 → 不让开始，告诉你缺什么、该放哪</b>；
+缺了次要东西 → 弹一张卡片说清后果，你自己决定要不要硬上。</p>
+
+<div class="card verdict-ok">
+  <p style="margin:0">而且它会<b>自己找</b>：你把一整套数据（航拍图 + 高度图 + 分割图）放在同一个文件夹里，
+  软件会去那儿翻，不用你一个个指定路径。</p>
+</div>
+
+<h2>三、干活的时候，能看到还剩多久</h2>
+
+<p>跑一遍全图要 <b>350 秒</b>（差不多 6 分钟）。以前这六分钟是一片黑：只有一行行文字在滚，
+你根本不知道它是<b>在算</b>还是<b>卡死了</b>。</p>
+
+<p>现在顶部有一条进度带：</p>
+
+<div class="card" style="font-family:ui-monospace,monospace;font-size:.9rem">
+  检测中 <b style="color:#6ee7b7">24%</b> ｜ 128 / 528 块 ｜ 已用 1 分 25 秒 ｜ 预计剩余 4 分 24 秒 ｜ 已发现 312 块空地
+</div>
+
+<p>就像<span class="analogy">看快递物流</span>：到哪了、还有几站，一眼就知道。
+跑完这条带子会变成绿色的"✓ 检测完成 · 1,443 块 · 用时 5 分 50 秒"。</p>
+
+<h2>四、按错了能撤回</h2>
+
+<p>这是这次最重要的一个改动。以前：<b>删错一块，就真的没了</b>。所以没人敢动。</p>
+
+<p>现在跟 Word 一样，<span class="kbd">Ctrl</span> + <span class="kbd">Z</span> 就能撤回。
+但有个细节值得说清楚：</p>
+
+<div class="card verdict-purple">
+  <p style="margin:0"><b>一次框选删掉 40 块，按一次 Ctrl+Z 就全回来了。</b></p>
+  <p style="margin:.6rem 0 0">不是按 40 次。因为软件把"这一次批量操作"当成<b>一个动作</b>记下来 ——
+  就像你在 Word 里一次删掉一整段，撤回也是整段回来，而不是一个字一个字往回退。</p>
+</div>
+
+<p>还有一个更细的坑：你用鼠标拖一个拐点时，软件<b>每移动几个像素就会记一次</b>。
+如果不做处理，拖一下就把 40 步的撤回额度用光了 ——
+你按 Ctrl+Z 只会看到拐点"一毫米一毫米往回退"，特别让人抓狂。
+现在的做法是：<b>1.5 秒内的连续拖动，只算一次</b>。</p>
+
+<h2>五、只算你框住的那片，而且只算"看得见"的</h2>
+
+<p>两个意思，都很重要。</p>
+
+<h3>① 只算你框住的那片</h3>
+<p>你可以用鼠标拖一个方框，或者直接导入别人给你的 <span class="code">.kml</span> 文件（奥维、Google Earth 都能导出）。
+软件只会处理框里的区域 —— <b>时间从 6 分钟降到 3 分钟</b>，而且框外的天然林、邻居家的园子，
+从一开头就被排除在外，不会再来捣乱。</p>
+
+<p>导入 KML 后，地图会<b>自动飞到那个位置</b>，让你亲眼看到框住了哪片地。
+（这一点很关键：如果导进去没反应，你根本分不清是"成功了"还是"没导进去"。）</p>
+
+<h3>② 只算"看得见"的</h3>
+<div class="card verdict-warn">
+  <p style="margin:0">左边面板上有一堆勾选框。默认只勾了「确定需补种」两项，
+  <b>道路、水体、林间空隙都是藏起来的</b>（图上不显示）。</p>
+  <p style="margin:.7rem 0 0">那你框选一片、点"批量删除"的时候，
+  <b>藏在下面的道路和水塘会不会被一起删掉？</b></p>
+  <p style="margin:.7rem 0 0">以前会 —— 而且你完全看不出来，因为它们本来就不显示。
+  现在不会：<b>框选只认你勾了勾的那些类别</b>。</p>
+</div>
+
+<h2>六、从最大的一块开始清</h2>
+
+<p>右边有个「复核」标签页，列着所有"拿不准"的块，<b>按面积从大到小排</b>。</p>
+
+<p>为什么这么排？因为<span class="analogy">前 30 个大块通常占了 80% 的争议面积</span>。
+你从最大的开始过，清完十几个大的，剩下的都是零头。反过来从小的开始，
+忙一下午可能才处理掉 5% 的面积。</p>
+
+<p>点列表里的任意一行，地图会直接飞过去并高亮那一块。
+如果那个类别是藏着的，软件会<b>先帮你打开</b>再飞过去 —— 不然你飞过去只会看到一片空白，
+还以为软件坏了。</p>
+
+<h2>七、交付包里到底有什么</h2>
+
+<p>点「导出交付包」，选一个文件夹，几秒后那里会出现 <b>21 个文件</b>。</p>
+
+<p>为什么这么多？因为<span class="analogy">同一份菜谱要发给三种人</span>：</p>
+
+<table>
+  <thead><tr><th>给谁</th><th>给什么</th><th>为什么</th></tr></thead>
+  <tbody>
+    <tr><td>办公室做规划的</td><td>Shapefile（.shp.zip）</td><td>ArcGIS 只认这个格式，拖进去就能出图</td></tr>
+    <tr><td>现场跑的手机/平板</td><td>KML</td><td>奥维、Google Earth 直接打开，能导航到每个坑位</td></tr>
+    <tr><td>手持 GPS 放样</td><td>CSV 坐标表</td><td>一行一个点，经纬度 + 编号，导进去就能用</td></tr>
+    <tr><td>主管签字</td><td>一页报告（.html）</td><td>打开就是一张纸，Ctrl+P 直接打印或存 PDF</td></tr>
+  </tbody>
+</table>
+
+<div class="card verdict">
+  <p style="margin:0"><b>最重要的一点</b>：这些文件里的内容，是<b>你复核之后</b>的结果。
+  你改判的类别、剔除的误报、补画的漏检，全都在里面。
+  以前导出的永远是算法原版，你在软件里改了半天等于白改。</p>
+</div>
+
+<h2>八、那张"一页纸"长什么样</h2>
+
+<p>五块内容，从上到下：</p>
+<ol>
+  <li><b>参数卡片</b> —— 用的哪张图、多清晰、株距行距多少、退让多少米</li>
+  <li><b>三档口径</b> —— 确定要补的 / 还得再看看的 / 不用补的 / 根本不能种的，各有几块、多少平方米、占百分之几</li>
+  <li><b>要买多少苗</b> —— "按网格一个个排"算出来 3,691 棵，"按面积估"算出来 4,636 棵，两个数对得上说明靠谱</li>
+  <li><b>你改了多少</b> —— 补画几块、改判几块、剔除几块（留痕，防止事后说不清）</li>
+  <li><b>最大的 20 块</b> —— 编号、面积、要种几棵、中心在哪，方便抓大放小</li>
+</ol>
+
+<p>它是<b>浅色</b>的（不是软件那种深色界面），因为要打印 —— 深色打印出来一片黑，还费墨。</p>
+
+<h2>九、现在还不能做什么（说实话）</h2>
+
+<table>
+  <thead><tr><th>做不到</th><th>为什么</th></tr></thead>
+  <tbody>
+    <tr><td>分清"高草"和"小油棕树"</td><td>它们在这张照片上几乎一模一样。只能靠人工看一眼，或者等以后再拍一期照片对比</td></tr>
+    <tr><td>一张照片看出"树长了多高"以外的时间变化</td><td>只有一期照片，没有历史对比</td></tr>
+    <tr><td>自动保证 100% 准</td><td>算法大概能到八九成，剩下的一两成就是为什么要做"复核"这一步</td></tr>
+  </tbody>
+</table>
+
+<div class="card verdict-ok">
+  <p style="margin:0">换个角度说：这个软件不是要"替你做判断"，
+  而是<b>把 1,726 块候选地摊在你面前，按大小排好，让你用最短的时间做完判断</b>。
+  以前这件事要一块一块点、点错了还撤不回。</p>
+</div>
+
+<footer>
+  Forest Gap Detection · 桌面端实现说明（小白版）· 2026-10-18<br>
+  想看技术细节：<span class="code">桌面端实现说明.html</span> ｜ 想知道怎么操作：<span class="code">桌面端使用手册.md</span>
+</footer>
+
+</div>
+</body>
+</html>

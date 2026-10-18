@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>桌面端实现说明（专业版）· Forest Gap Detection</title>
+<style>
+:root{
+  --bg:#0f172a; --card:#1e293b; --line:#334155; --fg:#f8fafc; --muted:#94a3b8;
+  --accent:#38bdf8; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --purple:#a855f7;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--fg);line-height:1.85;padding:2rem 1.4rem 3.5rem}
+.wrap{max-width:960px;margin:0 auto}
+header{border-bottom:1px solid var(--line);padding-bottom:1.3rem;margin-bottom:1.6rem}
+h1{font-size:1.6rem;color:#fff;margin-bottom:.4rem}
+.sub{color:var(--muted);font-size:.94rem}
+h2{font-size:1.18rem;margin:2rem 0 .8rem;padding-bottom:.35rem;border-bottom:1px solid var(--line)}
+h3{font-size:1rem;margin:1.2rem 0 .5rem;color:#e2e8f0}
+p{margin-bottom:.85rem;font-size:.96rem}
+ul,ol{margin:.3rem 0 .9rem 1.4rem;font-size:.95rem}
+li{margin-bottom:.3rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.3rem;margin-bottom:1rem}
+.verdict{border-left:4px solid var(--accent)}
+.verdict-ok{border-left:4px solid var(--ok)}
+.verdict-warn{border-left:4px solid var(--warn)}
+.verdict-bad{border-left:4px solid var(--bad)}
+.big{font-size:1.9rem;font-weight:700;color:var(--accent);line-height:1.2}
+.tag{display:inline-block;font-size:.75rem;font-weight:700;padding:.16rem .55rem;border-radius:6px;margin-right:.35rem;white-space:nowrap}
+.t-bad{background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.35)}
+.t-warn{background:rgba(245,158,11,.15);color:#fcd34d;border:1px solid rgba(245,158,11,.35)}
+.t-ok{background:rgba(16,185,129,.15);color:#6ee7b7;border:1px solid rgba(16,185,129,.35)}
+.t-p{background:rgba(168,85,247,.16);color:#d8b4fe;border:1px solid rgba(168,85,247,.38)}
+.t-b{background:rgba(56,189,248,.16);color:#7dd3fc;border:1px solid rgba(56,189,248,.38)}
+.code{font-family:ui-monospace,Consolas,monospace;background:rgba(255,255,255,.08);
+  padding:.08rem .32rem;border-radius:4px;font-size:.87rem;color:#fde047}
+pre{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:.9rem 1rem;
+  overflow:auto;font-size:.84rem;line-height:1.7;color:#cbd5e1;margin:.6rem 0 1rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:.5rem}
+th,td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+th{background:rgba(255,255,255,.04);color:var(--muted)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
+  border-top:1px solid var(--line);padding-top:1.3rem}
+.fig{margin:.8rem 0 1.2rem}
+.figcap{color:var(--muted);font-size:.82rem;text-align:center;margin-top:.3rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>桌面端实现说明（专业版）</h1>
+  <p class="sub">Forest Gap Detection · Tauri v2 + React 18 · 2026-10-18 ｜ P0–P2 全部完成，已合入 <span class="code">main</span></p>
+</header>
+
+<div class="card verdict">
+  <p style="margin:0"><b>一句话</b>：把「跑一遍算法、看一个 GeoJSON」变成「双击装包、圈一块地、350 秒出 21 件可直接交付的文件」。
+  本文只讲<b>为什么这么设计</b>；踩坑清单在 <span class="code">desktop/README.md</span>（33 条，每条带错误原文），
+  操作步骤在 <span class="code">桌面端使用手册.md</span>。</p>
+</div>
+
+<h2>1. 五步工作流</h2>
+
+<div class="fig">
+<svg viewBox="0 0 880 132" width="100%" role="img" aria-label="桌面端五步工作流">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,sans-serif">
+    <rect x="8" y="26" width="150" height="62" rx="10" fill="#1e293b" stroke="#38bdf8" stroke-width="1"/>
+    <text x="83" y="50" text-anchor="middle" fill="#7dd3fc" font-size="13" font-weight="600">① 选数据</text>
+    <text x="83" y="70" text-anchor="middle" fill="#94a3b8" font-size="11">影像 + 结果文件</text>
+
+    <rect x="182" y="26" width="150" height="62" rx="10" fill="#1e293b" stroke="#38bdf8" stroke-width="1"/>
+    <text x="257" y="50" text-anchor="middle" fill="#7dd3fc" font-size="13" font-weight="600">② 圈范围</text>
+    <text x="257" y="70" text-anchor="middle" fill="#94a3b8" font-size="11">手绘 / KML 导入</text>
+
+    <rect x="356" y="26" width="150" height="62" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1"/>
+    <text x="431" y="50" text-anchor="middle" fill="#6ee7b7" font-size="13" font-weight="600">③ 检测</text>
+    <text x="431" y="70" text-anchor="middle" fill="#94a3b8" font-size="11">预检 → 350 s</text>
+
+    <rect x="530" y="26" width="150" height="62" rx="10" fill="#1e293b" stroke="#a855f7" stroke-width="1"/>
+    <text x="605" y="50" text-anchor="middle" fill="#d8b4fe" font-size="13" font-weight="600">④ 复核</text>
+    <text x="605" y="70" text-anchor="middle" fill="#94a3b8" font-size="11">改判 / 剔除 / 补画</text>
+
+    <rect x="704" y="26" width="168" height="62" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="1"/>
+    <text x="788" y="50" text-anchor="middle" fill="#fcd34d" font-size="13" font-weight="600">⑤ 交付</text>
+    <text x="788" y="70" text-anchor="middle" fill="#94a3b8" font-size="11">21 文件 + 一页报告</text>
+
+    <line x1="160" y1="57" x2="180" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="334" y1="57" x2="354" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="508" y1="57" x2="528" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+    <line x1="682" y1="57" x2="702" y2="57" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+
+    <text x="8" y="112" fill="#64748b" font-size="11">可选：② 圈范围不圈就整幅（慢 3 倍）· ④ 复核不改就全信算法</text>
+  </g>
+</svg>
+<p class="figcap">五步都能跳过，但每一步跳过都有代价 —— 这就是后面几节要解释的</p>
+</div>
+
+<h2>2. 进程模型：三个进程，各管一段</h2>
+
+<p>桌面端不是一个"大 Python 程序加个壳"，而是<b>三个进程各有明确边界</b>。
+这条边界是 2026-10-17 就冻结的技术决策，P0–P2 没有改动它。</p>
+
+<div class="fig">
+<svg viewBox="0 0 880 210" width="100%" role="img" aria-label="三进程架构">
+  <defs>
+    <marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#475569" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <g font-family="system-ui,sans-serif">
+    <rect x="20" y="20" width="230" height="86" rx="10" fill="#1e293b" stroke="#38bdf8"/>
+    <text x="135" y="44" text-anchor="middle" fill="#7dd3fc" font-size="13" font-weight="600">Tauri 宿主（Rust）</text>
+    <text x="135" y="64" text-anchor="middle" fill="#94a3b8" font-size="11">窗口 / 进程监督 / 预检</text>
+    <text x="135" y="82" text-anchor="middle" fill="#94a3b8" font-size="11">文件对话框 / 文件日志</text>
+
+    <rect x="20" y="128" width="230" height="62" rx="10" fill="#1e293b" stroke="#334155"/>
+    <text x="135" y="152" text-anchor="middle" fill="#cbd5e1" font-size="13" font-weight="600">WebView（React 18）</text>
+    <text x="135" y="172" text-anchor="middle" fill="#94a3b8" font-size="11">地图 / 编辑 / 撤销栈</text>
+
+    <rect x="340" y="20" width="240" height="86" rx="10" fill="#1e293b" stroke="#10b981"/>
+    <text x="460" y="44" text-anchor="middle" fill="#6ee7b7" font-size="13" font-weight="600">sidecar.py</text>
+    <text x="460" y="64" text-anchor="middle" fill="#94a3b8" font-size="11">stdio NDJSON（数据通道）</text>
+    <text x="460" y="82" text-anchor="middle" fill="#94a3b8" font-size="11">stderr（人类日志）</text>
+
+    <rect x="340" y="128" width="240" height="62" rx="10" fill="#1e293b" stroke="#f59e0b"/>
+    <text x="460" y="152" text-anchor="middle" fill="#fcd34d" font-size="13" font-weight="600">tile_server.py</text>
+    <text x="460" y="172" text-anchor="middle" fill="#94a3b8" font-size="11">127.0.0.1:8765（唯一 HTTP）</text>
+
+    <rect x="660" y="20" width="200" height="170" rx="10" fill="#0b1220" stroke="#334155"/>
+    <text x="760" y="46" text-anchor="middle" fill="#cbd5e1" font-size="13" font-weight="600">本地文件</text>
+    <text x="760" y="72" text-anchor="middle" fill="#94a3b8" font-size="11">正射影像 .tif</text>
+    <text x="760" y="92" text-anchor="middle" fill="#94a3b8" font-size="11">chm.tif / segment.tif</text>
+    <text x="760" y="112" text-anchor="middle" fill="#94a3b8" font-size="11">forest-mask*.geojson</text>
+    <text x="760" y="132" text-anchor="middle" fill="#94a3b8" font-size="11">output/*.geojson</text>
+    <text x="760" y="158" text-anchor="middle" fill="#64748b" font-size="11">交付包写到用户选的目录</text>
+
+    <line x1="250" y1="63" x2="338" y2="63" stroke="#475569" stroke-width="1.5" marker-end="url(#ar2)"/>
+    <text x="294" y="54" text-anchor="middle" fill="#64748b" font-size="10">spawn</text>
+    <line x1="250" y1="159" x2="338" y2="159" stroke="#475569" stroke-width="1.5" marker-end="url(#ar2)"/>
+    <text x="294" y="150" text-anchor="middle" fill="#64748b" font-size="10">spawn</text>
+    <line x1="580" y1="63" x2="658" y2="63" stroke="#475569" stroke-width="1.5" marker-end="url(#ar2)"/>
+    <line x1="580" y1="159" x2="658" y2="159" stroke="#475569" stroke-width="1.5" marker-end="url(#ar2)"/>
+    <line x1="135" y1="106" x2="135" y2="126" stroke="#475569" stroke-width="1.5" marker-end="url(#ar2)"/>
+    <text x="150" y="120" fill="#64748b" font-size="10">emit 事件</text>
+    <path d="M340 150 L 250 175 L 250 175" fill="none" stroke="#475569" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar2)"/>
+    <text x="300" y="196" fill="#64748b" font-size="10">前端 &lt;img&gt; 取瓦片</text>
+  </g>
+</svg>
+<p class="figcap">只有瓦片走 HTTP（MapLibre 必须能用 URL 取图）；检测走 stdio，不经过网络</p>
+</div>
+
+<h3>2.1 为什么检测不走 HTTP</h3>
+<ul>
+  <li>契约已冻结并通过 <b>95/95</b> 测试，改传输方式等于重写一遍；</li>
+  <li>stdio 是<b>逐行流式</b>的，进度事件天然实时；HTTP 还得再设计一套推送；</li>
+  <li>不占端口 —— 用户同时开两个实例不会互相抢 8765。</li>
+</ul>
+
+<h3>2.2 一条硬约束：必须两个线程分别读 stdout 与 stderr</h3>
+<div class="card verdict-bad">
+  <p style="margin:0">Windows 匿名管道缓冲区只有 <b>64 KB</b>。跑批时每个瓦片都往 stderr 写日志，
+  若只读 stdout、打算"等进程结束再读 stderr"，缓冲区很快填满 → Python 的
+  <span class="code">log()</span> 阻塞在 <span class="code">write</span> 上 → <b>整个 sidecar 永久卡死</b>。</p>
+  <p style="margin:.6rem 0 0">症状极具误导性：<b>进度条停在 30%、CPU 归零、没有任何报错</b>。
+  修法是 spawn 之后立刻起两个线程，各自 <span class="code">BufReader::lines()</span> 并 emit 到前端。</p>
+</div>
+
+<h2>3. 检测面板：把"会算错"提前成"不让开始"</h2>
+
+<p>P0 之前，点「开始检测」会直接把参数交给 sidecar。问题是：<b>其中 4 个是文件路径，
+缺了不会报错</b> —— sidecar 只回一条 <span class="code">W1004</span> 就照常跑完，
+结果退化成"纯 RGB"。用户在 350 秒后拿到一份<b>看着正常、语义全错</b>的数据。</p>
+
+<p>更严重的一个：前端<b>从来没传 <span class="code">forest_mask_path</span></b>，
+桌面端结果一直包含未开发林 —— 正是那个"多算 221 个放样点"的问题原样复现。</p>
+
+<h3>3.1 七类预检</h3>
+<table>
+  <thead><tr><th>预检项</th><th>缺失后果</th><th>级别</th></tr></thead>
+  <tbody>
+    <tr><td>正射影像</td><td>无法检测</td><td><span class="tag t-bad">error</span></td></tr>
+    <tr><td>冠层高度模型（CHM）</td><td>退化成纯 RGB，水体/低矮植被大量误判</td><td><span class="tag t-warn">warn</span></td></tr>
+    <tr><td>语义分割结果</td><td>水塘识别率 98% → 8%</td><td><span class="tag t-warn">warn</span></td></tr>
+    <tr><td>森林掩膜</td><td>未开发林算成可补种，<b>放样点多 221 个</b></td><td><span class="tag t-warn">warn</span></td></tr>
+    <tr><td>输出目录</td><td>白跑 350 秒才发现写不进去</td><td><span class="tag t-bad">error</span></td></tr>
+    <tr><td>圈选范围</td><td>只影响范围，不影响正确性</td><td><span class="tag t-b">info</span></td></tr>
+    <tr><td>workers / 目标密度</td><td>越界会让 sidecar 报 E1002</td><td><span class="tag t-bad">error</span></td></tr>
+  </tbody>
+</table>
+
+<p style="margin-top:.8rem">两个自动化的细节：</p>
+<ul>
+  <li><b>森林掩膜自动发现</b>：按 <span class="code">output/forest-mask*.geojson</span> 前缀取最新一个。
+  文件名随实验变过（<span class="code">-50m-exg60</span> 是其中一版），<b>写死会在换影像后失效</b>。</li>
+  <li><b>输出目录探针</b>：<span class="code">create_dir_all</span> 之后<b>真写一个文件再删掉</b> ——
+  目录建得出来 ≠ 写不进去（只读盘、权限）。</li>
+</ul>
+
+<h3>3.2 跨目录同伴文件</h3>
+<p>用户在引导里选了 <span class="code">E:\BlockB\ortho.tif</span>，那两个写死成相对路径的
+<span class="code">output/chm.tif</span> / <span class="code">drone data/segment.tif</span> 永远找不到。
+预检按<b>四级顺序</b>搜索：</p>
+<pre>影像同目录  →  影像/output  →  数据基准  →  数据基准/output</pre>
+<p>命中就写回 <span class="code">resolved</span>，<span class="code">run_detect</span> 拿到的是绝对路径。
+告警文案也从"文件不存在"改成"在影像同目录与 output/ 下都没找到 chm.tif"—— 用户知道该把文件放哪。</p>
+
+<h3>3.3 进度条</h3>
+<p>字段严格对齐 sidecar 的 <span class="code">progress</span> 事件：<span class="code">done / total / ratio / elapsed_s / eta_s / gaps_found / gap_area_sqm</span>。
+两个不显眼但会致命的细节：</p>
+<ul>
+  <li>合并用 <span class="code">??</span> 不用 <span class="code">||</span> —— <span class="code">done=0</span> 是合法值（第一块还没完成），
+  用 <span class="code">||</span> 会让进度条永远不动；</li>
+  <li>还没拿到 <span class="code">total</span> 时走"来回扫"动画，避免停在 0% 让人以为卡死。</li>
+</ul>
+
+<h2>4. 复核三件套：让用户"敢改"</h2>
+
+<p>1,726 个多边形里有 465 块 <span class="code">uncertain</span>（待复核）。原来的界面里
+"这一片都是误报"只能一块一块点，<b>删错了还无法恢复</b> —— 用户实际不敢动手。</p>
+
+<h3>4.1 撤销栈的六个决定</h3>
+<table>
+  <thead><tr><th>项</th><th>决定</th><th>理由</th></tr></thead>
+  <tbody>
+    <tr><td>存储</td><td>快照 <span class="code">gaps.slice()</span></td><td>要素对象不可变 → 结构共享，约 14 KB/步</td></tr>
+    <tr><td>上限</td><td>40 步</td><td>40 × 14 KB &lt; 1 MB，够用且不失控</td></tr>
+    <tr><td>批量</td><td><b>一次操作 = 一步</b></td><td>否则框选 40 块删除要按 40 次 Ctrl+Z</td></tr>
+    <tr><td>新操作</td><td>清空重做栈</td><td>否则时间线分叉（撤销→改别的→还能重做回旧分支）</td></tr>
+    <tr><td>拖拽</td><td>1.5 s 时间窗合并</td><td>TerraDraw 每移动几个像素发一次 change，不合并会吃光栈</td></tr>
+    <tr><td>换数据</td><td><span class="code">setGaps</span> 清空历史</td><td>撤销到"上一份数据"没有意义</td></tr>
+  </tbody>
+</table>
+
+<div class="card verdict-warn">
+  <p style="margin:0"><b>最容易忽略的一条</b>：拖一个顶点时 TerraDraw 会产生<b>几十次</b>
+  <span class="code">updateGapGeometry</span>。不合并的话，拖一次就把 40 步栈填满 ——
+  用户按 Ctrl+Z 看到的是"边界一点点回退"，而不是"回到拖之前"。这比不能撤销更让人困惑。</p>
+</div>
+
+<h3>4.2 框选：为什么不用 <span class="code">queryRenderedFeatures</span></h3>
+<table>
+  <thead><tr><th>问题</th><th>后果</th></tr></thead>
+  <tbody>
+    <tr><td>只认"当前渲染出来的"</td><td>同一块地在 z14 命中、z12 因为太小没渲染就漏掉 —— 结果随缩放变</td></tr>
+    <tr><td>跑在 WebGL 里</td><td><span class="code">npm test</span> 完全测不到</td></tr>
+    <tr><td>不区分类别可见性</td><td><b>会盲删隐藏层</b></td></tr>
+  </tbody>
+</table>
+
+<div class="card verdict-bad">
+  <p style="margin:0"><b>盲删是这一节最危险的事</b>：默认只勾选「确定需补种」两个类别，
+  <span class="code">road</span> / <span class="code">water</span> / <span class="code">alley_gap</span> 是<b>隐藏</b>的。
+  如果框选遍历全部要素，一次"批量删除"就把看不见的道路水塘一起删了 ——
+  <b>地图上完全看不出来</b>（它们本来就不显示），交付包却少了 180 条道路。</p>
+  <p style="margin:.6rem 0 0">所以判定抽成纯函数，<b>强制传 <span class="code">visibleClasses</span></b>：
+  <span class="code">selectGapsInBox(features, bbox, visibleClasses)</span>。
+  单测里有一条专门反证："全部可见时三个都命中 / 隐藏时只命中空地"。</p>
+</div>
+
+<p>交互侧还有一个 MapLibre 的坑：默认把 <span class="code">Shift + 拖拽</span> 绑成
+<span class="code">boxZoom</span>（拉框放大）。进框选模式必须 <b>disable <span class="code">dragPan</span> 和 <span class="code">boxZoom</span></b>，
+否则用户一拖地图就缩放。</p>
+
+<h3>4.3 复核清单：二八定律</h3>
+<p>按面积<b>降序</b> —— 前 30 个大斑块通常占 80% 的争议面积，从大到小过一遍比随机点效率高一个量级。
+点一行会自动 <span class="code">ensureVisible(class)</span> 再 <span class="code">fitBounds</span>：
+「不确定」类默认是隐藏的，不先打开就飞过去，用户会看到一片空白。</p>
+
+<h2>5. 交付包：21 个文件怎么来的</h2>
+
+<p>P2 之前 <span class="code">/export</span> 只写 geojson / csv / kml —— <b>人工复核的结果落不进 Shapefile</b>，
+而 ArcGIS 交付指南承诺的是双坐标系 shp.zip + 8 分类 KML。现在直接复用
+<span class="code">export_arcgis.py</span> 的权威函数（为此把 <span class="code">load_features(path)</span>
+拆出内存版 <span class="code">build_features(obj)</span>）。</p>
+
+<pre>交付目录/
+├── gaps-all-wgs84.geojson          ← GIS 通用
+├── gaps-all-utm49n.geojson         ← 现场量算（米）
+├── gaps-all-wgs84-shp.zip          ← ArcGIS
+├── gaps-all-utm49n-shp.zip
+├── gaps-all.kml                    ← Google Earth / 奥维
+├── by-class/                       ← 8 个分类各一个 shp.zip
+│   ├── gaps-open_patch-utm49n-shp.zip
+│   ├── gaps-vacant_slot-…  ├── gaps-uncertain-…
+│   ├── gaps-alley_gap-…    ├── gaps-road-…
+│   ├── gaps-water-…        ├── gaps-office-…
+│   └── gaps-undeveloped-…
+├── planting-points-wgs84.geojson   ← 放样点位（3,691 个）
+├── planting-points-utm49n.geojson
+├── planting-points-wgs84-shp.zip
+├── planting-points-utm49n-shp.zip
+├── planting-points.kml
+├── planting-points.csv             ← 手持 GPS / 表格导入
+├── gaps-edited.csv                 ← 业务方直接看
+└── 补种勘察一页报告.html            ← 给主管签字</pre>
+
+<div class="card verdict-warn">
+  <p style="margin:0"><b>一个必须记住的约束</b>：网格参数（<span class="code">origin_x_m</span> /
+  <span class="code">origin_y_m</span>）<b>必须来自磁盘上的算法结果</b>。
+  前端 <span class="code">/gaps</span> 里的 <span class="code">planting_grid</span> 只有
+  <span class="code">anchor_lon/lat</span>，缺 UTM 原点 —— 拿它构造 <span class="code">GridModel</span>
+  会让所有放样点<b>整体平移</b>：数字看着正常，点位全错。</p>
+</div>
+
+<h3>5.1 一页报告</h3>
+<p>五章：参数卡片 / 三档业务口径（内联 SVG 堆叠条 + 逐档条形）/ 苗木估算对比 /
+人工复核留痕 / Top 20 连片空地。<b>单文件自包含</b>（内联 CSS + 手写 SVG，零外部依赖），
+<span class="code">@media print</span> 按 A4 排版，<span class="code">Ctrl+P</span> 直接出 PDF。</p>
+<p>刻意用<b>浅色主题</b>：应用界面是深色，但交给主管签字的东西要省墨、能黑白打印。</p>
+
+<h2>6. 33 条坑，按主题分</h2>
+
+<p>完整清单在 <span class="code">desktop/README.md</span>，每条都带错误原文。按主题归类：</p>
+
+<table>
+  <thead><tr><th>主题</th><th>条数</th><th>代表性问题</th></tr></thead>
+  <tbody>
+    <tr><td>数据结构与契约</td><td>6</td><td><span class="code">blocks[].gaps</span> 不是 <span class="code">features</span>（静默空数组）；参数名写错只回 W1001 照常跑完</td></tr>
+    <tr><td>管道与进程</td><td>4</td><td>只读 stdout 不读 stderr → 永久死锁且无报错</td></tr>
+    <tr><td>打包与安装</td><td>6</td><td>两份 <span class="code">proj.db</span> 版本不同（只在冻结态炸）；<span class="code">resources</span> 用 <span class="code">**/*</span> 会展平目录撞名</td></tr>
+    <tr><td>批处理脚本</td><td>4</td><td><span class="code">.bat</span> 必须 UTF-8 无 BOM + CRLF；<span class="code">if A if B (X) else (Y)</span> 在 A 假时整条跳过</td></tr>
+    <tr><td>交互与状态</td><td>8</td><td>拖拽 change 洪水吃光撤销栈；框选不传可见性会盲删</td></tr>
+    <tr><td>导入与导出</td><td>5</td><td>KML 三维坐标；网格原点缺失导致点位平移；自检不能搜 <span class="code">"http://"</span></td></tr>
+  </tbody>
+</table>
+
+<h2>7. 验收基线</h2>
+
+<div class="card verdict-ok">
+  <div style="display:flex;gap:2.2rem;flex-wrap:wrap">
+    <div><div class="big">191</div><div class="sub">前端断言</div></div>
+    <div><div class="big">14/14</div><div class="sub">Rust 单测</div></div>
+    <div><div class="big">95/95</div><div class="sub">契约测试</div></div>
+    <div><div class="big">350 s</div><div class="sub">全量检测（原 1,048 s）</div></div>
+    <div><div class="big">67.7 MiB</div><div class="sub">安装包</div></div>
+    <div><div class="big">21</div><div class="sub">交付文件 / 3,691 点</div></div>
+  </div>
+</div>
+
+<h2>8. 还没做的</h2>
+<table>
+  <thead><tr><th>项</th><th>原因</th></tr></thead>
+  <tbody>
+    <tr><td>真机交互验证</td><td>KML 文件对话框、框选拖拽、<span class="code">Ctrl+Z</span> 需要真实鼠标，自动化环境模拟不了</td></tr>
+    <tr><td>MSI 安装包</td><td>WiX 对 4,000+ 文件的 ICE 校验过不去，当前只出 NSIS</td></tr>
+    <tr><td>代码签名</td><td>需要证书；未签名时 Windows 会提示"未知发布者"</td></tr>
+    <tr><td>多时相 / 「低矮植被」类别</td><td>单期影像做不到，见算法缺陷台账 P0-1</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Forest Gap Detection · 桌面端实现说明（专业版）· 2026-10-18<br>
+  配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（33 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
+</footer>
+
+</div>
+</body>
+</html>
