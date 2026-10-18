@@ -558,14 +558,13 @@ fn absolutize(base: &Path, v: Option<&serde_json::Value>) -> Option<PathBuf> {
     Some(if p.is_absolute() { p } else { base.join(p) })
 }
 
-/// 在数据基准下找森林掩膜（文件名随实验变过，按前缀匹配取最新一个）。
+/// 在**一个目录**里找森林掩膜（文件名随实验变过，按前缀匹配取最新一个）。
 ///
 /// ⚠️ 这个文件不是可选的：不套掩膜时未开发林会被算成可补种，
 ///    实测会多出 221 个放样点（`wgr17-elev-gaps` vs `wgr17-final-gaps` 的差）。
-fn find_forest_mask(base: &Path) -> Option<PathBuf> {
-    let dir = base.join("output");
+fn scan_forest_mask(dir: &Path) -> Option<PathBuf> {
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in std::fs::read_dir(&dir).ok()? {
+    for entry in std::fs::read_dir(dir).ok()? {
         let Ok(e) = entry else { continue };
         let p = e.path();
         let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
@@ -584,6 +583,43 @@ fn find_forest_mask(base: &Path) -> Option<PathBuf> {
     best.map(|(_, p)| p)
 }
 
+/// 「同伴文件」的搜索目录，**按优先级**：
+///
+/// 1. 影像所在目录 —— 用户把一套数据（ortho.tif / chm.tif / segment.tif）放一起时命中
+/// 2. 影像目录下的 `output/` —— 本项目自己的约定
+/// 3. 数据基准（dev=仓库根，bundled=%LOCALAPPDATA%\fgd\data）
+/// 4. 数据基准下的 `output/`
+///
+/// 为什么要这么做：`TopToolbar` 以前把 `output/chm.tif` 写死成相对路径，
+/// 用户一旦在引导里选了别的目录的影像（`E:\BlockB\ortho.tif`），
+/// 这两个文件就永远找不到 —— 而 sidecar **不会报错**，只会静默退化成纯 RGB。
+fn companion_dirs(image_dir: Option<&Path>, base: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(d) = image_dir {
+        dirs.push(d.to_path_buf());
+        dirs.push(d.join("output"));
+    }
+    dirs.push(base.to_path_buf());
+    dirs.push(base.join("output"));
+    dirs
+}
+
+fn find_companion(image_dir: Option<&Path>, base: &Path, name: &str) -> Option<PathBuf> {
+    companion_dirs(image_dir, base)
+        .into_iter()
+        .map(|d| d.join(name))
+        .find(|p| p.exists())
+}
+
+fn find_forest_mask(image_dir: Option<&Path>, base: &Path) -> Option<PathBuf> {
+    for d in companion_dirs(image_dir, base) {
+        if let Some(p) = scan_forest_mask(&d) {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// 预检的**纯逻辑**（不碰 AppHandle，便于单元测试）。
 ///
 /// 所有路径都相对 `base`（dev=仓库根，bundled=数据根）解析。
@@ -595,6 +631,8 @@ fn preflight_core(base: &Path, params: &serde_json::Value) -> PreflightResult {
     let mut has_error = false;
 
     // ---- 1. 正射影像（必需）----
+    // 影像所在目录是"同伴文件"的第一搜索位置，先留个引用
+    let mut image_path: Option<PathBuf> = None;
     match absolutize(&base, params.get("input")) {
         None => {
             has_error = true;
@@ -630,43 +668,51 @@ fn preflight_core(base: &Path, params: &serde_json::Value) -> PreflightResult {
                 items.push(pf_item("image", "正射影像", &p, "ok", format!("{mb:.0} MB")));
             }
             patch.push(("input", p.to_string_lossy().to_string()));
+            image_path = Some(p);
         }
     }
+    let image_dir = image_path.as_ref().and_then(|p| p.parent());
 
     // ---- 2/3. CHM 与语义分割（缺失会静默退化，所以 warn 而不拦）----
-    for (key, label, hint) in [
+    for (key, label, hint, fname) in [
         (
             "chm_path",
             "冠层高度模型（CHM）",
             "缺了会退化成纯 RGB 判据，水体与低矮植被会大量误判",
+            "chm.tif",
         ),
         (
             "segment_path",
             "语义分割结果",
             "缺了水塘识别率会从 98% 掉回 8%",
+            "segment.tif",
         ),
     ] {
-        match absolutize(&base, params.get(key)) {
-            None => items.push(pf_item(
-                key, label, Path::new(""), "warn",
-                format!("未提供 —— {hint}"),
-            )),
-            Some(p) if !p.exists() => items.push(pf_item(
-                key, label, &p, "warn",
-                format!("文件不存在 —— {hint}"),
-            )),
+        // 参数里写的位置优先（且必须真存在），否则去影像旁边找
+        let explicit = absolutize(&base, params.get(key)).filter(|p| p.exists());
+        let found = explicit.or_else(|| find_companion(image_dir, &base, fname));
+        match found {
             Some(p) => {
                 let mb = file_size_mb(&p);
-                items.push(pf_item(key, label, &p, "ok", format!("{mb:.0} MB")));
+                items.push(pf_item(
+                    key, label, &p, "ok",
+                    format!("{mb:.0} MB（自动关联）"),
+                ));
                 patch.push((key, p.to_string_lossy().to_string()));
             }
+            None => items.push(pf_item(
+                key, label, Path::new(""), "warn",
+                format!(
+                    "在影像同目录与 output/ 下都没找到 {fname} —— {hint}"
+                ),
+            )),
         }
     }
 
     // ---- 4. 森林掩膜（自动发现）----
     let fm = absolutize(&base, params.get("forest_mask_path"))
         .filter(|p| p.exists())
-        .or_else(|| find_forest_mask(&base));
+        .or_else(|| find_forest_mask(image_dir, &base));
     match fm {
         Some(p) => {
             items.push(pf_item(
@@ -1244,6 +1290,88 @@ mod tests {
         );
         assert!(!r.ok);
         assert_eq!(item(&r, "density").status, "error");
+    }
+
+    #[test]
+    fn companion_chm_found_next_to_image() {
+        // 用户选了别的目录的影像：chm 就在它旁边，必须自动关联
+        let base = scratch("comp1");
+        let block = base.join("BlockB");
+        touch(&block.join("ortho.tif"), 2_000_000);
+        touch(&block.join("chm.tif"), 300_000);
+
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": block.join("ortho.tif").to_string_lossy(),
+                "work_dir": "output/jobs"
+            }),
+        );
+        let it = item(&r, "chm_path");
+        assert_eq!(it.status, "ok", "应当自动找到同目录的 chm.tif：{}", it.detail);
+        assert!(it.detail.contains("自动关联"));
+        let resolved = r.resolved.get("chm_path").unwrap().as_str().unwrap();
+        assert!(resolved.ends_with("chm.tif"));
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn companion_segment_found_in_output_subdir() {
+        let base = scratch("comp2");
+        let block = base.join("BlockB");
+        touch(&block.join("ortho.tif"), 2_000_000);
+        touch(&block.join("output/segment.tif"), 300_000);
+
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": block.join("ortho.tif").to_string_lossy(),
+                "work_dir": "output/jobs"
+            }),
+        );
+        assert_eq!(
+            item(&r, "segment_path").status,
+            "ok",
+            "影像目录下的 output/segment.tif 也要能找到"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn forest_mask_found_next_to_image() {
+        let base = scratch("comp3");
+        let block = base.join("BlockB");
+        touch(&block.join("ortho.tif"), 2_000_000);
+        touch(&block.join("forest-mask-50m-exg60.geojson"), 100);
+
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": block.join("ortho.tif").to_string_lossy(),
+                "work_dir": "output/jobs"
+            }),
+        );
+        assert_eq!(item(&r, "forest_mask").status, "ok");
+        let resolved = r.resolved.get("forest_mask_path").unwrap().as_str().unwrap();
+        assert!(resolved.contains("BlockB"), "掩膜应来自影像同目录：{resolved}");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn missing_companion_says_where_it_looked() {
+        let base = scratch("comp4");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({ "input": "img.tif", "work_dir": "output/jobs" }),
+        );
+        let it = item(&r, "chm_path");
+        assert_eq!(it.status, "warn");
+        assert!(
+            it.detail.contains("同目录") && it.detail.contains("chm.tif"),
+            "告警要说清找过哪里、缺的是哪个文件名：{}",
+            it.detail
+        );
     }
 
     #[test]
