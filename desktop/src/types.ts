@@ -1,3 +1,5 @@
+import type { ChmPreset } from './lib/chm'
+
 /**
  * 领域类型定义。
  *
@@ -179,6 +181,15 @@ export interface DetectParams {
   targetDensity: number
   /** 只检测圈选范围（没圈选时忽略） */
   useRoi: boolean
+  /**
+   * CHM 救援线（m）：冠层高度 ≥ 它 → 一定判为树（从"空地"里救回来）。
+   * 三档预设与互锁约束见 `lib/chm.ts`。
+   */
+  chmCore: number
+  /** CHM 否决线（m）：冠层高度 < 它 → 一定判为非树 */
+  chmVeto: number
+  /** 当前林龄档位；手动微调后变 'custom' */
+  chmPreset: ChmPreset
 }
 
 /** sidecar 的 progress 事件（原样收下，缺失字段一律当 undefined） */

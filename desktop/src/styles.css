@@ -1283,3 +1283,88 @@ kbd {
   color: var(--warn);
   line-height: 1.7;
 }
+
+/* ---------- 检测参数：CHM 林龄档位与滑块 ---------- */
+.ds-label .ds-sub,
+.ds-slider-label .ds-sub {
+  margin-left: 7px;
+  font-size: 11px;
+  color: var(--dim);
+  font-weight: 400;
+}
+
+.ds-slider-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.ds-slider-label {
+  font-size: 12.5px;
+  color: var(--text);
+}
+.ds-slider-val {
+  font-size: 12.5px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* range 在深色主题下默认几乎看不见，必须自己画轨道和滑块 */
+.ds-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: #0b1114;
+  border: 1px solid var(--line);
+  outline: none;
+  cursor: pointer;
+}
+.ds-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #06231a;
+  cursor: grab;
+}
+.ds-range::-webkit-slider-thumb:active {
+  cursor: grabbing;
+}
+.ds-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #06231a;
+  cursor: grab;
+}
+.ds-range:focus-visible {
+  border-color: var(--accent);
+}
+
+.ds-err {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(224, 82, 82, 0.45);
+  background: rgba(224, 82, 82, 0.1);
+  color: #ffb4b4;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.ds-note {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(240, 180, 41, 0.4);
+  background: rgba(240, 180, 41, 0.08);
+  color: #f5cd7a;
+  font-size: 11.5px;
+  line-height: 1.65;
+}
