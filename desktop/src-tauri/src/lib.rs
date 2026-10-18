@@ -466,13 +466,14 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     }
 
     *svc.tile.lock().unwrap() = Some(child);
-    let msg = format!(
+    // ⚠️ 这里**不要**再 log_line：两个调用方（setup / restart_tile_server）都会记一行，
+    //    内部再记就重复了 —— 实测 app.log 里同一行出现两次，
+    //    会让人误以为起了两个瓦片服务。
+    Ok(format!(
         "已用 {} 启动瓦片服务（端口 {BACKEND_PORT}，数据根 {}）",
         backend.describe(),
         data_root.display()
-    );
-    log_line(&msg);
-    Ok(msg)
+    ))
 }
 
 // ============================================================================
