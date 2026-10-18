@@ -200,6 +200,41 @@ powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smok
 > **排障入口**：release 版没有控制台，所有关键信息写在
 > `%LOCALAPPDATA%\fgd\logs\app.log`（后端形态与绝对路径、瓦片服务是否起来、数据根）。
 
+### 检测面板：预检 → 参数 → 进度（2026-10-18）
+
+```
+点「② 开始检测」
+   ↓ preflight_detect(params)          ← Rust：文件 / 掩膜 / 输出目录 / 参数
+   ├─ 全绿 ──────────────────────────→ 直接开跑（不打扰）
+   └─ 有 warn / error ─→ 预检卡片 ─→「仍然开始」/「去选择数据」
+   ↓ run_detect(resolved)
+   工具栏下方进度带：检测中 24% · 128/528 块 · 已用 1:25 · 剩余 4:24 · 已发现 312 块
+   ↓ result
+   进度带变成「✓ 检测完成 · 1,443 块 · 383,426 m² · 用时 5:50」，结果自动载入
+```
+
+**为什么要预检**：`chm_path` / `segment_path` 缺失时 sidecar **不报错**，
+只回一条 `W1004` 就照常跑完 —— 结果是"纯 RGB"版本。用户 350 秒后拿到一份
+看着正常、语义全错的数据，这是最坏的一种失败。
+
+| 预检项 | 缺失后果 | 级别 |
+|---|---|---|
+| 正射影像 | 无法检测 | error |
+| CHM | 退化成纯 RGB，水体/低矮植被大量误判 | warn |
+| 语义分割 | 水塘识别率 98% → 8% | warn |
+| 森林掩膜 | 未开发林算成可补种，**放样点多 221 个** | warn |
+| 输出目录 | 白跑 350 秒才发现写不进去 | error |
+| workers / 密度 | sidecar 报 E1002 | error |
+
+森林掩膜按 `output/forest-mask*.geojson` 前缀**自动发现**（文件名随实验变过），
+并写回 `resolved.forest_mask_path`。输出目录会**真写一个探针文件再删掉**
+（建得出来 ≠ 写不进去）。
+
+**参数**（齿轮按钮）：并行进程数 1/2/4/6 · 目标密度 120/150/180 ·
+只跑圈选范围。存 localStorage，改 workers 不会让瓦片缓存失效。
+
+**浏览器预览**：`?detect=1` 看进度条、`?pf=1` 看预检卡片（截图 / 回归用）。
+
 ### 检测链路：Tauri ↔ sidecar（stdio NDJSON）
 
 ```
@@ -667,3 +702,30 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     **正确姿势**：卸载走 `uninstall.exe` 或「设置 → 应用」；
     测试时想换目录就换个 `/D=` 目标，不要手删。
     （这次的弹窗就是测试副作用，与安装包本身无关。）
+
+25. **`warn` 事件没处理 → 所有"会算偏但不会报错"的告警都被丢掉**
+
+    sidecar 的 `warn`（W1001 未知字段 / W1004 CHM 缺失 / W3001 水体 …）走的是
+    独立事件类型。前端事件处理只写了 `progress` / `result` / `error` / `log`，
+    **`warn` 直接落进 else 被忽略** —— 界面上一条提示都没有。
+
+    这比报错危险：用户以为检测正常，其实结果已经退化。
+    修法：加 `warn` 分支，以 `⚠️ [W1004] ...` 的形式进日志。
+
+26. **`forest_mask_path` 从来没传过 → 桌面端结果一直包含未开发林**
+
+    CLI 版本靠 `--forest-mask` 传掩膜，桌面端拼参数时漏了这个字段 →
+    掩膜为空 → 未开发林被算成可补种。这正是 `wgr17-elev-gaps` 与
+    `wgr17-final-gaps` 的差（**221 个放样点**）。
+
+    ⚠️ 但**不要**把文件名写死（`forest-mask-50m-exg60.geojson` 是实验名，
+    换影像后会变）—— 交给 `preflight_detect` 按前缀自动发现。
+
+27. **`.app` 用 `grid-template-rows: auto 1fr auto` + 可选孩子 → 布局错位**
+
+    加了检测进度条之后，`.app` 的孩子数在 3 与 4 之间变化。
+    grid 的固定行数在少一个孩子时会把 `1fr` 分给**状态栏**，
+    body 反而变成 `auto` —— 地图区被压成内容高度。
+
+    修法：改成 `display: flex; flex-direction: column`，body 用 `flex: 1`。
+    **凡是"可选出现的条带"都别用固定行数的 grid。**
