@@ -178,6 +178,8 @@ export default function App() {
         return
       }
       await probeAndLoad()
+      // 浏览器模式下 `?settings=1` 打开检测参数面板（截图 / 回归用）
+      if (!isTauri() && qs.has('settings')) setShowSettings(true)
       // 浏览器模式下 `?p2=export` 直接打开导出对话框（截图 / 回归用）
       if (!isTauri() && qs.get('p2') === 'export') setShowExport(true)
       // 浏览器模式下 `?p1=1` 预选 3 块 / `?p1=box` 进框选模式（截图 / 回归用）
@@ -289,6 +291,10 @@ export default function App() {
       segment_path: 'drone data/segment.tif',
       workers: detectParams.workers,
       target_density_per_ha: detectParams.targetDensity,
+      // CHM 高度阈值（缺陷台账 P1-3）：三档林龄预设 + 手动微调。
+      // 这两个值会进参数指纹，所以改档位 = 瓦片缓存失效 = 需要重跑。
+      elevation_core_chm: detectParams.chmCore,
+      elevation_veto_chm: detectParams.chmVeto,
     }),
     [meta, detectParams],
   )
@@ -305,8 +311,15 @@ export default function App() {
           return
         }
         detectBegin()
+        const presetLabel =
+          detectParams.chmPreset === 'custom'
+            ? '自定义'
+            : ({ mature: '成熟林', mid: '中龄林', young: '幼龄林' } as const)[
+                detectParams.chmPreset as 'mature' | 'mid' | 'young'
+              ]
         pushLog(
           `检测已启动（${detectParams.workers} 进程 · 目标密度 ${detectParams.targetDensity}` +
+            ` · CHM ${presetLabel} ${detectParams.chmCore.toFixed(1)}/${detectParams.chmVeto.toFixed(1)} m` +
             ` · ${withRoi && roi ? '只跑圈选范围' : '整幅影像'}）`,
         )
       } catch (e) {

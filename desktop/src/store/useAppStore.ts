@@ -16,6 +16,7 @@ import { ALL_CLASSES, CLASS_STYLES, GROUP_META } from '../lib/classes'
 import { estimate, DEFAULT_GRID } from '../lib/estimate'
 import { centroid, polygonAreaM2 } from '../lib/geometry'
 import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeEdits'
+import { CHM_PRESETS, type ChmPreset } from '../lib/chm'
 
 const MAX_LOGS = 300
 
@@ -28,6 +29,10 @@ export const DEFAULT_DETECT_PARAMS: DetectParams = {
   workers: 4,
   targetDensity: 150,
   useRoi: true,
+  // Stage 14 基线（成熟林）。改这两个值会改变瓦片缓存的参数指纹 → 需要重算。
+  chmCore: 5.2,
+  chmVeto: 1.2,
+  chmPreset: 'mature',
 }
 
 function loadDetectParams(): DetectParams {
@@ -214,6 +219,13 @@ export interface AppState {
   applyRerun: (newFeatures: GapFeature[], mode?: MergeMode) => MergeStats
   /** 改检测参数（自动持久化） */
   setDetectParam: (patch: Partial<DetectParams>) => void
+  /**
+   * 切换林龄档位（一次性设置 core + veto + preset）。
+   *
+   * 单独开一个 action 而不是让 UI 连调三次 `setDetectParam`：
+   * 三次调用会写三次 localStorage，且中间态可能违反互锁（veto 已改、core 还没改）。
+   */
+  setChmPreset: (preset: ChmPreset) => void
   detectBegin: () => void
   detectProgress: (p: DetectProgress) => void
   detectFinish: (r: DetectFinished) => void
@@ -639,6 +651,20 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setDetectParam: (patch) =>
     set((s) => {
       const next = { ...s.detectParams, ...patch }
+      saveDetectParams(next)
+      return { detectParams: next }
+    }),
+
+  setChmPreset: (preset) =>
+    set((s) => {
+      const spec = CHM_PRESETS.find((p) => p.key === preset)
+      if (!spec) return {}
+      const next: DetectParams = {
+        ...s.detectParams,
+        chmCore: spec.core,
+        chmVeto: spec.veto,
+        chmPreset: preset,
+      }
       saveDetectParams(next)
       return { detectParams: next }
     }),

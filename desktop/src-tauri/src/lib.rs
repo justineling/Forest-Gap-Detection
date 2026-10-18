@@ -466,13 +466,14 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     }
 
     *svc.tile.lock().unwrap() = Some(child);
-    let msg = format!(
+    // ⚠️ 这里**不要**再 log_line：两个调用方（setup / restart_tile_server）都会记一行，
+    //    内部再记就重复了 —— 实测 app.log 里同一行出现两次，
+    //    会让人误以为起了两个瓦片服务。
+    Ok(format!(
         "已用 {} 启动瓦片服务（端口 {BACKEND_PORT}，数据根 {}）",
         backend.describe(),
         data_root.display()
-    );
-    log_line(&msg);
-    Ok(msg)
+    ))
 }
 
 // ============================================================================
@@ -520,6 +521,23 @@ struct PreflightResult {
     items: Vec<PreflightItem>,
     /// 补全后的参数（绝对路径 + 自动发现的森林掩膜），前端原样交给 run_detect
     resolved: serde_json::Value,
+}
+
+/// CHM 高度阈值的三档林龄预设（与前端 `lib/chm.ts` 保持一致）。
+///
+/// 数值已按「大疆 DSM 平滑导致树高低估约 40%」折算成 CHM 读数。
+const CHM_PRESETS: [(f64, f64, &str); 3] = [
+    (5.2, 1.2, "成熟林"),
+    (3.5, 0.8, "中龄林"),
+    (2.2, 0.5, "幼龄林"),
+];
+
+/// 反查档位名（容差 0.05 容忍滑块步长的浮点误差）
+fn chm_preset_label(core: f64, veto: f64) -> Option<&'static str> {
+    CHM_PRESETS
+        .iter()
+        .find(|(c, v, _)| (c - core).abs() < 0.05 && (v - veto).abs() < 0.05)
+        .map(|(_, _, name)| *name)
 }
 
 fn pf_item(
@@ -800,6 +818,60 @@ fn preflight_core(base: &Path, params: &serde_json::Value) -> PreflightResult {
         items.push(pf_item(
             "density", "目标密度", Path::new(""), "error",
             format!("{density} 株/ha 超出 20~400"),
+        ));
+    }
+
+    // ---- 8. CHM 高度阈值（缺陷台账 P1-3）----
+    //
+    // 互锁：`0.2 ≤ veto ≤ core − 0.5`。
+    // 为什么必须拦：如果把否决线拉到救援线之上（例如 core=3.0 / veto=4.0），
+    // 树高 3.5 m 会同时满足「≥ core」和「< veto」，结果取决于代码里两个 if
+    // 的先后顺序 —— 属于**静默不可预期**，比报错糟糕得多。
+    let chm_core = params
+        .get("elevation_core_chm")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(5.2);
+    let chm_veto = params
+        .get("elevation_veto_chm")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.2);
+    if !(0.5..=15.0).contains(&chm_core) {
+        has_error = true;
+        items.push(pf_item(
+            "chm", "CHM 高度阈值", Path::new(""), "error",
+            format!("救援线 {chm_core:.1} m 超出 0.5~15 m"),
+        ));
+    } else if chm_veto < 0.2 {
+        has_error = true;
+        items.push(pf_item(
+            "chm", "CHM 高度阈值", Path::new(""), "error",
+            format!("否决线 {chm_veto:.1} m 不能低于 0.2 m"),
+        ));
+    } else if chm_veto > chm_core - 0.5 {
+        has_error = true;
+        items.push(pf_item(
+            "chm", "CHM 高度阈值", Path::new(""), "error",
+            format!(
+                "否决线（{chm_veto:.1} m）必须比救援线（{chm_core:.1} m）低至少 0.5 m"
+            ),
+        ));
+    } else {
+        let label = match chm_preset_label(chm_core, chm_veto) {
+            Some(n) => format!("{n}档"),
+            None => "自定义".to_string(),
+        };
+        let is_default = (chm_core - 5.2).abs() < 0.05 && (chm_veto - 1.2).abs() < 0.05;
+        items.push(pf_item(
+            "chm", "CHM 高度阈值", Path::new(""),
+            if is_default { "ok" } else { "info" },
+            format!(
+                "救援 {chm_core:.1} m / 否决 {chm_veto:.1} m（{label}）{}",
+                if is_default {
+                    ""
+                } else {
+                    " —— 非 Stage 14 基线，结果不可与历史交付数字直接对比"
+                }
+            ),
         ));
     }
 
@@ -1447,6 +1519,93 @@ mod tests {
             "告警要说清找过哪里、缺的是哪个文件名：{}",
             it.detail
         );
+    }
+
+    // ---- CHM 高度阈值（缺陷台账 P1-3）----
+
+    /// 造一个「除了 CHM 阈值以外全都正常」的参数集
+    fn chm_params(core: f64, veto: f64) -> serde_json::Value {
+        serde_json::json!({
+            "input": "img.tif",
+            "work_dir": "output/jobs",
+            "workers": 4,
+            "target_density_per_ha": 150,
+            "elevation_core_chm": core,
+            "elevation_veto_chm": veto
+        })
+    }
+
+    #[test]
+    fn default_chm_is_ok_and_labeled() {
+        let base = scratch("chm-def");
+        touch(&base.join("img.tif"), 2_000_000);
+        // 不传 CHM 参数 → 走 Stage 14 默认 5.2 / 1.2
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({ "input": "img.tif", "work_dir": "output/jobs" }),
+        );
+        let it = item(&r, "chm");
+        assert_eq!(it.status, "ok", "默认阈值不该报错：{}", it.detail);
+        assert!(it.detail.contains("成熟林"), "要标出档位名：{}", it.detail);
+        assert!(it.detail.contains("5.2") && it.detail.contains("1.2"));
+        assert!(!it.detail.contains("非 Stage 14"), "默认档不该带「非基线」提示");
+    }
+
+    #[test]
+    fn veto_above_core_blocks() {
+        let base = scratch("chm-bad1");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(&base, &chm_params(3.0, 4.0));
+        assert!(!r.ok, "否决线高于救援线必须拦住");
+        let it = item(&r, "chm");
+        assert_eq!(it.status, "error");
+        assert!(it.detail.contains("低至少 0.5 m"), "原因要说清：{}", it.detail);
+    }
+
+    #[test]
+    fn chm_gap_too_small_blocks() {
+        let base = scratch("chm-bad2");
+        touch(&base.join("img.tif"), 2_000_000);
+        // 间距 0.4 < 0.5
+        let r = preflight_core(&base, &chm_params(3.0, 2.6));
+        assert!(!r.ok);
+        assert_eq!(item(&r, "chm").status, "error");
+    }
+
+    #[test]
+    fn veto_below_floor_blocks() {
+        let base = scratch("chm-bad3");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(&base, &chm_params(5.2, 0.1));
+        assert!(!r.ok);
+        assert!(item(&r, "chm").detail.contains("0.2"));
+    }
+
+    #[test]
+    fn young_preset_is_info_not_error() {
+        let base = scratch("chm-young");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(&base, &chm_params(2.2, 0.5));
+        assert!(r.ok, "幼龄林档位合法，不该拦");
+        let it = item(&r, "chm");
+        assert_eq!(it.status, "info", "非默认档用 info 提醒，不用 warn");
+        assert!(it.detail.contains("幼龄林"), "要标出档位名：{}", it.detail);
+        assert!(
+            it.detail.contains("不可与历史交付数字直接对比"),
+            "必须提醒口径变了：{}",
+            it.detail
+        );
+    }
+
+    #[test]
+    fn custom_chm_is_labeled_custom() {
+        let base = scratch("chm-custom");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(&base, &chm_params(4.0, 1.0));
+        assert!(r.ok);
+        let it = item(&r, "chm");
+        assert_eq!(it.status, "info");
+        assert!(it.detail.contains("自定义"), "不在三档里要标「自定义」：{}", it.detail);
     }
 
     #[test]

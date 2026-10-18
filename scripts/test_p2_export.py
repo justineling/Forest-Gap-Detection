@@ -158,6 +158,14 @@ def main() -> int:
                        "人工复核留痕", "重点连片空地"):
                 check(kw in h, f"含章节「{kw}」")
             check("非种植区" in h or "不可种植" in h, "改判结果体现在口径表里")
+            check("CHM 高度阈值" in h, "报告含 CHM 阈值卡片")
+            # 基准结果的 params 是 5.2 / 1.2（成熟林）→ 不该标"非默认"
+            # 注意：CSS 注释里也有"非默认"，所以要查渲染出来的标题
+            check(
+                "CHM 高度阈值 · 非默认" not in h,
+                "基线阈值不标「非默认」",
+                "5.2/1.2",
+            )
 
         print("\nF. 空输入不崩")
         r2 = TS.export_bundle({"gaps": {"features": []}}, outdir / "empty", base_obj)
