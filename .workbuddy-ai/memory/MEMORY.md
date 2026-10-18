@@ -200,6 +200,9 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
   删除优先；`replayed_from` 留痕；store 的 `deletedFeatures` **存几何**。
 - 组件抛错会卸载整棵 React 树 → 白屏；Terra Draw `start()` 必须在 `map.on('load')` 内 + ErrorBoundary。
 - 影像 **4 波段**（第 4 恒 255=Alpha）；`Window.intersection` 无交集时**抛错**不是返回空。
+- **CHM 林龄档位**（P1-3 化解）：成熟林 5.2/1.2（基线）/ 中龄林 3.5/0.8 / 幼龄林 2.2/0.5，
+  按「大疆 DSM 低估约 40%」折算；互锁 `0.2 ≤ veto ≤ core−0.5` **前端与 Rust 都拦**
+  （区间反转是静默的）；两参数在参数指纹里 → 换档 = 瓦片缓存全失效 = 重跑。
 - 三个 bat 在**项目根**：UTF-8 无 BOM + CRLF；`call 文件.bat 标签` 靠 shift+goto 分发、顶层不能
   `setlocal`；搬家自愈只对项目内 target 生效。⚠️ 别手删安装目录（NSIS 会弹 "Unable to install"）。
 - docgen 教训：`gen_gdrive.py` 曾硬编码 `D:/WGR` → 探不到就把体积写成 `0 KB`，**静默改错文档**。
