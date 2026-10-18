@@ -1,0 +1,977 @@
+# -*- coding: utf-8 -*-
+"""桌面端原型的本地瓦片 / 辅助服务（**零新依赖**：标准库 + rasterio）。
+
+按 `docs/01-需求与架构/桌面端交互需求与实现映射.md` §0.2 的裁定：
+- 算法主链路仍走 stdio NDJSON sidecar（`scripts/sidecar.py`），**不走 HTTP**；
+- 只有「浏览器必须用 HTTP 取的东西」才开这个端点：影像瓦片、元数据、
+  读取最近一次检测结果、导出。
+
+提供：
+    GET  /meta                     影像元数据（外接框 / CRS / 分辨率 / 建议缩放级）
+    GET  /tiles/{z}/{x}/{y}.png    XYZ 瓦片（Web Mercator）
+    GET  /gaps                     最近一次检测结果 GeoJSON（含算法网格锚点）
+    GET  /planting-points?clearance=0.5   补种点位（Python/UTM 权威结算）
+    POST /export                   把前端编辑后的要素导出为 geojson / csv / kml
+
+用法：
+    .venv/Scripts/python.exe scripts/tile_server.py
+    # 换影像 / 换端口
+    .venv/Scripts/python.exe scripts/tile_server.py --source "drone data/WGR17-002.tif" --port 8765
+
+⚠️ 本影像**没有金字塔（overviews 为空）**，若直接让 GDAL 自己算源窗口，
+   低缩放级会尝试整幅读取（47k×44k×3 ≈ 6 GB）而爆内存。
+   因此这里自己做「窗口抽取 + 降采样读」，把内存钉死在几百 KB 级。
+"""
+
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import math
+import os
+import sys
+import threading
+import time
+from collections import OrderedDict
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import numpy as np
+import rasterio
+from PIL import Image
+from rasterio.enums import Resampling
+from rasterio.transform import from_bounds as transform_from_bounds
+from rasterio.warp import reproject, transform_bounds
+
+ROOT = Path(__file__).resolve().parent.parent
+
+TILE_SIZE = 256
+WEB_MERCATOR = "EPSG:3857"
+WGS84 = "EPSG:4326"
+R_EARTH = 6378137.0
+
+# 原始数据可能在不同机器的不同目录（公司机 D:/WGR、家里机仓库内 drone data/）
+SOURCE_CANDIDATES = [
+    ROOT / "drone data" / "WGR17-002.tif",
+    ROOT / "drone data" / "WGR17.tif",
+    Path(r"D:/WGR/WGR17.tif"),
+    Path(r"D:/WGR/WGR17-002.tif"),
+]
+GAPS_CANDIDATES = [
+    ROOT / "output" / "wgr17-final-gaps.geojson",
+    ROOT / "output" / "wgr17-elev-gaps.geojson",
+    ROOT / "output" / "wgr17-full-gaps.geojson",
+]
+
+
+# --------------------------------------------------------------------------
+# 瓦片数学
+# --------------------------------------------------------------------------
+def tile_bounds_wgs84(z: int, x: int, y: int) -> tuple[float, float, float, float]:
+    """XYZ 瓦片 → (west, south, east, north)，WGS84 经纬度。"""
+    n = 2 ** z
+    west = x / n * 360.0 - 180.0
+    east = (x + 1) / n * 360.0 - 180.0
+
+    def lat(yy: int) -> float:
+        return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * yy / n))))
+
+    north = lat(y)
+    south = lat(y + 1)
+    return west, south, east, north
+
+
+def lonlat_to_mercator(lon: float, lat: float) -> tuple[float, float]:
+    lat = max(min(lat, 85.05112878), -85.05112878)
+    mx = lon * math.pi / 180.0 * R_EARTH
+    my = math.log(math.tan(math.pi / 4.0 + lat * math.pi / 360.0)) * R_EARTH
+    return mx, my
+
+
+# --------------------------------------------------------------------------
+# 服务
+# --------------------------------------------------------------------------
+class TileServer:
+    def __init__(self, source: Path, gaps: Path | None, cache_size: int = 512):
+        self.source = source
+        self.gaps_path = gaps
+        self.cache: OrderedDict[tuple[int, int, int], bytes] = OrderedDict()
+        self.cache_size = cache_size
+        self.lock = threading.Lock()
+        self._ds = None
+        self._meta: dict | None = None
+        self._gaps_cache: bytes | None = None
+        self._gaps_obj: dict | None = None
+        self._pp_cache: dict[float, bytes] = {}
+
+    # ---- 数据集（每个线程各自持有一个只读句柄，避免 GDAL 句柄跨线程问题）----
+    def dataset(self):
+        local = getattr(threading.current_thread(), "_fgd_ds", None)
+        if local is None:
+            local = rasterio.open(self.source)
+            setattr(threading.current_thread(), "_fgd_ds", local)
+        return local
+
+    def meta(self) -> dict:
+        if self._meta is not None:
+            return self._meta
+        with rasterio.open(self.source) as ds:
+            w, s, e, n = transform_bounds(ds.crs, WGS84, *ds.bounds)
+            cx, cy = (w + e) / 2.0, (s + n) / 2.0
+            # 建议初始缩放级：让影像宽度约铺满 1000 px 视口
+            span_lon = max(e - w, 1e-9)
+            z = math.log2(360.0 / span_lon * 1000.0 / 256.0)
+            zoom = float(max(10.0, min(19.0, round(z, 2))))
+            self._meta = {
+                "ok": True,
+                "source": str(self.source),
+                "width": ds.width,
+                "height": ds.height,
+                "bands": ds.count,
+                "crs": str(ds.crs),
+                "res_m": abs(ds.res[0]) * 111320.0,
+                "bounds_wgs84": [w, s, e, n],
+                "center": [cx, cy],
+                "zoom": zoom,
+                "has_overviews": bool(ds.overviews(1)),
+                "tile_url": "/tiles/{z}/{x}/{y}.png",
+            }
+        return self._meta
+
+    # ---- 瓦片 ----
+    def tile(self, z: int, x: int, y: int) -> bytes:
+        key = (z, x, y)
+        with self.lock:
+            hit = self.cache.get(key)
+            if hit is not None:
+                self.cache.move_to_end(key)
+                return hit
+
+        png = self._render_tile(z, x, y)
+
+        with self.lock:
+            self.cache[key] = png
+            if len(self.cache) > self.cache_size:
+                self.cache.popitem(last=False)
+        return png
+
+    def _render_tile(self, z: int, x: int, y: int) -> bytes:
+        ds = self.dataset()
+        west, south, east, north = tile_bounds_wgs84(z, x, y)
+
+        # 1) 瓦片范围 → 影像 CRS
+        try:
+            sw, ss, se, sn = transform_bounds(WGS84, ds.crs, west, south, east, north)
+        except Exception:
+            return blank_png()
+
+        # 2) 与影像外接框求交，取像素窗口
+        #    ⚠️ rasterio 的 Window.intersection 在**无交集时会抛 WindowError**
+        #    （不是返回空窗口）。低缩放级/园区外的瓦片必然走到这里，
+        #    必须捕获后返回透明瓦片，否则每个请求都会抛栈。
+        full = rasterio.windows.Window(0, 0, ds.width, ds.height)
+        try:
+            win = rasterio.windows.from_bounds(sw, ss, se, sn, transform=ds.transform)
+            win = win.intersection(full)
+        except Exception:
+            return blank_png()
+        if win.width < 1 or win.height < 1:
+            return blank_png()
+        try:
+            win = win.round_offsets().round_lengths()
+        except Exception:
+            return blank_png()
+        if win.width < 1 or win.height < 1:
+            return blank_png()
+
+        # 3) 降采样读：把源窗口压到「目标瓦片量级」，内存与耗时都可控。
+        #    ⚠️ 只取 RGB 前 3 个波段。本影像第 4 波段恒为 255（Alpha），
+        #    若把 4 个波段一起送进 reproject 而目标是 3 波段，GDAL 会直接报错。
+        budget = TILE_SIZE * 4
+        decim = max(1, int(math.ceil(max(win.width, win.height) / budget)))
+        out_w = max(1, int(round(win.width / decim)))
+        out_h = max(1, int(round(win.height / decim)))
+        if ds.count >= 3:
+            indexes = [1, 2, 3]
+        else:
+            indexes = [1] * 3
+        try:
+            arr = ds.read(
+                indexes,
+                window=win,
+                out_shape=(3, out_h, out_w),
+                resampling=Resampling.average,
+                boundless=False,
+            )
+        except Exception:
+            return blank_png()
+        if arr.size == 0:
+            return blank_png()
+
+        # 4) 小图 → 3857 的 256×256
+        bw, bs, be, bn = rasterio.windows.bounds(win, ds.transform)
+        src_transform = transform_from_bounds(bw, bs, be, bn, arr.shape[2], arr.shape[1])
+        mx0, my0 = lonlat_to_mercator(west, south)
+        mx1, my1 = lonlat_to_mercator(east, north)
+        dst_transform = transform_from_bounds(mx0, my0, mx1, my1, TILE_SIZE, TILE_SIZE)
+        dst = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
+        try:
+            reproject(
+                source=arr,
+                destination=dst,
+                src_transform=src_transform,
+                src_crs=ds.crs,
+                dst_transform=dst_transform,
+                dst_crs=WEB_MERCATOR,
+                resampling=Resampling.bilinear,
+                dst_nodata=0,
+                num_threads=2,
+            )
+        except Exception:
+            return blank_png()
+
+        rgb = np.moveaxis(dst, 0, -1)
+        img = Image.fromarray(rgb, mode="RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=False, compress_level=3)
+        return buf.getvalue()
+
+    # ---- 检测结果 ----
+    def gaps_json(self) -> bytes:
+        """返回检测结果 GeoJSON，并**动态补上网格锚点**（不改磁盘文件）。
+
+        为什么需要补：`planting_grid` 里的 `origin_x_m / origin_y_m` 是 UTM 49N
+        绝对坐标下的数学锚点（离园区约 451 km），前端在经纬度空间没法直接用它
+        铺格点。这里补一个「园区中心附近最近格点」的经纬度 `anchor_lon/anchor_lat`
+        —— 前端用 anchor + 同样的 pitch/row/skew/azimuth 就能重建**逐格一致**
+        的格点集合，从而与 Python 侧点位数逐株对账（否则两边差 +8.8%，
+        原因就是前端自己拿「首个顶点均值」当原点，相位是任意的）。
+
+        只在内存里 enrich，不写回文件 —— 重跑算法不必为此付费。
+        """
+        if not (self.gaps_path and self.gaps_path.exists()):
+            return json.dumps(
+                {"type": "FeatureCollection", "features": [], "error": "未找到检测结果文件"}
+            ).encode("utf-8")
+        if self._gaps_cache is not None:
+            return self._gaps_cache
+        raw = self.gaps_path.read_bytes()
+        try:
+            obj = json.loads(raw)
+            grid = obj.get("planting_grid")
+            if isinstance(grid, dict) and "anchor_lon" not in grid:
+                obj["planting_grid"] = _enrich_grid_anchor(obj, grid)
+                raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        except Exception as e:  # 结果格式异常时不要拖垮端点，原样返回
+            print(f"  ⚠️ planting_grid 锚点补算失败（原样返回）：{e}", file=sys.stderr)
+        self._gaps_cache = raw
+        return raw
+
+    # ---- 补种点位（权威结算在 Python，前端只展示/导出）----
+    def _gaps_data(self) -> dict:
+        """解析后的结果对象（含补算好的 planting_grid）。"""
+        if self._gaps_obj is None:
+            self.gaps_json()  # 触发解析 + 锚点补算
+            self._gaps_obj = json.loads(self._gaps_cache or b"{}")
+        return self._gaps_obj
+
+    def planting_points_json(self, clearance_m: float = 0.5) -> bytes:
+        """按退让距离生成补种点位（GeoJSON FeatureCollection）。
+
+        为什么放在服务端：前端 TS 用局部等距圆柱近似，与 Python 的 UTM 结算
+        在 0.5 m 档已实测**完全一致**（3,691 vs 3,691），但 1.0/2.0 m 档仍差
+        0.6~0.9%（GEOS buffer 与逐点距离的数值精度）。**对外报数与放样一律以
+        本端点为准**，前端自算只用于拖动时的即时反馈。
+
+        结果按退让距离缓存（同一档位重复请求不再重算）。
+        """
+        key = round(float(clearance_m), 3)
+        if key in self._pp_cache:
+            return self._pp_cache[key]
+
+        import planting_points as PP
+        from grid_prior import GridModel
+
+        obj = self._gaps_data()
+        grid = obj.get("planting_grid")
+        if not isinstance(grid, dict):
+            payload = {"type": "FeatureCollection", "features": [],
+                       "error": "结果里没有 planting_grid，无法生成点位"}
+            return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+        feats = [f for blk in (obj.get("blocks") or []) for f in (blk.get("gaps") or [])]
+        if not feats:
+            feats = obj.get("features") or []
+
+        gm = GridModel(
+            plant_pitch_m=grid["plant_pitch_m"],
+            row_pitch_m=grid["row_pitch_m"],
+            skew_offset_m=grid.get("skew_offset_m") or grid["plant_pitch_m"] / 2.0,
+            origin_x_m=grid["origin_x_m"],
+            origin_y_m=grid["origin_y_m"],
+            row_azimuth_deg=grid.get("row_azimuth_deg") or grid.get("azimuth_deg") or 0.0,
+            quality=grid.get("quality", 0.0),
+            method=grid.get("method", ""),
+            density_per_ha=grid.get("density_per_ha", 0.0),
+        )
+        res = PP.generate_planting_points(feats, gm, clearance_m=key)
+        out = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [p["lon"], p["lat"]]},
+                    "properties": {
+                        "point_id": p["point_id"],
+                        "gap_id": p["gap_id"],
+                        "class": p["class"],
+                        "source": p["source"],
+                        "utm_x": p["utm_x"],
+                        "utm_y": p["utm_y"],
+                        "clearance_m": p["clearance_m"],
+                    },
+                }
+                for p in res["points"]
+            ],
+            "meta": {
+                "total": res["total"],
+                "by_class": res["by_class"],
+                "by_source": res["by_source"],
+                "clearance_m": key,
+                "crs": "EPSG:4326",
+                "authority": "python/planting_points.py（UTM 49N 结算）",
+            },
+        }
+        raw = json.dumps(out, ensure_ascii=False).encode("utf-8")
+        self._pp_cache[key] = raw
+        return raw
+
+
+def _enrich_grid_anchor(obj: dict, grid: dict) -> dict:
+    """为 `planting_grid` 补一个 WGS84 锚点（**实现只有一份**，在 planting_points）。
+
+    锚点 = **结果范围中心最近的那个格点**。前端拿 anchor 当局部原点，
+    配合同样的 pitch / row / skew / azimuth 铺格点，就能重建与 Python 侧
+    **逐格一致**的格点集合 —— 这是前端报数与 Python 3,912 株对得上的前提。
+    """
+    import planting_points as PP
+
+    feats = [f for blk in (obj.get("blocks") or []) for f in (blk.get("gaps") or [])]
+    if not feats:
+        feats = obj.get("features") or []
+    lon, lat = PP.features_center_wgs84(feats)
+    return PP.grid_anchor_wgs84(grid, lon, lat)
+
+
+
+def blank_png() -> bytes:
+    img = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (0, 0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _find_gdaladdo() -> str | None:
+    """在 PATH 与常见 GDAL 安装目录里找 gdaladdo（有它才能零额外空间生成外置 .ovr）。"""
+    import shutil as _sh
+
+    exe = _sh.which("gdaladdo")
+    if exe:
+        return exe
+    candidates = [
+        Path(r"C:/Program Files/GDAL/gdaladdo.exe"),
+        Path(r"C:/OSGeo4W64/bin/gdaladdo.exe"),
+        Path(r"C:/OSGeo4W/bin/gdaladdo.exe"),
+        ROOT / ".venv" / "Scripts" / "gdaladdo.exe",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def ensure_overviews(
+    source: Path, cache_dir: Path, mode: str = "auto"
+) -> tuple[Path, str]:
+    """确保影像有金字塔，且**默认不修改用户的原始文件**。
+
+    为什么需要这一步：本影像没有 overviews，低缩放级瓦片窗口会覆盖大半个影像，
+    GDAL 只能按全分辨率读 → 实测 z=13 约 104 秒、z=15 约 35 秒一张瓦片。
+    建完金字塔后 z=13 降到 700 ms（149×）。
+
+    ⚠️ 但**建金字塔不能污染用户的原始数据**。本 BigTIFF 在可写模式下
+    GDAL 会把概览**写进文件内部**（实测 3.48 GB → 4.66 GB，且无法用 rio 回退）。
+    因此这里按策略选路径：
+
+    | mode | 行为 | 是否改源文件 | 额外磁盘 |
+    |---|---|---|---|
+    | `auto`（默认） | 有金字塔→原图；有 gdaladdo→`-ro` 外置 `.ovr`；否则→**复制副本**建内部金字塔 | **否** | 0 或约等于原图 |
+    | `copy` | 总是复制副本 | 否 | 约等于原图 |
+    | `gdal` | 必须用 `gdaladdo -ro` 生成外置 `.ovr`，没有则报错 | 否 | 约 1/3 原图 |
+    | `inplace` | 就地写入（**旧行为，会改源文件**） | **是** | +1.19 GB |
+
+    返回 `(实际用于服务的影像路径, 说明文字)`。
+    """
+    import shutil as _sh
+
+    with rasterio.open(source) as ds:
+        if ds.overviews(1):
+            return source, "源影像已有金字塔"
+
+    levels = ["2", "4", "8", "16", "32", "64"]
+
+    # ---- 策略 1：有 gdaladdo 就用只读模式生成外置 .ovr（零额外空间，不碰原图）----
+    if mode in ("auto", "gdal"):
+        exe = _find_gdaladdo()
+        if exe:
+            print(f"  用 {exe} -ro 生成外置 .ovr（源文件不动）…", file=sys.stderr)
+            sys.stderr.flush()
+            t0 = time.time()
+            cmd = [
+                exe, "-ro",
+                "--config", "COMPRESS_OVERVIEW", "DEFLATE",
+                "--config", "GDAL_TIFF_OVR_BLOCKSIZE", "256",
+                str(source), *levels,
+            ]
+            r = __import__("subprocess").run(cmd, capture_output=True, text=True)
+            if r.returncode == 0:
+                ovr = Path(str(source) + ".ovr")
+                return source, f"已生成外置 .ovr（{time.time() - t0:.0f}s，源文件未改动，{ovr.name}）"
+            print(f"  ⚠️ gdaladdo 失败：{r.stderr.strip()[:200]}", file=sys.stderr)
+        elif mode == "gdal":
+            raise RuntimeError("找不到 gdaladdo，无法生成外置 .ovr（请安装 GDAL 或用 --ovr-mode copy）")
+
+    # ---- 策略 2：就地写入（旧行为，会改源文件，需显式指定）----
+    if mode == "inplace":
+        print("  ⚠️ --ovr-mode inplace：将就地写入源文件（不可逆，请确认有原图副本）", file=sys.stderr)
+        with rasterio.open(source, "r+") as ds:
+            t0 = time.time()
+            ds.build_overviews([int(v) for v in levels], Resampling.average)
+        return source, f"已就地写入源文件（{time.time() - t0:.0f}s，⚠️ 源文件已被修改）"
+
+    # ---- 策略 3：复制副本再建内部金字塔（最安全的兜底）----
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    copy_path = cache_dir / source.name
+    if copy_path.exists():
+        with rasterio.open(copy_path) as ds:
+            if ds.overviews(1):
+                return copy_path, "复用已有副本（源文件未改动）"
+
+    need = source.stat().st_size * 2  # 副本 + 金字塔，留余量
+    free = _sh.disk_usage(cache_dir).free
+    if free < need:
+        raise RuntimeError(
+            f"磁盘空间不足：需要约 {need / 1024**3:.1f} GB，可用 {free / 1024**3:.1f} GB。"
+            f"可改用 --ovr-mode gdal（需安装 GDAL）或自行腾出空间。"
+        )
+
+    print(f"  复制副本 → {copy_path}（源文件不动，请稍候）…", file=sys.stderr)
+    sys.stderr.flush()
+    t0 = time.time()
+    _sh.copy2(source, copy_path)
+    with rasterio.open(copy_path, "r+") as ds:
+        ds.build_overviews([int(v) for v in levels], Resampling.average)
+    return copy_path, (
+        f"已复制副本并建金字塔（{time.time() - t0:.0f}s，源文件未改动；"
+        f"副本 {copy_path}，可随时删除）"
+    )
+
+
+# --------------------------------------------------------------------------
+# 导出
+# --------------------------------------------------------------------------
+# 不可种植类别（与前端 lib/classes.ts 的 unplantable 组一致）
+_UNPLANTABLE = {"road", "water", "office", "undeveloped"}
+_TIER_META = {
+    "definite_plant": ("确定需补种", "连片空地 + 株位空缺，可直接用于苗木量"),
+    "review": ("待复核", "证据不足，人工确认后才计入"),
+    "not_needed": ("无需补种", "林间空隙＝正常行间缝隙"),
+    "unplantable": ("不可种植", "道路 / 水体 / 办公生活区 / 未开发林，已按像素扣除"),
+}
+_TIER_ORDER = ["definite_plant", "review", "not_needed", "unplantable"]
+
+
+def _tier_of(cls: str) -> str:
+    if cls in _UNPLANTABLE:
+        return "unplantable"
+    if cls in ("open_patch", "vacant_slot", "manual_add"):
+        return "definite_plant"
+    if cls == "uncertain":
+        return "review"
+    return "not_needed"
+
+
+def export_bundle(payload: dict, outdir: Path, base_obj: dict | None = None) -> dict:
+    """把**用户人工复核后的要素**导出成完整交付包。
+
+    权威几何/属性全部复用 `scripts/export_arcgis.py`（ArcGIS 导入指南承诺的
+    WGS84 + UTM49N 双坐标系 GeoJSON / Shapefile、8 分类 KML、按类别分包），
+    补种点位复用 `planting_points.py`。这里只负责三件事：
+
+      ① 把编辑后的要素组装成 export_arcgis 认识的对象；
+      ② 决定输出目录；
+      ③ 生成一页汇总报告。
+
+    ⚠️ **网格参数必须来自磁盘上的算法结果**（`base_obj["planting_grid"]`），
+       不能只用前端传来的 —— 前端只有 `anchor_lon/lat`，缺 `origin_x_m/origin_y_m`，
+       拿它构造 GridModel 会让所有放样点整体平移。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import export_arcgis as EA
+    from report_summary import build_report_html
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    feats = (payload or {}).get("gaps", {}).get("features", []) or []
+    if not feats:
+        return {"ok": False, "error": "没有可导出的要素（gaps.features 为空）", "outdir": str(outdir)}
+
+    base = base_obj or {}
+    # 网格：磁盘上的算法结果优先（含 UTM 原点），前端只作兜底
+    grid = base.get("planting_grid") or (payload or {}).get("planting_grid") or {}
+    clearance = float((payload or {}).get("clearance_m") or 0.5)
+
+    # 组装：顶层 features 给 export_arcgis，blocks 给 planting_points
+    obj = {
+        "type": "FeatureCollection",
+        "features": feats,
+        "planting_grid": grid,
+        "blocks": [{"gaps": feats}],
+    }
+    features = EA.build_features(obj)
+    tr = EA.Transformer.from_crs(EA.WGS84, EA.UTM49N, always_xy=True)
+
+    files: list[str] = []
+    notes: list[str] = []
+
+    def add(p: Path) -> None:
+        if p.exists():
+            files.append(str(p))
+
+    # ---- 1) 双坐标系 GeoJSON ----
+    EA.write_geojson_wgs84(features, obj, outdir / "gaps-all-wgs84.geojson")
+    add(outdir / "gaps-all-wgs84.geojson")
+    EA.write_geojson_utm(features, tr, outdir / "gaps-all-utm49n.geojson")
+    add(outdir / "gaps-all-utm49n.geojson")
+
+    # ---- 2) Shapefile（ArcGIS 用）----
+    try:
+        EA.write_shp_zip(features, outdir / "gaps-all-wgs84-shp.zip",
+                         projected=False, prj=EA.PRJ_WGS84)
+        add(outdir / "gaps-all-wgs84-shp.zip")
+        EA.write_shp_zip(features, outdir / "gaps-all-utm49n-shp.zip",
+                         projected=True, tr=tr, prj=EA.PRJ_UTM49N)
+        add(outdir / "gaps-all-utm49n-shp.zip")
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"Shapefile 生成失败（其余交付物不受影响）：{e}")
+
+    # ---- 3) KML（Google Earth / 奥维）----
+    try:
+        EA.write_kml(features, outdir / "gaps-all.kml")
+        add(outdir / "gaps-all.kml")
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"KML 生成失败：{e}")
+
+    # ---- 4) 按类别分包 ----
+    try:
+        by_class_dir = outdir / "by-class"
+        by_class_dir.mkdir(exist_ok=True)
+        buckets: dict[str, list] = {}
+        for props, rings in features:
+            buckets.setdefault(props["cls"], []).append((props, rings))
+        for cls, sub in buckets.items():
+            z = by_class_dir / f"gaps-{cls}-utm49n-shp.zip"
+            EA.write_shp_zip(sub, z, projected=True, tr=tr, prj=EA.PRJ_UTM49N)
+            add(z)
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"按类别分包失败：{e}")
+
+    # ---- 5) 补种点位（权威结算）----
+    points_res = None
+    if grid.get("plant_pitch_m"):
+        try:
+            points_res = EA.export_planting_points(obj, outdir, clearance_m=clearance)
+            for name in (
+                "planting-points-wgs84.geojson",
+                "planting-points-utm49n.geojson",
+                "planting-points-wgs84-shp.zip",
+                "planting-points-utm49n-shp.zip",
+                "planting-points.kml",
+                "planting-points.csv",
+            ):
+                add(outdir / name)
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"补种点位生成失败（其余交付物不受影响）：{e}")
+    else:
+        notes.append("结果里缺少 planting_grid，已跳过放样点位（只有几何交付物）")
+
+    # ---- 6) 表格（业务方直接看）----
+    csv_path = outdir / "gaps-edited.csv"
+    lines = ["gap_id,class,class_label,area_sqm,lon,lat,edited,source"]
+    for f in feats:
+        pr = f.get("properties", {}) or {}
+        g = f.get("geometry", {}) or {}
+        lon = lat = ""
+        ring = None
+        if g.get("type") == "Polygon" and g.get("coordinates"):
+            ring = g["coordinates"][0]
+        elif g.get("type") == "MultiPolygon" and g.get("coordinates"):
+            ring = g["coordinates"][0][0]
+        if ring:
+            lon = f"{sum(pt[0] for pt in ring[:-1]) / max(1, len(ring) - 1):.7f}"
+            lat = f"{sum(pt[1] for pt in ring[:-1]) / max(1, len(ring) - 1):.7f}"
+        lines.append(",".join([
+            str(pr.get("gap_id", "")),
+            str(pr.get("class", "")),
+            str(pr.get("class_label", "")),
+            f"{float(pr.get('area_sqm') or 0):.1f}",
+            lon, lat,
+            "1" if pr.get("edited") else "0",
+            str(pr.get("source", "algo")),
+        ]))
+    csv_path.write_text("\n".join(lines), encoding="utf-8-sig")
+    add(csv_path)
+
+    # ---- 7) 一页汇总报告 ----
+    report_path = outdir / "补种勘察一页报告.html"
+    try:
+        tier_acc: dict[str, dict] = {
+            k: {"key": k, "label": _TIER_META[k][0], "hint": _TIER_META[k][1],
+                "count": 0, "area_sqm": 0.0}
+            for k in _TIER_ORDER
+        }
+        for f in feats:
+            pr = f.get("properties", {}) or {}
+            t = tier_acc[_tier_of(str(pr.get("class", "")))]
+            t["count"] += 1
+            t["area_sqm"] += float(pr.get("area_sqm") or 0)
+
+        # 每块空地的放样点数（有权威点位就按 gap_id 数，否则按面积折算）
+        per_gap_plants: dict[str, int] = {}
+        if points_res and points_res.get("points"):
+            for p in points_res["points"]:
+                per_gap_plants[p["gap_id"]] = per_gap_plants.get(p["gap_id"], 0) + 1
+
+        top = sorted(
+            (f for f in feats if _tier_of(str(f.get("properties", {}).get("class", ""))) == "definite_plant"),
+            key=lambda f: float(f.get("properties", {}).get("area_sqm") or 0),
+            reverse=True,
+        )[:20]
+
+        top_rows = []
+        for f in top:
+            pr = f.get("properties", {}) or {}
+            gid = str(pr.get("gap_id", ""))
+            ring = None
+            g = f.get("geometry", {}) or {}
+            if g.get("type") == "Polygon" and g.get("coordinates"):
+                ring = g["coordinates"][0]
+            elif g.get("type") == "MultiPolygon" and g.get("coordinates"):
+                ring = g["coordinates"][0][0]
+            lon = lat = 0.0
+            if ring:
+                lon = sum(pt[0] for pt in ring[:-1]) / max(1, len(ring) - 1)
+                lat = sum(pt[1] for pt in ring[:-1]) / max(1, len(ring) - 1)
+            plants = per_gap_plants.get(gid)
+            if plants is None:
+                plants = int(float(pr.get("area_sqm") or 0) / 66.67)
+            top_rows.append({
+                "gap_id": gid,
+                "cls_label": str(pr.get("class_label") or EA.CLASS_LABEL_CN.get(
+                    str(pr.get("class", "")), "")),
+                "area_sqm": float(pr.get("area_sqm") or 0),
+                "plants": plants,
+                "lon": lon, "lat": lat,
+            })
+
+        audit = (payload or {}).get("audit") or {}
+        added = int(audit.get("added") or sum(1 for f in feats
+                                              if (f.get("properties") or {}).get("source") == "manual"))
+        edited = int(audit.get("edited") or sum(
+            1 for f in feats
+            if (f.get("properties") or {}).get("edited") and
+            (f.get("properties") or {}).get("source") != "manual"))
+        deleted = int(audit.get("deleted") or 0)
+
+        img = (payload or {}).get("image") or {}
+        if not img:
+            meta = base.get("params") or {}
+            img = {
+                "name": Path(str(base.get("source_image") or "")).name,
+                "width": meta.get("width"), "height": meta.get("height"),
+                "res_m": meta.get("res_m"), "crs": meta.get("crs"),
+            }
+
+        pts = (points_res or {}).get("points") or []
+        by_src = (points_res or {}).get("by_source") or {}
+        report_html = build_report_html({
+            "project": (payload or {}).get("project") or "Forest Gap Detection · 补种勘察",
+            "generated_at": time.strftime("%Y-%m-%d %H:%M"),
+            "image": img,
+            "roi": (payload or {}).get("roi") or {"has_roi": False},
+            "grid": {
+                "plant_pitch_m": grid.get("plant_pitch_m"),
+                "row_pitch_m": grid.get("row_pitch_m"),
+                "azimuth_deg": grid.get("row_azimuth_deg"),
+                "density_per_ha": grid.get("density_per_ha"),
+            },
+            "clearance_m": clearance,
+            "tiers": [tier_acc[k] for k in _TIER_ORDER],
+            "estimate": {
+                "by_grid": (points_res or {}).get("total") or 0,
+                "by_area": int(sum(float(t["area_sqm"]) for t in
+                                   (tier_acc["definite_plant"],)) / 66.67),
+                "divergence_pct": _divergence(
+                    (points_res or {}).get("total") or 0,
+                    sum(float(t["area_sqm"]) for t in (tier_acc["definite_plant"],)),
+                ),
+                "points_total": len(pts),
+                "points_grid": by_src.get("grid", 0),
+                "points_slot": by_src.get("slot", 0),
+            },
+            "audit": {"added": added, "edited": edited, "deleted": deleted},
+            "top": top_rows,
+        })
+        report_path.write_text(report_html, encoding="utf-8")
+        add(report_path)
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"报告生成失败：{e}")
+
+    return {
+        "ok": True,
+        "outdir": str(outdir),
+        "files": files,
+        "notes": notes,
+        "counts": {
+            "features": len(features),
+            "planting_points": len((points_res or {}).get("points") or []),
+        },
+        "report": str(report_path) if report_path.exists() else None,
+    }
+
+
+def _divergence(points_total: int, definite_area_sqm: float) -> float:
+    """排坑法 vs 面积法的差异百分比（面积法按 66.67 m²/株）。"""
+    by_area = definite_area_sqm / 66.67 if definite_area_sqm else 0.0
+    if by_area <= 0:
+        return 0.0
+    return abs(points_total - by_area) / by_area * 100.0
+
+
+# --------------------------------------------------------------------------
+# HTTP 处理
+# --------------------------------------------------------------------------
+class Handler(BaseHTTPRequestHandler):
+    server_version = "FGD-TileServer/0.1"
+    tile_server: TileServer
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+        # 人类日志走 stderr（与 sidecar 的约定一致：stdout 不污染）
+        sys.stderr.write("  %s\n" % (fmt % args))
+
+    # ---- CORS ----
+    def _cors(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def _send(self, code: int, body: bytes, ctype: str) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, obj, code: int = 200) -> None:
+        self._send(
+            code,
+            json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+            "application/json; charset=utf-8",
+        )
+
+    # ---- 路由 ----
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path in ("/meta", "/"):
+            self._json(self.tile_server.meta())
+            return
+        if path == "/gaps":
+            self._send(200, self.tile_server.gaps_json(), "application/geo+json")
+            return
+        if path == "/planting-points":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                clr = float((qs.get("clearance") or ["0.5"])[0])
+            except ValueError:
+                self._json({"ok": False, "error": "clearance 必须是数字"}, 400)
+                return
+            if not (0.0 <= clr <= 10.0):
+                self._json({"ok": False, "error": "clearance 应在 0~10 m"}, 400)
+                return
+            try:
+                body = self.tile_server.planting_points_json(clr)
+            except Exception as e:  # noqa: BLE001
+                self._json({"ok": False, "error": f"点位生成失败：{e}"}, 500)
+                return
+            self._send(200, body, "application/geo+json")
+            return
+        if path.startswith("/tiles/"):
+            parts = path.strip("/").split("/")
+            if len(parts) != 4:
+                self._json({"ok": False, "error": "瓦片路径应为 /tiles/{z}/{x}/{y}.png"}, 400)
+                return
+            try:
+                z, x, y = int(parts[1]), int(parts[2]), int(parts[3].split(".")[0])
+            except ValueError:
+                self._json({"ok": False, "error": "z/x/y 必须是整数"}, 400)
+                return
+            if not (0 <= z <= 22) or x < 0 or y < 0 or x >= 2 ** z or y >= 2 ** z:
+                self._json({"ok": False, "error": "瓦片索引越界"}, 400)
+                return
+            self._send(200, self.tile_server.tile(z, x, y), "image/png")
+            return
+        self._json({"ok": False, "error": f"未知路径 {path}"}, 404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8") or "{}")
+        except Exception as e:
+            self._json({"ok": False, "error": f"JSON 解析失败：{e}"}, 400)
+            return
+
+        if path == "/export":
+            outdir = Path(payload.get("outdir") or (ROOT / "output" / "desktop-export"))
+            if not outdir.is_absolute():
+                outdir = ROOT / outdir
+            base_obj = None
+            gp = self.tile_server.gaps_path
+            if gp and Path(gp).exists():
+                try:
+                    base_obj = json.loads(Path(gp).read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    base_obj = None
+            try:
+                self._json(export_bundle(payload, outdir, base_obj))
+            except Exception as e:
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+                self._json({"ok": False, "error": f"导出失败：{e}"}, 500)
+            return
+
+        if path == "/detect":
+            self._json(
+                {
+                    "ok": False,
+                    "error": "detect 不由本服务提供",
+                    "hint": (
+                        "检测走 stdio NDJSON sidecar（scripts/sidecar.py），"
+                        "由 Tauri 宿主 spawn 子进程调用；浏览器原型无法启动子进程。"
+                        "命令行等价命令见 scripts/tile_server.py 顶部注释。"
+                    ),
+                },
+                501,
+            )
+            return
+
+        self._json({"ok": False, "error": f"未知路径 {path}"}, 404)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="桌面端原型：本地瓦片 / 辅助服务")
+    ap.add_argument("--source", default="", help="正射影像路径（默认自动探测）")
+    ap.add_argument("--gaps", default="", help="检测结果 GeoJSON（默认自动探测 output/）")
+    ap.add_argument("--host", default="127.0.0.1", help="仅监听本机（默认 127.0.0.1）")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--cache", type=int, default=512, help="瓦片内存缓存条数")
+    ap.add_argument(
+        "--build-overviews",
+        action="store_true",
+        help="启动前确保影像有金字塔（默认**不修改源文件**，策略见 --ovr-mode）",
+    )
+    ap.add_argument(
+        "--ovr-mode",
+        choices=["auto", "copy", "gdal", "inplace"],
+        default="auto",
+        help="金字塔策略：auto=有 gdaladdo 则生成外置 .ovr，否则复制副本（都不碰源文件）；"
+        "copy=总是复制副本；gdal=强制外置 .ovr（需 gdaladdo）；"
+        "inplace=就地写入源文件（不可逆，需显式指定）",
+    )
+    args = ap.parse_args()
+
+    source = Path(args.source) if args.source else next(
+        (p for p in SOURCE_CANDIDATES if p.exists()), None
+    )
+    if source is None or not Path(source).exists():
+        print("❌ 找不到正射影像，请用 --source 指定：", file=sys.stderr)
+        for p in SOURCE_CANDIDATES:
+            print(f"   尝试过 {p}", file=sys.stderr)
+        return 2
+
+    source = Path(source)
+    if args.build_overviews:
+        try:
+            source, ovr_note = ensure_overviews(
+                source, ROOT / "output" / ".tile-cache", args.ovr_mode
+            )
+        except RuntimeError as e:
+            print(f"❌ {e}", file=sys.stderr)
+            return 3
+        print(f"  金字塔：{ovr_note}", file=sys.stderr)
+        if source != Path(args.source or source):
+            print(f"  实际服务影像：{source}", file=sys.stderr)
+    else:
+        with rasterio.open(source) as _ds:
+            if not _ds.overviews(1):
+                print("  ⚠️ 影像无金字塔：低缩放级瓦片会非常慢"
+                      "（z=13 约 104 s、z=15 约 35 s）。", file=sys.stderr)
+                print("     加 --build-overviews 即可（默认不会修改源文件）", file=sys.stderr)
+
+    gaps = Path(args.gaps) if args.gaps else next(
+        (p for p in GAPS_CANDIDATES if p.exists()), None
+    )
+
+    ts = TileServer(Path(source), gaps, cache_size=args.cache)
+    m = ts.meta()
+    print("=" * 66, file=sys.stderr)
+    print("Forest Gap Detection · 本地瓦片服务", file=sys.stderr)
+    print(f"  影像      : {m['source']}", file=sys.stderr)
+    print(
+        f"  尺寸/CRS  : {m['width']}×{m['height']} px · {m['crs']} · {m['res_m']:.3f} m/px",
+        file=sys.stderr,
+    )
+    print(f"  金字塔    : {'有' if m['has_overviews'] else '无（已启用窗口降采样读，内存安全）'}",
+          file=sys.stderr)
+    if not m["has_overviews"]:
+        print("              ⚠️ 无金字塔时低缩放级瓦片很慢（z=15 约 35 s、z=13 约 104 s）。", file=sys.stderr)
+        print("                 建议先跑一次：--build-overviews（一次性，约 1 GB 边车文件）", file=sys.stderr)
+    print(f"  检测结果  : {gaps if gaps else '（未找到，/gaps 将返回空集合）'}", file=sys.stderr)
+    print(f"  监听      : http://{args.host}:{args.port}", file=sys.stderr)
+    print(f"  端点      : /meta  /tiles/{{z}}/{{x}}/{{y}}.png  /gaps  "
+          f"/planting-points?clearance=0.5  /export", file=sys.stderr)
+    print("=" * 66, file=sys.stderr)
+    sys.stderr.flush()
+
+    Handler.tile_server = ts
+    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    srv.daemon_threads = True
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        print("\n已停止", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    raise SystemExit(main())

@@ -68,10 +68,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import multiprocessing as mp
 import os
 import shutil
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from functools import wraps
@@ -572,7 +574,7 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
 # ============================================================================
 def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                  args, out_dir: Path, elevation=None,
-                 elev_params=None) -> dict:
+                 elev_params=None, roi_geom=None) -> dict:
     """处理一个瓦片，返回该瓦片的结果字典（也写盘）。
 
     流程与 detect.py 一致，差别在于：
@@ -585,6 +587,11 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
     rgb = np.transpose(data[:3], (1, 2, 0))
     valid = ~np.all(data[:3] == 0, axis=0) if data.shape[0] >= 3 else np.ones(
         data.shape[1:], dtype=bool)
+    # ROI 圈选裁剪：圈外像素直接置为无效（与 --forest-mask 同构，方向相反）。
+    # 用 all_touched=True 栅格化，让压在边界上的瓦片多保留一点像素，
+    # 避免 ROI 边界把空地切出锯齿（1.6 m 开运算 + 0.3 m 简化会再平滑一次）。
+    if roi_geom is not None:
+        valid &= _roi_mask_for(roi_geom, win_buf, ds, valid.shape)
 
     # 有效数据太少直接跳过（影像外接矩形里有大片 NoData）
     if valid.mean() < args.min_valid_ratio:
@@ -878,6 +885,101 @@ def load_tile_result(path: Path, expect_fp: str) -> dict | None:
 
 
 # ============================================================================
+# 多进程跑批（2026-10-17，--workers）
+# ============================================================================
+#
+# 为什么能加速：单瓦片 ~2 秒，绝大部分时间在 numpy / scipy / GDAL 的 C 层，
+# 不持有 GIL，天然适合多进程。
+#
+# ★ 四条护栏（缺一条就会"提速了但数字变了"或"反而更慢"）
+#
+# 1｜**按 tile_idx 排序后再累加**。并发完成顺序是随机的，而串行版是按
+#    tiles 顺序累加 all_features / class_totals / area_total。若不排序，
+#    浮点加法顺序变化 → 末位抖动 → 破坏"逐位可复现"红线。
+#    做法：worker 返回 (idx, ...)，主进程 results.sort(key=idx) 后再累加。
+#
+# 2｜**子进程只开一次大文件句柄**。Windows 用 spawn，DatasetReader 不可
+#    pickle。若每个瓦片都 rasterio.open 一次正射影像 + CHM + segment，
+#    528 个瓦片就是 1,500+ 次 4.6 GB 文件的头部解析，提速全被吃掉。
+#    做法：ProcessPoolExecutor(initializer=_worker_init) 在子进程启动时开一次。
+#
+# 3｜**锁死底层线程数**。numpy/scipy/GDAL 默认各自多线程；6 个 worker ×
+#    每个 8~16 线程 = 上百线程抢 CPU 与磁盘锁，实测会比单进程还慢。
+#    做法：_worker_init 里设 OMP/MKL/OPENBLAS/NUMEXPR/GDAL_NUM_THREADS=1。
+#
+# 4｜**子进程绝不写 stdout**。sidecar 的 stdout 是 NDJSON 数据通道。
+#    进度事件全部由主进程在 as_completed 循环里按原有节奏输出。
+#
+# ⚠️ `workers` **不进参数指纹**：进程数不影响单瓦片结果，改它不该让
+#    528 个瓦片的缓存全部失效（重跑一次 1,048 秒）。
+_WORKER: dict = {}
+
+
+def resolve_workers(n: int) -> int:
+    """把 --workers 归一成实际进程数。0 = 自动（min(6, cpu//2)）。"""
+    if n and n > 0:
+        return max(1, min(int(n), 32))
+    cpu = os.cpu_count() or 4
+    return max(1, min(6, cpu // 2))
+
+
+def _worker_init(in_path: str, chm_path, seg_path, px_m: float, grid,
+                 args, out_dir: str, elev_params, roi_geom, fp: str) -> None:
+    """子进程启动钩子：锁线程 + 开一次句柄。**不要在这里写 stdout。**"""
+    # 护栏 3：进程内单线程，把并行度完全交给外层进程池
+    for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+              "NUMEXPR_NUM_THREADS", "GDAL_NUM_THREADS"):
+        os.environ[k] = "1"
+
+    import rasterio as _rio
+    ds = _rio.open(in_path)
+    _WORKER.update({
+        "ds": ds, "px_m": px_m, "grid": grid, "args": args,
+        "out_dir": Path(out_dir), "elev_params": elev_params,
+        "roi_geom": roi_geom, "fp": fp, "elevation": None,
+    })
+    # 护栏 2：海拔证据（CHM / segment）也只开一次
+    if elev_params is not None and getattr(elev_params, "enabled", False) and (chm_path or seg_path):
+        try:
+            ev = ElevationEvidence(chm_path, seg_path, ortho_transform=ds.transform)
+            _WORKER["elevation"] = ev if ev.available else None
+        except Exception:  # noqa: BLE001
+            _WORKER["elevation"] = None
+
+
+def _worker_run(task: tuple[int, Tile]) -> tuple:
+    """处理一个瓦片。返回 (idx, tile_id, status, gaps, stats, error)。
+
+    异常在这里就地吞掉并写成 failed 瓦片文件（与串行版行为一致）——
+    让主进程能继续跑完其余瓦片，而不是整个池子崩掉。
+    """
+    idx, tile = task
+    tf = _WORKER["out_dir"] / f"{tile.tile_id}.json"
+    try:
+        res = process_tile(_WORKER["ds"], tile, _WORKER["px_m"], _WORKER["grid"],
+                           _WORKER["args"], _WORKER["out_dir"],
+                           elevation=_WORKER["elevation"],
+                           elev_params=_WORKER["elev_params"],
+                           roi_geom=_WORKER["roi_geom"])
+        res["fingerprint"] = _WORKER["fp"]
+        res["generated_at"] = datetime.now(timezone.utc).isoformat()
+        atomic_write_json(tf, res)
+        return (idx, tile.tile_id, res.get("status", "done"),
+                res.get("gaps", []), res.get("stats", {}), None)
+    except Exception as e:  # noqa: BLE001
+        err = f"{type(e).__name__}: {str(e)[:300]}"
+        atomic_write_json(tf, {
+            "tile_id": tile.tile_id, "status": "failed", "error": err,
+            "fingerprint": _WORKER["fp"],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "core": {"row": tile.row_core, "col": tile.col_core,
+                     "height": tile.h_core, "width": tile.w_core},
+            "gaps": [], "stats": {},
+        })
+        return (idx, tile.tile_id, "failed", [], {}, err)
+
+
+# ============================================================================
 # 主流程
 # ============================================================================
 def build_argparser() -> argparse.ArgumentParser:
@@ -900,6 +1002,10 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--force", action="store_true", help="忽略已有瓦片缓存，全部重算")
     ap.add_argument("--merge-only", action="store_true", help="只合并已有瓦片，不处理")
     ap.add_argument("--grid-only", action="store_true", help="只做网格勘察，不处理空地")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="并行进程数。1=串行（默认，与历史行为完全一致）；"
+                         "0=自动 min(6, cpu//2)；建议 4~6。"
+                         "⚠️ 进程数不进参数指纹，改它不会让瓦片缓存失效")
     ap.add_argument("--min-valid-ratio", type=float, default=0.05,
                     help="瓦片有效数据低于该比例则跳过。默认 0.05")
 
@@ -978,11 +1084,18 @@ def build_argparser() -> argparse.ArgumentParser:
                     "需补种空地会改判为 undeveloped 且不计入需补种。"
                     "可用 scripts/build_forest_mask.py 自动生成后在 ArcGIS 里复核。"
                     "留空则不启用")
+    ap.add_argument("--roi", default="",
+                    help="只检测该多边形内的区域（.geojson / .kml，EPSG:4326）。"
+                    "圈外瓦片**直接跳过不读盘**（提速主来源），圈外不产出任何要素。"
+                    "与 --forest-mask 方向相反：ROI 是「只算这里」，掩膜是「这里不算」，"
+                    "两者可同时使用。留空则不启用")
     ap.add_argument("--quiet", action="store_true", help="精简日志")
     return ap
 
 
 def main() -> int:
+    # Windows / PyInstaller 打包后必须调用，否则多进程会无限递归启动自己
+    mp.freeze_support()
     ap = build_argparser()
     args = ap.parse_args()
 
@@ -1041,6 +1154,11 @@ def main() -> int:
         "no_grass_grid": args.no_grass_grid,
         "method": args.method,
     }
+    # ⚠️ ROI 只在**启用时**加入指纹：
+    #    不加 → 会错误复用"无 ROI"的瓦片缓存（圈外结果被带进来）；
+    #    无条件加 → 无 ROI 的既有缓存全部失效（重跑一次全量 1,048 秒）。
+    if getattr(args, "roi", ""):
+        fp_params["roi_path"] = args.roi
     fp = fingerprint(str(in_path), fp_params)
     log(f"任务 {args.job}  参数指纹 {fp}")
     log(f"中间态目录 {job_dir}")
@@ -1075,8 +1193,47 @@ def main() -> int:
     log(f"瓦片 {args.tile_size}px、外扩 {args.overlap}px"
         f"（外扩 ≈ {args.overlap * px_m:.1f} m）")
 
+    # --- ROI 圈选（2026-10-17 新增，R-P0-11）---
+    # 两层裁剪：① 瓦片级：与 ROI 不相交的瓦片**不读盘**（提速主来源）；
+    #           ② 像素级：在 process_tile 里把圈外像素置为无效（保证输出只含圈内）。
+    roi_geom = None
+    roi_source = None
+    if getattr(args, "roi", ""):
+        try:
+            roi_geom, roi_info = load_roi(args.roi, ds.crs)
+            if roi_geom is None:
+                log(f"⚠️ ROI 无有效多边形，按全图处理：{roi_info.get('reason')}")
+            else:
+                roi_source = str(args.roi)
+                log(f"ROI 圈选：{roi_info['n_parts']} 个多边形，"
+                    f"面积 {roi_info['area_m2'] / 1e4:.2f} 公顷"
+                    f"（{roi_info['src_crs']} → {ds.crs}）")
+                before = len(tiles)
+                tiles = tiles_in_roi(ds, tiles, roi_geom)
+                log(f"ROI 裁剪瓦片：{before} → {len(tiles)} 块"
+                    f"（跳过圈外 {before - len(tiles)} 块，"
+                    f"省下 {(before - len(tiles)) / max(before, 1) * 100:.0f}% 的读盘与计算）")
+                if not tiles:
+                    log("❌ ROI 与影像无交集，请检查圈选范围是否落在影像内")
+                    ds.close()
+                    return 2
+        except Exception as e:  # noqa: BLE001
+            log(f"⚠️ ROI 加载失败，已按全图处理：{e}")
+            roi_geom = None
+            roi_source = None
+
     # --- 网格勘察 ---
-    grid, report = survey_grid(ds, tiles, px_m, sample_n=args.survey_samples,
+    # ⚠️ ROI 保护（外部顾问提醒的暗坑）：若用户只圈了一小块、里面几乎没树，
+    # 严格按 ROI 采样会让 7 块网格勘察样本不足 → 株距/方位角拟合失败。
+    # 因此：采样优先 ROI 内，瓦片太少时**回退全图**；但空地检测仍严格限制在 ROI 内。
+    survey_tiles = tiles
+    if (roi_geom is not None and len(tiles) < max(4, args.survey_samples * 2)
+            and len(good) > len(tiles)):
+        survey_tiles = good
+        log(f"ROI 内仅 {len(tiles)} 块瓦片，网格勘察回退到全图 {len(good)} 块采样"
+            f"（保证网格拟合稳定；空地检测仍限制在 ROI 内）")
+
+    grid, report = survey_grid(ds, survey_tiles, px_m, sample_n=args.survey_samples,
                                prior_pitch_m=args.prior_pitch_m,
                                pct=args.pct, sigma=args.sigma,
                                exg_threshold=args.exg_threshold,
@@ -1132,6 +1289,9 @@ def main() -> int:
     area_total = 0.0
     t_proc = time.time()
 
+    # ---- 第 1 步：按**原始顺序**吃掉命中缓存的瓦片（与串行版完全一致）----
+    # 缓存判定必须留在主进程：它要按 tiles 顺序累加，顺序变了浮点末位就会抖。
+    pending: list[tuple[int, Tile]] = []
     for i, tile in enumerate(tiles, 1):
         tf = tiles_dir / f"{tile.tile_id}.json"
 
@@ -1151,44 +1311,92 @@ def main() -> int:
 
         if args.merge_only:
             continue
+        pending.append((i, tile))
 
-        try:
-            res = process_tile(ds, tile, px_m, grid, args, tiles_dir,
-                               elevation=elevation,
-                               elev_params=elev_params)
-            res["fingerprint"] = fp
-            res["generated_at"] = datetime.now(timezone.utc).isoformat()
-            atomic_write_json(tf, res)
+    workers = resolve_workers(getattr(args, "workers", 1) or 1)
+    # 瓦片太少时 spawn 开销不划算（Windows 每个子进程约 1 秒），直接串行
+    use_pool = workers > 1 and len(pending) >= max(4, workers * 2)
+
+    if use_pool:
+        log(f"多进程跑批：{workers} 个 worker · 待处理 {len(pending)} 个瓦片"
+            f"（已命中缓存 {skipped} 个）")
+        results: list[tuple] = []
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_worker_init,
+            initargs=(str(in_path), args.chm or None, args.segment or None,
+                      px_m, grid, args, str(tiles_dir), elev_params, roi_geom, fp),
+        ) as ex:
+            futures = [ex.submit(_worker_run, t) for t in pending]
+            for n, fut in enumerate(as_completed(futures), 1):
+                results.append(fut.result())
+                step = max(1, len(pending) // 20)
+                if n % step == 0 or n == len(pending):
+                    el = time.time() - t_proc
+                    rate = n / el if el > 0 else 0
+                    eta = (len(pending) - n) / rate if rate > 0 else 0
+                    log(f"  进度 {n}/{len(pending)}（{(n/len(pending))*100:5.1f}%）"
+                        f"  用时 {el:5.0f}s  预计剩余 {eta:5.0f}s")
+
+        # 护栏 1：**严格按 tile_idx 升序**累加，保证与串行版逐位一致
+        results.sort(key=lambda r: r[0])
+        for _idx, tid, status, gaps, stats, err in results:
             done += 1
-            if res["status"] == "done":
-                all_features.extend(res["gaps"])
-                area_total += res["stats"]["area_sqm"]
-                for k, v in res["stats"]["by_class"].items():
+            if err:
+                failed += 1
+                log(f"  ✗ {tid} 处理失败：{err[:150]}")
+                continue
+            if status == "done":
+                all_features.extend(gaps)
+                area_total += stats.get("area_sqm", 0.0)
+                for k, v in stats.get("by_class", {}).items():
                     if k in class_totals:
                         class_totals[k] += v
-        except Exception as e:  # noqa: BLE001
-            failed += 1
-            log(f"  ✗ {tile.tile_id} 处理失败：{type(e).__name__}: {str(e)[:150]}")
-            atomic_write_json(tf, {
-                "tile_id": tile.tile_id, "status": "failed",
-                "error": f"{type(e).__name__}: {str(e)[:300]}",
-                "fingerprint": fp,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "core": {"row": tile.row_core, "col": tile.col_core,
-                         "height": tile.h_core, "width": tile.w_core},
-                "gaps": [], "stats": {},
-            })
-            continue
+    else:
+        # ---- 串行分支（workers=1，或瓦片太少不值得起进程池）----
+        for n, (i, tile) in enumerate(pending, 1):
+            tf = tiles_dir / f"{tile.tile_id}.json"
+            try:
+                res = process_tile(ds, tile, px_m, grid, args, tiles_dir,
+                                   elevation=elevation,
+                                   elev_params=elev_params,
+                                   roi_geom=roi_geom)
+                res["fingerprint"] = fp
+                res["generated_at"] = datetime.now(timezone.utc).isoformat()
+                atomic_write_json(tf, res)
+                done += 1
+                if res["status"] == "done":
+                    all_features.extend(res["gaps"])
+                    area_total += res["stats"]["area_sqm"]
+                    for k, v in res["stats"]["by_class"].items():
+                        if k in class_totals:
+                            class_totals[k] += v
+            except Exception as e:  # noqa: BLE001
+                failed += 1
+                log(f"  ✗ {tile.tile_id} 处理失败：{type(e).__name__}: {str(e)[:150]}")
+                atomic_write_json(tf, {
+                    "tile_id": tile.tile_id, "status": "failed",
+                    "error": f"{type(e).__name__}: {str(e)[:300]}",
+                    "fingerprint": fp,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "core": {"row": tile.row_core, "col": tile.col_core,
+                             "height": tile.h_core, "width": tile.w_core},
+                    "gaps": [], "stats": {},
+                })
+                continue
 
-        # --- 进度输出 ---
-        step = max(1, len(tiles) // 20)
-        if i % step == 0 or i == len(tiles):
-            el = time.time() - t_proc
-            rate = i / el if el > 0 else 0
-            eta = (len(tiles) - i) / rate if rate > 0 else 0
-            log(f"  进度 {i}/{len(tiles)}（{(i/len(tiles))*100:5.1f}%）"
-                f"  用时 {el:5.0f}s  预计剩余 {eta:5.0f}s"
-                f"  空地累计 {len(all_features)} 块 / {area_total:,.0f} m²")
+            # --- 进度输出（主进程，按原始顺序）---
+            step = max(1, len(pending) // 20)
+            if n % step == 0 or n == len(pending):
+                el = time.time() - t_proc
+                rate = n / el if el > 0 else 0
+                eta = (len(pending) - n) / rate if rate > 0 else 0
+                log(f"  进度 {n}/{len(pending)}（{(n/len(pending))*100:5.1f}%）"
+                    f"  用时 {el:5.0f}s  预计剩余 {eta:5.0f}s"
+                    f"  空地累计 {len(all_features)} 块 / {area_total:,.0f} m²")
+
+    log(f"瓦片处理完成：新算 {done} · 命中缓存 {skipped} · 失败 {failed}"
+        f"（{time.time() - t_proc:.1f} s，workers={workers if use_pool else 1}）")
 
     # --- 若 --merge-only 或本轮全部命中缓存，则从磁盘把结果读全 ---
     if args.merge_only or (done == 0 and skipped == len(tiles)):
@@ -1285,6 +1493,141 @@ def _reload_from_disk(tiles_dir: Path, tiles: list[Tile], fp: str
             if k in counts:
                 counts[k] += v
     return feats, counts, area
+
+
+# ---------------------------------------------------------------------------
+# ROI 圈选裁剪（2026-10-17 新增，需求 R-P0-11）
+#
+# 与 `--forest-mask` 的区别（很容易混淆，务必分清）：
+#   · `--forest-mask` ：「这里**不算**」—— 把已判出的空地改判为非种植区；
+#   · `--roi`          ：「**只算**这里」—— 圈外瓦片直接跳过，圈外不产出要素。
+# 两者可同时使用：先按 ROI 限制范围，再在范围内扣掉非种植区。
+# ---------------------------------------------------------------------------
+def _read_kml_polygons(p: Path) -> list:
+    """从 KML 里抠出所有多边形环。
+
+    ⚠️ 简化处理：`<innerBoundaryIs>`（洞）也会被当成独立多边形。
+    对 ROI 用途（取并集当"只算这里"的范围）影响可忽略，不做严格拓扑。
+    """
+    import xml.etree.ElementTree as ET
+    from shapely.geometry import Polygon
+
+    polys = []
+    try:
+        root = ET.parse(p).getroot()
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"KML 解析失败：{e}") from e
+
+    for node in root.iter():
+        if not node.tag.endswith("coordinates"):
+            continue
+        txt = (node.text or "").strip()
+        if not txt:
+            continue
+        ring = []
+        for tok in txt.split():
+            parts = tok.split(",")
+            if len(parts) >= 2:
+                try:
+                    ring.append((float(parts[0]), float(parts[1])))
+                except ValueError:
+                    continue
+        if len(ring) >= 4:
+            polys.append(Polygon(ring))
+    return polys
+
+
+def load_roi(path: str, dst_crs) -> tuple[object | None, dict]:
+    """读取 ROI 多边形（`.geojson` / `.kml`），并转换到影像 CRS。
+
+    返回 `(shapely 几何 或 None, 元信息字典)`。
+    """
+    from shapely.geometry import shape as _shape
+    from shapely.ops import transform as _shp_transform, unary_union
+    from pyproj import Transformer as _Tr
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"ROI 文件不存在：{p}")
+
+    suffix = p.suffix.lower()
+    src_crs = "EPSG:4326"
+    if suffix == ".kml":
+        polys = _read_kml_polygons(p)
+    else:
+        gj = json.loads(p.read_text(encoding="utf-8"))
+        if gj.get("type") == "FeatureCollection":
+            feats = gj.get("features", [])
+        elif gj.get("type") == "Feature":
+            feats = [gj]
+        else:
+            feats = [{"geometry": gj}]
+        polys = []
+        for f in feats:
+            geom = f.get("geometry") or f
+            try:
+                g = _shape(geom)
+            except Exception:  # noqa: BLE001
+                continue
+            if not g.is_empty:
+                polys.append(g)
+        # GeoJSON 可能带投影 crs 成员；不认就按 4326
+        name = ((gj.get("crs") or {}).get("properties") or {}).get("name", "")
+        for code in ("3857", "32649", "32650", "4326"):
+            if code in str(name):
+                src_crs = f"EPSG:{code}"
+                break
+
+    if not polys:
+        return None, {"ok": False, "reason": "文件中没有有效多边形"}
+
+    geom = unary_union(polys)
+    if str(dst_crs) != src_crs:
+        geom = _shp_transform(
+            _Tr.from_crs(src_crs, dst_crs, always_xy=True).transform, geom)
+    if not geom.is_valid:
+        geom = geom.buffer(0)
+
+    return geom, {
+        "ok": True,
+        "source": str(p),
+        "src_crs": src_crs,
+        "n_parts": len(polys),
+        "area_m2": float(geom.area),
+    }
+
+
+def _tile_hits_roi(ds, tile: Tile, roi_geom) -> bool:
+    """瓦片 core 区是否与 ROI 相交。
+
+    **必须在读取栅格之前调用** —— 不相交就不读磁盘，这是 ROI 提速的主要来源。
+    """
+    from shapely.geometry import box as _box
+
+    win = rasterio.windows.Window(
+        tile.col_core, tile.row_core, tile.w_core, tile.h_core)
+    left, bottom, right, top = rasterio.windows.bounds(win, ds.transform)
+    return _box(left, bottom, right, top).intersects(roi_geom)
+
+
+def tiles_in_roi(ds, tiles: list[Tile], roi_geom) -> list[Tile]:
+    """过滤出与 ROI 相交的瓦片。
+
+    **必须在读取栅格之前调用** —— 不相交的瓦片连磁盘 IO 都不发生，
+    这是 ROI 提速的主要来源（全量 528 块 → 圈选后通常只剩几十块）。
+    """
+    return [t for t in tiles if _tile_hits_roi(ds, t, roi_geom)]
+
+
+def _roi_mask_for(roi_geom, win_buf, ds, shape) -> np.ndarray:
+    """把 ROI 栅格化到当前瓦片窗口（含外扩），返回 bool 掩膜。"""
+    from rasterio.features import rasterize as _rasterize
+    from rasterio.windows import transform as _win_transform
+
+    tr = _win_transform(win_buf, ds.transform)
+    m = _rasterize([(roi_geom, 1)], out_shape=shape, transform=tr,
+                   fill=0, all_touched=True, dtype="uint8")
+    return m.astype(bool)
 
 
 def _apply_forest_mask(features: list[dict], mask_path: str,
@@ -1401,8 +1744,10 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
         "crs": "EPSG:4326",
         "area_crs": TARGET_CRS,
         "source_image": in_path.name,
-        "kml_source": None,
+        "kml_source": None,          # 旧字段保留兼容（KML 裁剪已由 --roi 取代）
         "used_kml": False,
+        "roi_source": (getattr(args, "roi", "") or None),
+        "used_roi": bool(getattr(args, "roi", "")),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "processing": {
             "mode": "tiled_resumable",

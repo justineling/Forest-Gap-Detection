@@ -1,0 +1,31 @@
+[package]
+name = "fgd-desktop"
+version = "0.1.0"
+description = "Forest Gap Detection — 油棕园空地智能检测桌面端"
+authors = ["Forest Gap Detection Project"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "fgd_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ⚠️ 这里**不要**用 codegen-units=1 + lto=true + panic="abort" 的极限配置：
+#    实测在本机（8 核 / 16 GB，D 盘 target）会让 rustc 在编译
+#    windows-collections 时以 0xc0000005 (STATUS_ACCESS_VIOLATION) 崩溃 ——
+#    单进程内存峰值过高，不是代码错误，报错信息也完全看不出原因。
+#    折中：codegen-units=4 + thin LTO，编译稳定、体积只大几 MB。
+[profile.release]
+codegen-units = 4
+lto = "thin"
+opt-level = "s"
+strip = true

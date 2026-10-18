@@ -144,6 +144,65 @@
 1. 前端是 **React 18 + TS**，不是 Vue 3；绘图用 **Terra Draw**（不是 Leaflet-Geoman）。
 2. 算法主链路是 **stdio NDJSON sidecar**，不是 FastAPI HTTP 微服务；**只有瓦片走 HTTP**。
 3. 掩膜影响区间上界 **26%**（非 26.5%）；CHM 异常区块 **14.08~29.99 m**（非 17~30 m）。
+## ★ 桌面端（Tauri v2，2026-10-17 完成于 `feat/desktop-app`）
+
+技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
+Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
+
+**验收基线**：`npm test`（191 项断言）· `cargo test`（14）·
+契约测试 95/95 · `cargo check`。
+**打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
+`%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
+产物固定在项目内 `desktop/src-tauri/target`（脚本会中和 `CARGO_TARGET_DIR`）。
+
+**必须记住的 8 条**
+
+1. `output/*.geojson` 是 `blocks[].gaps` 结构、**没有顶层 features** → 前端按 features 读会静默空数组。
+2. **点位必须基于 `wgr17-final-gaps.geojson`**；`-elev-gaps` 多算 221 个点（把未开发林当可补种）。
+3. 前后端株数已对齐 0.00%（3,691）：`/gaps` 响应动态补 `planting_grid.anchor_lon/lat`。
+4. 退让 **0.5 m 是业务拍板**（2 m 会让 123 块单行缺株带排不出点），依据在 `lib/estimate.ts`。
+5. **Tauri ↔ sidecar 必须两个线程分别读 stdout/stderr**（64 KB 管道填满 → 永久死锁且无报错）；
+   参数名逐字对齐 `chm_path`/`segment_path`/`target_density_per_ha`（写错只回 W1001 照常跑完）。
+6. `--workers` 四条护栏（tile_idx 排序 / initializer 句柄 / 锁 BLAS+GDAL 线程 / 子进程不写 stdout）；
+   **workers 不进指纹**；瓦片 < max(4, workers*2) 自动退回串行。
+7. 打包三红线：`freeze_support()` 是 `__main__` 第一行；**`PROJ_DATA` 优先 rasterio 的 proj_data**
+   （rasterio MINOR=5 / pyproj MINOR=4，反了则冻结态 `CRS.from_epsg` 全崩）；
+   `[profile.release]` 用 `codegen-units=4` + `lto="thin"`（极限配置会让 rustc 0xc0000005 崩）。
+8. **dev 与 bundled 的数据基准必须分开**（`data_base()`），否则开发态明明有影像却弹"请选择影像"。
+9. **检测前必须预检**（`preflight_detect` / `preflight_core`）：chm / segment / 森林掩膜
+   缺了 sidecar **不报错只回 W1004 就照常跑完** → 结果退化成纯 RGB 或含未开发林。
+   ⚠️ `forest_mask_path` 曾经**从来没传过**（多 221 个放样点）；掩膜按
+   `output/forest-mask*.geojson` 前缀自动发现，**别写死文件名**。
+10. **`warn` 事件必须有处理分支**：W1001 / W1004 / W3001 都是"会算偏但不会报错"，
+    漏处理 = 用户完全看不到。进度合并用 `??` 不用 `||`（`done=0` 是合法值）。
+11. **可选出现的条带别用固定行数 grid**：`.app` 改 `flex column` + `body{flex:1}`，
+    否则孩子数变化时 `1fr` 会给错元素（地图区被压成内容高度）。
+12. **撤销栈**：快照 = `gaps.slice()`（要素不可变 → 结构共享，14 KB/步），上限 40；
+    **批量操作只压 1 步**；新操作清空 redo；`setGaps` 清空历史。
+    ⚠️ **TerraDraw 拖拽每几像素发一次 change** → 必须 1.5 s 时间窗合并，
+    否则拖一次就把栈吃光（按 Ctrl+Z 只看到边界一点点回退）。
+13. **框选必须传 `visibleClasses`**（`selectGapsInBox`）：默认只勾选「确定需补种」，
+    隐藏的 road/water 若被框选中，一次批量删除会静默抹掉 180 条道路。
+    不用 `queryRenderedFeatures`（随缩放变 / 测不到 / 不分类别）；
+    进框选模式要 disable `dragPan` + `boxZoom`（Shift+拖拽默认是拉框放大）。
+14. **快捷键要先判断焦点**：INPUT/TEXTAREA/SELECT/contenteditable 里一律让位。
+15. **KML 的 `<coordinates>` 是三维的**（`lon,lat,alt`）→ 必须只取前两维，
+    否则面积与 Terra Draw 静默算错；多多边形**取最大**（KML 常含图例框）。
+16. **导出的网格参数必须来自磁盘上的算法结果**：前端 `planting_grid` 缺
+    `origin_x_m/origin_y_m`，拿去构造 GridModel 会让放样点**整体平移**。
+17. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
+    标识符；要查 `<link href>` / `<script src>` / `<img src>` / `@import` / `url(`。
+
+**其它要点**
+
+- 建金字塔后网格 8.45/7.32 → **8.35/7.23 是变准了**（真实物理株行距）；跨影像版本须重立基线。
+- 重跑合并 `lib/mergeEdits.ts`：`keep_manual`/`overwrite`；质心落入 + 外接框 IoU 兜底；
+  删除优先；`replayed_from` 留痕；store 的 `deletedFeatures` **存几何**。
+- 组件抛错会卸载整棵 React 树 → 白屏；Terra Draw `start()` 必须在 `map.on('load')` 内 + ErrorBoundary。
+- 影像 **4 波段**（第 4 恒 255=Alpha）；`Window.intersection` 无交集时**抛错**不是返回空。
+- 三个 bat 在**项目根**：UTF-8 无 BOM + CRLF；`call 文件.bat 标签` 靠 shift+goto 分发、顶层不能
+  `setlocal`；搬家自愈只对项目内 target 生效。⚠️ 别手删安装目录（NSIS 会弹 "Unable to install"）。
+- docgen 教训：`gen_gdrive.py` 曾硬编码 `D:/WGR` → 探不到就把体积写成 `0 KB`，**静默改错文档**。
 
 ## 4. 红线与硬约定（违反会返工）
 - **Git**：绝不自动 commit，必须用户明确同意。提交前先 `git reset` 清空暂存区再按路径 `git add`
@@ -156,89 +215,39 @@
 - **测试**：`scripts/test_sidecar_contract.py` 期望 **95/95**，是改动前后的验收基线（约 1 分钟，合成影像）。
 - PowerShell 5.1 读 `.ps1` 必须有 UTF-8 BOM。
 
-## 5. 待办（截至 2026-10-14 深夜）
-- **P0** 重跑整幅 + 重导 ArcGIS → ✅ 已完成（728 秒 / 1048 块 / 285,424 m²；
-  交付包 `output/arcgis/`）。影像用 `C:\Users\Justine\Downloads\WGR17-002.tif`。
-  10-14 已用新结果重导（1442 要素 / 7 类分层，`scripts/export_arcgis.py`）。
-- **P1** 水体真实检出验证 → ✅ 已完成（10-14 目视：2 处真水✅ / 2 处白路误报❌
-  → `water_lum_max=160` 修复；现 water 8 块 / 605 m²）
-- **P2** `docs/README.md` 登记 → ✅ 已完成
-- **P3** git 提交 → ✅ 已完成（b532228 / ddc64dc / 2985e2d；10-14 追加
-  5157db6 / 1de8c49 / 7f7c1f8 / df4d899 / 377265b，**均未推送，等用户 push**）
-- **P4** 草地被误判成油棕 → ✅ 方案 B 已实施（10-14，df4d899）：
-  `_grid_period_filter` 全局格点贴合（连通域像素距最近格点中位 ≤3.5 m 判
-  油棕受光面/幼林，剔除出草地候选；网格质量 <0.15 不剔）。全量需补种
-  1350→1250 块 / 267,598→248,008 m²（-19,590 m² 伪草地）。⚠️ 仍待用户
-  指认 1~2 处已知草地真值坐标做终检（已知局限：与密林同瓦片的大片草荒
-  可能被误剔）
-- **P5** road 改判量级严重偏低 → ✅ **已解决**（2026-10-13 晚）。
-  改为「几何差集」：`gap_units &= ~(road|water|office)` 按像素扣除 + 掩膜单独成层。
-  不可种植 1,812 m² → **37,443 m²**（road 180 块 / water 18 块 / office 4 块），
-  需补种 285,424 → **239,710 m²**。⚠️ `--unplantable-overlap` 已失效（仅保留兼容）。
-- **P6（新）** 性能：`order_tiles_by_validity` 已加磁盘缓存（省 95 秒）；
-  栅格层 `min_area` 粗筛实测为**负优化**（1336s→2400s）已撤销并注释记录教训。
-  当前全量 939.7 秒（528 瓦片），距 12 分钟目标差 ~4 分钟（环境波动 2.45~4.65
-  秒/瓦片）
+## 5. 待办（截至 2026-10-17）
 
-## 6. 性能基线（2026-10-13 优化后）
-- 单瓦片 **3.0 秒**（2304² 含 128px 外扩）；整幅 528 瓦片 **728 秒**（仅空地）。
-  叠加不可种植几何差集 + 草地回检全链后 **939.7 秒**（10-14 实测，环境波动
-  2.45~4.65 秒/瓦片）。
+- ✅ 全部 P0~P6 旧待办已完成（重跑整幅 / 水体验证 / 文档登记 / 草地回检 /
+  road 几何差集 / 性能优化）。当前全量 **1,048 秒 / 528 瓦片**。
+- ✅ **多进程跑批已完成**（2026-10-17，`--workers`）：全量 1,048 s → **350 s**（6 workers，3.0×），
+  ROI 121 瓦片 462 s → 195 s（4 workers，2.37×），逐位可复现。四条护栏见 desktop/README
+- ⏳ **打包分发**：Python 目录进 Tauri `resources/`（裁定 `--onedir`，
+  严禁 `--onefile`）；文件对话框、安装包签名
+- ⏳ **合并策略实现**：重跑时「保留人工编辑 / 完全覆盖」两档（IoU>0.5 重放删除与改判）
+- ⏳ `active_learning.py` 仍未跑过
+
+## 6. 性能基线（2026-10-17）
+
+- 单瓦片 **~2 秒**（2304² 含 128px 外扩）；全量 528 瓦片 **1,048 秒**（串行）
+  → **350 秒**（`--workers 6`）；ROI 121 瓦片 462 → 195 秒（`--workers 4`）
 - **关键教训**：连通域统计**不要**逐域做全图 `lab == i` / `comp.sum()`，
-  改用 `np.bincount(lab.ravel())` 一次算完 + 只在各自 bbox 内取局部数组。
-  本次由此把 43 秒/瓦片降到 3 秒/瓦片，等价性已逐像素验证。
+  改用 `np.bincount(lab.ravel())` 一次算完 + 只在各自 bbox 内取局部数组
+  （43 秒/瓦片 → 3 秒/瓦片，等价性已逐像素验证）
 - **另一教训**：栅格层 `min_area` 粗筛是负优化（1336s→2400s）——连通域绝大多数
-  本就 > 30 m² 门槛，预筛不掉东西却多付 label + 布尔索引开销。
+  本就 > 30 m² 门槛，预筛不掉东西却多付 label + 布尔索引开销
 
 ---
+## ★ 更正：「油棕-南部」其实是「未开发森林-南部」（2026-10-16 用户核实）
 
-## ★ 重要更正：「油棕-南部」其实是「未开发森林-南部」（2026-10-16 用户核实）
+南部（col=30000, row=40000 一带）**是未开发天然林/次生林**。据此：
+DINOv2 判它非油棕**是对的**、CHM 仅 2.32 m **也是对的**。
+⚠️ 但**不要过度平反 DINOv2** —— 同一次留一验证里真油棕（西北）也被判成草地 79.7%，
+它不是可靠的油棕/草地判别器。结论不变：**不采用 DINOv2**。
 
-### 事实
-用户核实：原参考点「油棕-南部」（正射像素 col=30000, row=40000）
-所在的**南部区域是尚未开发的天然林 / 次生林**，不属于油棕种植区。
+**判别用「100 m 区块树心密度」，不用连通性**（DSM 平滑会粘连树冠）：
+油棕种植区 **110~160 株/ha**（P50=129）／未开发林 **20~60 株/ha**（中位 42）。
 
-### 这解释了此前所有"反常"数据（此前判断需修正）
-| 现象 | 旧解释（错） | 新解释（对） |
-|---|---|---|
-| DINOv2 把该点 99.2% 判为非油棕 | "DINOv2 被跨航带曝光带偏了" | **DINOv2 判对了** —— 野生阔叶林确实不是海星状油棕 |
-| 该点 CHM 仅 2.32 m | "DSM 渗高/方法错误" | **正确** —— 该点落在未开发林的低矮灌木丛上 |
-| 60 m 窗口 58.6% 是树、中心 0% | "参考点采样错误" | 两者都对：野生乔木(高)与林间灌木(矮)交错 |
-
-⚠️ **但不要过度平反 DINOv2**：同一次留一验证中，**真油棕（西北）也被 DINOv2
-判成草地 79.7%**。所以 DINOv2 不是一个可靠的油棕/草地判别器，只是在
-"野生林 vs 油棕"这个更粗的粒度上恰好判对。结论不变：**不采用 DINOv2**。
-
-### 判别依据（实测，稳定且物理可解释）
-`tree_info.json` 的树心表本质是在找**按种植方式栽下的果树**，因此：
-
-| 区域 | 100 m 区块树心密度 |
-|---|---|
-| 油棕种植区 | **110~160 株/ha**（P25=99 / P50=129 / P75=144） |
-| 未开发林（南部） | **20~60 株/ha**（中位 42） |
-
-→ 这个差异比 RGB 上的任何特征都稳定（RGB 上草地与油棕完全不可分）。
-→ 判别用**区块密度**，不用树冠连通性（实测最大连通域 37.6 ha 竟在
-   高密度种植区，因为 DSM 平滑把相邻树冠粘连了，连通性不可用）。
-
-### 对交付结果的影响（实测）
-- 需补种 **399,344 m²** 中，**57 块 / 69,535 m²（17.4%）** 落在未开发林区
-- 剔除后需补种 **329,809 m²**
-- ⚠️ 自动掩膜**对阈值敏感**：原始<70 → 15.4 ha / 影响 16.8%；
-  平滑σ1.5<70 → 6.2 ha / 4.0%；平滑σ1.5<90 → 17.0 ha / 20.3%
-  → **必须人工复核边界**，不能盲信自动结果
-
-### 已实现的机制
-1. `scripts/build_forest_mask.py` —— 按树心密度自动生成**候选**掩膜
-2. `scripts/apply_forest_mask.py` —— 对**已产出的**结果秒级重分类（免重跑）
-3. `process_image.py --forest-mask <geojson>` —— 跑管线时直接应用
-4. 新类别 **`undeveloped`（非种植区）**：计入 `UNPLANTABLE_CLASSES`，
-   不计入需补种，但**保留在输出中单独成层**便于复核
-5. `export_arcgis.py` 已支持（by-class 从 7 层扩到 8 层）
-
-### 教训
-**验证算法的"标准答案"本身也可能是错的。** 一个错标的参考点
-（把未开发林当成油棕）导致连续多轮误判"算法有 bug"，
-包括让我错误地否定了 DINOv2 的那次判定。
-→ 油棕参考点必须取在树冠中心（tree_info 树心 2 m 内）；
-  参考点的类别也要用多个独立证据交叉确认后再采信。
+**已实现**：`build_forest_mask.py` → `apply_forest_mask.py` → `--forest-mask` →
+新类别 `undeveloped`（单独成层，不计入需补种），`export_arcgis.py` 已扩到 8 层。
+⚠️ 自动掩膜**对阈值极敏感**（原始<70 → 影响 16.8%；平滑σ1.5<90 → 20.3%）→ **必须人工复核边界**。
+（更完整的缺陷台账见 `docs/03-算法教学/算法缺陷与桌面端协同看板.html`）

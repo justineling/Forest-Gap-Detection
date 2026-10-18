@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-ssr/
+tests/dist/
+*.local
+.vite/
+npm-debug.log*
