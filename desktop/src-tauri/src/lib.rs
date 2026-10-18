@@ -492,6 +492,294 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
 //
 //  ★ 护栏 3：CREATE_NO_WINDOW，否则每点一次"开始检测"就闪一个黑框。
 // ============================================================================
+// ============================================================================
+//  检测前预检（preflight_detect）
+//  ---------------------------------------------------------------------------
+//  为什么必须有这一步：`run_detect` 的参数里有 4 个**文件路径**，其中 chm / segment
+//  缺了不会报错 —— sidecar 只回一条 W1004 就照常跑完，结果退化成"纯 RGB"。
+//  用户在 350 秒后拿到一份看起来正常、语义完全不同的结果，这是最坏的一种失败。
+//
+//  所以把"文件在不在、输出目录写不写得进"提前到**点按钮之前**，
+//  并把能自动补的（森林掩膜）自动补上。
+// ============================================================================
+
+#[derive(serde::Serialize)]
+struct PreflightItem {
+    key: String,
+    label: String,
+    path: String,
+    /// ok | warn | error | info
+    status: String,
+    detail: String,
+}
+
+#[derive(serde::Serialize)]
+struct PreflightResult {
+    /// 无 error 即 true；warn 不阻塞，但前端要让用户确认
+    ok: bool,
+    items: Vec<PreflightItem>,
+    /// 补全后的参数（绝对路径 + 自动发现的森林掩膜），前端原样交给 run_detect
+    resolved: serde_json::Value,
+}
+
+fn pf_item(
+    key: &str,
+    label: &str,
+    path: &Path,
+    status: &str,
+    detail: impl Into<String>,
+) -> PreflightItem {
+    PreflightItem {
+        key: key.to_string(),
+        label: label.to_string(),
+        path: if path.as_os_str().is_empty() {
+            String::new()
+        } else {
+            path.to_string_lossy().to_string()
+        },
+        status: status.to_string(),
+        detail: detail.into(),
+    }
+}
+
+fn file_size_mb(p: &Path) -> f64 {
+    std::fs::metadata(p)
+        .map(|m| m.len() as f64 / 1_048_576.0)
+        .unwrap_or(0.0)
+}
+
+/// 参数里的路径 → 绝对路径（相对的按数据基准拼）
+fn absolutize(base: &Path, v: Option<&serde_json::Value>) -> Option<PathBuf> {
+    let s = v?.as_str()?.trim().to_string();
+    if s.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(&s);
+    Some(if p.is_absolute() { p } else { base.join(p) })
+}
+
+/// 在数据基准下找森林掩膜（文件名随实验变过，按前缀匹配取最新一个）。
+///
+/// ⚠️ 这个文件不是可选的：不套掩膜时未开发林会被算成可补种，
+///    实测会多出 221 个放样点（`wgr17-elev-gaps` vs `wgr17-final-gaps` 的差）。
+fn find_forest_mask(base: &Path) -> Option<PathBuf> {
+    let dir = base.join("output");
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(&dir).ok()? {
+        let Ok(e) = entry else { continue };
+        let p = e.path();
+        let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
+            continue;
+        };
+        if !name.starts_with("forest-mask") || !name.ends_with(".geojson") {
+            continue;
+        }
+        let mtime = std::fs::metadata(&p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+            best = Some((mtime, p));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// 预检的**纯逻辑**（不碰 AppHandle，便于单元测试）。
+///
+/// 所有路径都相对 `base`（dev=仓库根，bundled=数据根）解析。
+fn preflight_core(base: &Path, params: &serde_json::Value) -> PreflightResult {
+    let base = base;
+    let params = params;
+    let mut items: Vec<PreflightItem> = Vec::new();
+    let mut patch: Vec<(&'static str, String)> = Vec::new();
+    let mut has_error = false;
+
+    // ---- 1. 正射影像（必需）----
+    match absolutize(&base, params.get("input")) {
+        None => {
+            has_error = true;
+            items.push(pf_item(
+                "image", "正射影像", Path::new(""), "error",
+                "还没有选择影像",
+            ));
+        }
+        Some(p) if !p.exists() => {
+            has_error = true;
+            items.push(pf_item(
+                "image", "正射影像", &p, "error",
+                "文件不存在，请点「数据」重新选择",
+            ));
+        }
+        Some(p) => {
+            let ext = p
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let mb = file_size_mb(&p);
+            if ext != "tif" && ext != "tiff" {
+                items.push(pf_item(
+                    "image", "正射影像", &p, "warn",
+                    format!("扩展名是 .{ext}，不是 GeoTIFF，可能读不出来"),
+                ));
+            } else if mb < 1.0 {
+                items.push(pf_item(
+                    "image", "正射影像", &p, "warn",
+                    format!("只有 {mb:.1} MB，不像完整影像"),
+                ));
+            } else {
+                items.push(pf_item("image", "正射影像", &p, "ok", format!("{mb:.0} MB")));
+            }
+            patch.push(("input", p.to_string_lossy().to_string()));
+        }
+    }
+
+    // ---- 2/3. CHM 与语义分割（缺失会静默退化，所以 warn 而不拦）----
+    for (key, label, hint) in [
+        (
+            "chm_path",
+            "冠层高度模型（CHM）",
+            "缺了会退化成纯 RGB 判据，水体与低矮植被会大量误判",
+        ),
+        (
+            "segment_path",
+            "语义分割结果",
+            "缺了水塘识别率会从 98% 掉回 8%",
+        ),
+    ] {
+        match absolutize(&base, params.get(key)) {
+            None => items.push(pf_item(
+                key, label, Path::new(""), "warn",
+                format!("未提供 —— {hint}"),
+            )),
+            Some(p) if !p.exists() => items.push(pf_item(
+                key, label, &p, "warn",
+                format!("文件不存在 —— {hint}"),
+            )),
+            Some(p) => {
+                let mb = file_size_mb(&p);
+                items.push(pf_item(key, label, &p, "ok", format!("{mb:.0} MB")));
+                patch.push((key, p.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    // ---- 4. 森林掩膜（自动发现）----
+    let fm = absolutize(&base, params.get("forest_mask_path"))
+        .filter(|p| p.exists())
+        .or_else(|| find_forest_mask(&base));
+    match fm {
+        Some(p) => {
+            items.push(pf_item(
+                "forest_mask", "森林掩膜", &p, "ok",
+                "已自动启用（剔除未开发林）",
+            ));
+            patch.push(("forest_mask_path", p.to_string_lossy().to_string()));
+        }
+        None => items.push(pf_item(
+            "forest_mask", "森林掩膜", Path::new(""), "warn",
+            "没找到 output/forest-mask*.geojson —— 未开发林会被算成可补种，放样点会偏多",
+        )),
+    }
+
+    // ---- 5. 输出目录（写不进去就白跑 350 秒）----
+    let work = absolutize(&base, params.get("work_dir"))
+        .unwrap_or_else(|| base.join("output").join("jobs"));
+    match std::fs::create_dir_all(&work) {
+        Ok(_) => {
+            // 真写一个探针文件：目录建得出来 ≠ 写不进去（权限 / 只读盘）
+            let probe = work.join(".fgd-write-probe");
+            match std::fs::write(&probe, b"ok") {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&probe);
+                    items.push(pf_item("work_dir", "输出目录", &work, "ok", "可写"));
+                    patch.push(("work_dir", work.to_string_lossy().to_string()));
+                }
+                Err(e) => {
+                    has_error = true;
+                    items.push(pf_item(
+                        "work_dir", "输出目录", &work, "error",
+                        format!("写不进去：{e}"),
+                    ));
+                }
+            }
+        }
+        Err(e) => {
+            has_error = true;
+            items.push(pf_item(
+                "work_dir", "输出目录", &work, "error",
+                format!("建不出来：{e}"),
+            ));
+        }
+    }
+
+    // ---- 6. 圈选范围 ----
+    if params.get("roi_geojson").is_some() {
+        items.push(pf_item(
+            "roi", "圈选范围", Path::new(""), "ok",
+            "已圈选，只检测圈内",
+        ));
+    } else {
+        match absolutize(&base, params.get("roi")) {
+            Some(p) if p.exists() => items.push(pf_item(
+                "roi", "圈选范围", &p, "ok", "只检测圈内",
+            )),
+            Some(p) => {
+                has_error = true;
+                items.push(pf_item(
+                    "roi", "圈选范围", &p, "error", "圈选文件不存在",
+                ));
+            }
+            None => items.push(pf_item(
+                "roi", "圈选范围", Path::new(""), "info",
+                "未圈选，将处理整幅影像（较慢）",
+            )),
+        }
+    }
+
+    // ---- 7. 参数合法性 ----
+    let workers = params.get("workers").and_then(|v| v.as_i64()).unwrap_or(1);
+    if !(0..=32).contains(&workers) {
+        has_error = true;
+        items.push(pf_item(
+            "workers", "并行进程数", Path::new(""), "error",
+            format!("{workers} 超出 0~32"),
+        ));
+    }
+    let density = params
+        .get("target_density_per_ha")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(150.0);
+    if !(20.0..=400.0).contains(&density) {
+        has_error = true;
+        items.push(pf_item(
+            "density", "目标密度", Path::new(""), "error",
+            format!("{density} 株/ha 超出 20~400"),
+        ));
+    }
+
+    // ---- 组装 resolved ----
+    let mut resolved = params.clone();
+    if let Some(o) = resolved.as_object_mut() {
+        for (k, v) in patch {
+            o.insert(k.to_string(), serde_json::Value::String(v));
+        }
+    }
+
+    PreflightResult {
+        ok: !has_error,
+        items,
+        resolved,
+    }
+}
+
+#[tauri::command]
+fn preflight_detect(
+    app: tauri::AppHandle,
+    params: serde_json::Value,
+) -> Result<PreflightResult, String> {
+    Ok(preflight_core(&data_base(&app), &params))
+}
+
 #[tauri::command]
 fn run_detect(
     app: tauri::AppHandle,
@@ -749,6 +1037,7 @@ pub fn run() {
             service_status,
             restart_tile_server,
             run_detect,
+            preflight_detect,
             cancel_detect,
             detect_status,
             get_status,
@@ -789,4 +1078,186 @@ pub fn run() {
                 }
             }
         });
+}
+
+// ============================================================================
+//  预检单元测试
+//  ---------------------------------------------------------------------------
+//  这些测试**不依赖仓库里的真实数据**（output/ 是 gitignore 的，换台机器就没有），
+//  每个用例自己在 temp 下搭一套最小目录，测完删掉。
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// 造一个独立的临时工作目录（用 pid + 计数器避免并行冲突）
+    fn scratch(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static N: AtomicUsize = AtomicUsize::new(0);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let d = std::env::temp_dir().join(format!(
+            "fgd-pf-{}-{}-{}",
+            std::process::id(),
+            tag,
+            n
+        ));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn touch(p: &Path, bytes: usize) {
+        if let Some(dir) = p.parent() {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(p, vec![b'x'; bytes]).unwrap();
+    }
+
+    fn item<'a>(r: &'a PreflightResult, key: &str) -> &'a PreflightItem {
+        r.items.iter().find(|i| i.key == key).expect("缺少预检项")
+    }
+
+    #[test]
+    fn missing_image_blocks_start() {
+        let base = scratch("noimage");
+        let r = preflight_core(&base, &serde_json::json!({ "input": "nope.tif" }));
+        assert!(!r.ok, "缺影像时必须拦住");
+        assert_eq!(item(&r, "image").status, "error");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn empty_input_blocks_start() {
+        let base = scratch("empty");
+        let r = preflight_core(&base, &serde_json::json!({}));
+        assert!(!r.ok);
+        assert_eq!(item(&r, "image").status, "error");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn relative_paths_are_absolutized() {
+        let base = scratch("abs");
+        touch(&base.join("drone data/WGR17-002.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({ "input": "drone data/WGR17-002.tif" }),
+        );
+        let resolved = r.resolved.get("input").unwrap().as_str().unwrap();
+        assert!(Path::new(resolved).is_absolute(), "input 必须是绝对路径");
+        assert!(resolved.ends_with("WGR17-002.tif"));
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn missing_chm_is_warn_not_error() {
+        // chm 缺失会退化但不该拦（用户可能就是想跑纯 RGB 版本）
+        let base = scratch("nochm");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": "img.tif",
+                "chm_path": "output/chm.tif",
+                "segment_path": "drone data/segment.tif",
+                "forest_mask_path": "",
+                "work_dir": "output/jobs"
+            }),
+        );
+        assert!(r.ok, "只有 warn 时 ok 必须为 true");
+        assert_eq!(item(&r, "chm_path").status, "warn");
+        assert_eq!(item(&r, "segment_path").status, "warn");
+    }
+
+    #[test]
+    fn forest_mask_is_auto_discovered() {
+        let base = scratch("mask");
+        touch(&base.join("img.tif"), 2_000_000);
+        touch(&base.join("output/forest-mask-50m-exg60.geojson"), 100);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({ "input": "img.tif", "work_dir": "output/jobs" }),
+        );
+        assert_eq!(item(&r, "forest_mask").status, "ok");
+        let resolved = r.resolved.get("forest_mask_path").unwrap().as_str().unwrap();
+        assert!(
+            resolved.ends_with("forest-mask-50m-exg60.geojson"),
+            "自动发现的掩膜必须写回 resolved，否则未开发林会被算成可补种"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn missing_forest_mask_warns_about_extra_points() {
+        let base = scratch("nomask");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({ "input": "img.tif", "work_dir": "output/jobs" }),
+        );
+        let it = item(&r, "forest_mask");
+        assert_eq!(it.status, "warn");
+        assert!(it.detail.contains("偏多"), "必须说清后果：{}", it.detail);
+    }
+
+    #[test]
+    fn work_dir_is_created_and_writable() {
+        let base = scratch("work");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({ "input": "img.tif", "work_dir": "output/jobs" }),
+        );
+        assert_eq!(item(&r, "work_dir").status, "ok");
+        assert!(base.join("output/jobs").is_dir());
+        // 探针文件必须被清掉，不能留在用户的输出目录里
+        assert!(!base.join("output/jobs/.fgd-write-probe").exists());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn bad_worker_count_blocks() {
+        let base = scratch("workers");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": "img.tif", "workers": 99, "target_density_per_ha": 150,
+                "work_dir": "output/jobs"
+            }),
+        );
+        assert!(!r.ok);
+        assert_eq!(item(&r, "workers").status, "error");
+    }
+
+    #[test]
+    fn bad_density_blocks() {
+        let base = scratch("density");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": "img.tif", "workers": 4, "target_density_per_ha": 5,
+                "work_dir": "output/jobs"
+            }),
+        );
+        assert!(!r.ok);
+        assert_eq!(item(&r, "density").status, "error");
+    }
+
+    #[test]
+    fn roi_geojson_counts_as_roi() {
+        let base = scratch("roi");
+        touch(&base.join("img.tif"), 2_000_000);
+        let r = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": "img.tif", "work_dir": "output/jobs",
+                "roi_geojson": { "type": "Polygon", "coordinates": [] }
+            }),
+        );
+        assert_eq!(item(&r, "roi").status, "ok");
+        fs::remove_dir_all(&base).ok();
+    }
 }
