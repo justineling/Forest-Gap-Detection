@@ -114,95 +114,41 @@
 - 遗留：`office` 门槛下调后"道路变宽处被标为办公区"的语义噪声
   （要更干净需新增 `hard_surface` 类别）。
 
-## ★ 2026-10-17 桌面端（Tauri）—— 需求评审 → 原型 → 对账收口
+## ★ 桌面端（Tauri v2，2026-10-17 完成于 `feat/desktop-app`）
 
-### 技术栈：以 `架构方案.html` 的冻结决策为准，**否决**外部方案的 3 处
-前端 **React 18 + TS**（不用 Vue 3）· 地图 **MapLibre GL 4**（不用 Leaflet）·
-绘图 **Terra Draw**（Geoman 只支持 Leaflet）· 后端 **stdio NDJSON sidecar**
-（不用 FastAPI；契约已冻结 95/95），**只有瓦片走 HTTP** ·
-瓦片服务**保留 Python**（建金字塔后 700 ms 达标；Rust 端再链 gdal 会撞 dll/proj.db 冲突）。
+技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
+Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-### 分支 `feat/desktop-app` 的 `desktop/` 子目录
-React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw 1.37 + zustand 4.5（手写 CSS 代 Tailwind）
-+ **Tauri v2 外壳**（`src-tauri/`，`cargo check` 通过）。
+**验收基线**：`npm test`（store 40 + estimate 15 + mergeEdits 26）· 契约测试 95/95 · `cargo check`。
+**打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
+`%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
+产物固定在项目内 `desktop/src-tauri/target`（脚本会中和 `CARGO_TARGET_DIR`）。
 
-- **`npm test` 是本模块验收基线**（43 项断言，~5 秒）：`tests/store.test.ts`（需求③④）
-  + `tests/estimate.test.ts`（需求⑤）。换机器无 `output/` 会自动跳过 estimate 并说明。
-- 新增 `scripts/tile_server.py`（零新依赖）：`/meta` · `/tiles/{z}/{x}/{y}.png` · `/gaps`
-  · **`/planting-points?clearance=`** · `POST /export` · `--build-overviews` · `--ovr-mode`
-- 双口径估算：面积折算 `floor(area/66.67)` + 网格排坑（8.45/7.3179/0.6656°/退让 0.5 m）
-- **退让 0.5 m 是业务拍板**（3,691 株）：`open_patch` 边界是**树冠叶尖外缘**
-  （距树干约 4.2 m），449 块等效宽度 2A/P 的 P50 仅 **4.68 m**；2 m 退让会让
-  123 块单行缺株带排不出点。⚠️ 依据写在 `lib/estimate.ts` 的 `DEFAULT_GRID` 注释，**不要改回去**。
-- **前后端株数已对齐 0.00%**（3,691 = 3,691）：`/gaps` 响应**动态补**
-  `planting_grid.anchor_lon/lat`（结果中心最近格点，只在内存 enrich，不改磁盘），
-  前端 `estimate()` 用它当原点。残余 1.0/2.0 m 档 +0.6~0.9%（GEOS buffer vs 逐点距离）。
-- **点位必须基于 `wgr17-final-gaps.geojson`**（交付版）；`-elev-gaps` 是未应用森林掩膜的
-  中间版，会多算 221 个点（把未开发林算成可补种）。
-- **`output/*.geojson` 是 `blocks[].gaps` 结构，没有顶层 `features`** ——
-  前端按 `features` 读会静默拿到空数组（界面上一个多边形都不显示且不报错）。
-  修法：`api/backend.ts` 的 `normalizeCollection()`。
+**必须记住的 8 条**
 
-### 多进程与一键脚本（2026-10-17）
+1. `output/*.geojson` 是 `blocks[].gaps` 结构、**没有顶层 features** → 前端按 features 读会静默空数组。
+2. **点位必须基于 `wgr17-final-gaps.geojson`**；`-elev-gaps` 多算 221 个点（把未开发林当可补种）。
+3. 前后端株数已对齐 0.00%（3,691）：`/gaps` 响应动态补 `planting_grid.anchor_lon/lat`。
+4. 退让 **0.5 m 是业务拍板**（2 m 会让 123 块单行缺株带排不出点），依据在 `lib/estimate.ts`。
+5. **Tauri ↔ sidecar 必须两个线程分别读 stdout/stderr**（64 KB 管道填满 → 永久死锁且无报错）；
+   参数名逐字对齐 `chm_path`/`segment_path`/`target_density_per_ha`（写错只回 W1001 照常跑完）。
+6. `--workers` 四条护栏（tile_idx 排序 / initializer 句柄 / 锁 BLAS+GDAL 线程 / 子进程不写 stdout）；
+   **workers 不进指纹**；瓦片 < max(4, workers*2) 自动退回串行。
+7. 打包三红线：`freeze_support()` 是 `__main__` 第一行；**`PROJ_DATA` 优先 rasterio 的 proj_data**
+   （rasterio MINOR=5 / pyproj MINOR=4，反了则冻结态 `CRS.from_epsg` 全崩）；
+   `[profile.release]` 用 `codegen-units=4` + `lto="thin"`（极限配置会让 rustc 0xc0000005 崩）。
+8. **dev 与 bundled 的数据基准必须分开**（`data_base()`），否则开发态明明有影像却弹"请选择影像"。
 
-- `--workers`（默认 1，0=自动 min(6, cpu//2)）：全量 **1,048 → 350 s**、ROI 462 → 195 s。
-  四条护栏：**按 tile_idx 排序后累加** / initializer 只开一次句柄 / 锁死 BLAS+GDAL 线程 /
-  子进程不写 stdout。**`workers` 不进指纹**。瓦片 < max(4, workers*2) 自动退回串行。
-- ✅ **建金字塔后网格 8.45/7.32 → 8.35/7.23 是变准了**（不是漂移）：8.35×7.23 正是
-  早期用频域自相关 + 树心 NND 互证的**真实物理株行距**；没建金字塔时全分辨率跨步
-  近邻抽样有混叠噪声才撑大到 8.45/7.32。跨影像版本对比仍须重立基线。
-- **Tauri ↔ sidecar IPC 已通**（`run_detect`/`cancel_detect`/`detect_status`）：
-  **两个线程分别读 stdout 与 stderr**（否则 64 KB 管道填满 → 永久死锁且无报错）；
-  注入 PYTHONUNBUFFERED/IOENCODING/UTF8；`CREATE_NO_WINDOW`；
-  `isTauri()` + 动态 import 保浏览器模式。**参数名必须逐字对齐**
-  （`chm_path`/`segment_path`/`target_density_per_ha`，写错只回 W1001 然后照常跑完）。
-- **重跑合并策略** `lib/mergeEdits.ts`：`keep_manual`/`overwrite`；匹配用质心落入 +
-  外接框 IoU 兜底；删除优先；`replayed_from` 留痕；store 的 `deletedFeatures` **存几何**。
-- **打包分发已通**：`scripts/desktop_entry.py` **单入口**（`--run-tile-server` /
-  默认 sidecar / `--self-test`），PyInstaller `--onedir` 出 **179 MB**，两服务共享一份依赖。
-  ⚠️ **两份 proj.db 版本不同**：rasterio 自带 MINOR=5、pyproj 自带 MINOR=4 →
-  `PROJ_DATA` **必须优先指向 rasterio 的 proj_data**（否则冻结态 `CRS.from_epsg` 全崩，
-  开发态复现不出来）。`freeze_support()` 必须是 `__main__` 第一行。
-  Rust 双模：`resources/py-runtime/desktop_entry.exe` → 仓库 `.venv`；
-  数据根 `%LOCALAPPDATA%\fgd\data`（自动创建，Program Files 不可写）。
-  ⚠️ `[profile.release]` **不要** `codegen-units=1` + full LTO（内存紧张时 rustc
-  会以 0xc0000005 崩，报错完全看不出原因），用 `codegen-units=4` + `lto="thin"`。
-- **安装包已端到端跑通**：`..._0.1.0_x64-setup.exe` = **67.66 MiB**（NSIS），
-  装到 `%LOCALAPPDATA%\Forest Gap Detection` 后启动 → `/meta` ok · 47130×44686 · 0.033 m/px。
-  ⚠️ 三个**只在装完才暴露**的坑：① `resources` 用 `**/*` 会把 `tzdata/zoneinfo/`
-  的 `Canada/Mountain` 与 `US/Mountain` 展平 → WiX ICE30，必须用**目录映射**；
-  ② `bundle.icon` 必须含 `.ico`（cargo check / dev 都不报）；③ 目录映射让 exe 多一层，
-  `resolve_backend` 要兼容两种布局（否则不报错、只显示"瓦片服务未连接"）。
-  release 无控制台 → 排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
-  ⚠️ 测试时**别手删安装目录**（绕过 uninstall.exe 会让 NSIS 弹 "Unable to install"）。
-- **首次使用引导已做**（`WelcomeWizard` + `tauri-plugin-dialog`）：用户装完不再看到
-  "后端离线 / 请运行 xxx.py"，而是"选影像 → 开始使用"两步。
-  配置存 `%LOCALAPPDATA%\fgd\settings.json`；缺影像返回哨兵 `NEED_IMAGE`（不报错）。
-  ⚠️ **dev 与 bundled 的数据基准必须分开**（`data_base()`）：dev 用仓库根、
-  bundled 用 `%LOCALAPPDATA%\fgd\data`，否则开发态明明有影像却弹"请选择影像"。
-- 三个 bat：`启动桌面端.bat`（开发）/ `构建安装包.bat`（发布）/ `_环境准备.bat`（共享）。
-  必须 **UTF-8 无 BOM + CRLF**；`call 文件.bat 标签` 靠 shift+goto 分发且**顶层不能 setlocal**；
-  搬家自愈**只对项目内 target** 生效（否则会删掉共享的 `CARGO_TARGET_DIR`）。
+**其它要点**
 
-### 坑（完整版见 `desktop/README.md` 16 条，这里只留最容易返工的）
-1. `Window.intersection` 无交集时**抛 `WindowError`**，不是返回空窗口
-2. 影像 **4 波段**（第 4 恒 255 = Alpha）—— 4 波段源送进 3 波段目标 `reproject` 直接报错
-3. **影像没有金字塔** → 低缩放级瓦片 z=13 要 104 s；`--build-overviews` 后 **0.7 s（149×）**。
-   代价：BigTIFF **写进文件内部**，3.48 → 4.66 GB（`--ovr-mode auto` 默认改副本，不碰源文件）
-4. 估算模块：网格索引 `i` **必须逐 `j` 算**（`j*skew` 可达 ±50 格位）；
-   经纬度→米**不能用 111320 常数**（用曲率半径，面积误差 0.76%→0.09%）；
-   `vacant_slot` 两个口径都记 1 株
-5. **组件抛错会卸载整棵 React 树 → 整页白屏**：Terra Draw 的 `start()` 必须在
-   `map.on('load')` 内 + 每个区域包 `ErrorBoundary`。
-   **教训：「逻辑被测试覆盖」≠「界面能渲染」—— 43 项断言全绿时页面是白的。**
-6. Tauri：Windows 缺 `icons/icon.ico` 会让 `cargo check` 直接失败（只有 png 不够）；
-   退出不 kill 子进程 → 孤儿 python 占住 8765，下次启动复用**旧版本**服务
-
-
-### docgen 教训（新）
-自动重生成文档时**路径必须可移植**：`gen_gdrive.py` 曾硬编码 `D:/WGR`，
-在家里机上探不到就把体积全写成 `0 KB`，**静默把一份正确文档改成了错的**。
-
+- 建金字塔后网格 8.45/7.32 → **8.35/7.23 是变准了**（真实物理株行距）；跨影像版本须重立基线。
+- 重跑合并 `lib/mergeEdits.ts`：`keep_manual`/`overwrite`；质心落入 + 外接框 IoU 兜底；
+  删除优先；`replayed_from` 留痕；store 的 `deletedFeatures` **存几何**。
+- 组件抛错会卸载整棵 React 树 → 白屏；Terra Draw `start()` 必须在 `map.on('load')` 内 + ErrorBoundary。
+- 影像 **4 波段**（第 4 恒 255=Alpha）；`Window.intersection` 无交集时**抛错**不是返回空。
+- 三个 bat 在**项目根**：UTF-8 无 BOM + CRLF；`call 文件.bat 标签` 靠 shift+goto 分发、顶层不能
+  `setlocal`；搬家自愈只对项目内 target 生效。⚠️ 别手删安装目录（NSIS 会弹 "Unable to install"）。
+- docgen 教训：`gen_gdrive.py` 曾硬编码 `D:/WGR` → 探不到就把体积写成 `0 KB`，**静默改错文档**。
 
 ## 4. 红线与硬约定（违反会返工）
 - **Git**：绝不自动 commit，必须用户明确同意。提交前先 `git reset` 清空暂存区再按路径 `git add`
