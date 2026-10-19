@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import MapCanvas, { type DrawIntent } from './components/MapCanvas'
 import ErrorBoundary from './components/ErrorBoundary'
 import TopToolbar from './components/TopToolbar'
@@ -7,6 +7,7 @@ import RightPanel from './components/RightPanel'
 import StatusBar from './components/StatusBar'
 import DetectBar from './components/DetectBar'
 import DetectSettings from './components/DetectSettings'
+import NextStepCard from './components/NextStepCard'
 import PreflightDialog from './components/PreflightDialog'
 import ExportDialog from './components/ExportDialog'
 import { parseKmlOrGeoJsonRoi } from './lib/roiImport'
@@ -18,6 +19,7 @@ import {
   isTauri,
   onSidecarEvent,
   onSidecarLog,
+  openPath,
   pickRoiFile,
   preflightDetect,
   probeBackend,
@@ -25,13 +27,13 @@ import {
   runDetect,
   type AppStatus,
 } from './api/backend'
+import { toInput, type ActionKind, type StepKey } from './lib/workflow'
 import type { DetectProgress, GapCollection, PreflightResult } from './types'
 
 export default function App() {
   const [drawIntent, setDrawIntent] = useState<DrawIntent>('none')
-  const [loadingGaps, setLoadingGaps] = useState(false)
-  // 导出状态由 ExportDialog 自己管（它是唯一发起方）
-  const exporting = false
+  // 只用到 setter —— 载入中的提示改由「下一步」卡片承担，按钮上不再显示"载入中…"
+  const [, setLoadingGaps] = useState(false)
   /** 当前应用状态（后端形态 / 影像路径 / 是否要引导） */
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null)
   /** 非 null 时显示首次使用引导 */
@@ -42,6 +44,8 @@ export default function App() {
   const [starting, setStarting] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  /** 递增即让右面板切到「复核」标签（步进器点第 4 步时用） */
+  const [reviewPeek, setReviewPeek] = useState(0)
 
   const setBackend = useAppStore((s) => s.setBackend)
   const setGaps = useAppStore((s) => s.setGaps)
@@ -52,6 +56,16 @@ export default function App() {
   const setRoi = useAppStore((s) => s.setRoi)
   const detectParams = useAppStore((s) => s.detectParams)
   const detect = useAppStore((s) => s.detect)
+  // 工作流（五步向导）需要的东西
+  const backendOnline = useAppStore((s) => s.backendOnline)
+  const gaps = useAppStore((s) => s.gaps)
+  const wfFlags = useAppStore((s) => s.workflow)
+  const markWorkflow = useAppStore((s) => s.markWorkflow)
+  const outputDir = useAppStore((s) => s.outputDir)
+  const runEstimate = useAppStore((s) => s.runEstimate)
+  const manualAdded = useAppStore((s) => s.manualAdded)
+  const manualDeleted = useAppStore((s) => s.manualDeleted)
+  const manualEdited = useAppStore((s) => s.manualEdited)
   const detectBegin = useAppStore((s) => s.detectBegin)
   const detectProgress = useAppStore((s) => s.detectProgress)
   const detectFinish = useAppStore((s) => s.detectFinish)
@@ -178,6 +192,22 @@ export default function App() {
         return
       }
       await probeAndLoad()
+      // 浏览器模式下 `?mock=ready` 伪造"影像已就绪"，用来预览复核 / 导出阶段的界面
+      // （Headless 里连不上真正的瓦片服务；只影响截图与回归，不进打包逻辑）
+      if (!isTauri() && qs.get('mock') === 'ready') {
+        setBackend({
+          online: true,
+          meta: {
+            ok: true,
+            source: 'WGR17-002.tif',
+            width: 47130,
+            height: 44686,
+            crs: 'EPSG:4326',
+            res_m: 0.033,
+            has_overviews: true,
+          } as never,
+        })
+      }
       // 浏览器模式下 `?settings=1` 打开检测参数面板（截图 / 回归用）
       if (!isTauri() && qs.has('settings')) setShowSettings(true)
       // 浏览器模式下 `?p2=export` 直接打开导出对话框（截图 / 回归用）
@@ -236,6 +266,7 @@ export default function App() {
             `${fmt(n)} 块空地 · ${fmt(Math.round(area))} m² · 用时 ` +
             `${Math.floor(el / 60)} 分 ${Math.round(el % 60)} 秒 · 结果已载入`,
         })
+        markWorkflow({ detected: true })
         pushLog('检测完成，正在重新载入结果（合并人工编辑）…')
         void loadGaps({ rerun: true })
       } else if (t === 'error') {
@@ -274,7 +305,7 @@ export default function App() {
       unEvent?.()
       unLog?.()
     }
-  }, [loadGaps, pushLog, detectBegin, detectProgress, detectFinish])
+  }, [loadGaps, pushLog, detectBegin, detectProgress, detectFinish, markWorkflow])
 
   /**
    * 拼检测参数。
@@ -438,6 +469,103 @@ export default function App() {
     }
   }, [setRoi, pushLog])
 
+  /** 五步流程的输入（纯函数算状态，UI 只负责渲染） */
+  const workflowInput = useMemo(
+    () =>
+      toInput({
+        backendOnline,
+        gaps,
+        // 「载入过结果」比「当前有要素」更稳定：用户把误报删光后流程不该倒退
+        hasResult: wfFlags.loaded,
+        roi,
+        detectRunning: detect.running,
+        detected: wfFlags.detected,
+        reviewed: wfFlags.reviewed,
+        exported: wfFlags.exported,
+        manualAdded,
+        manualDeleted,
+        manualEdited,
+      }),
+    [backendOnline, gaps, roi, detect.running, wfFlags, manualAdded, manualDeleted, manualEdited],
+  )
+
+  /**
+   * 「下一步」卡片的动作分发。
+   *
+   * 刻意做成一个 switch 而不是十来个回调 prop：卡片永远只可能给这 8 种动作，
+   * 集中在一处才好保证"每个动作都有对应的实现"（漏一个就是死按钮）。
+   */
+  const onWorkflowAction = useCallback(
+    (kind: ActionKind) => {
+      switch (kind) {
+        case 'openData':
+          setWizard(appStatus ?? ({} as AppStatus))
+          break
+        case 'drawRoi':
+          setDrawIntent('roi')
+          break
+        case 'pickRoi':
+          void onImportRoi()
+          break
+        case 'detect':
+          void onDetect()
+          break
+        case 'boxSelect':
+          setDrawIntent('box_select')
+          break
+        case 'goExport':
+          // 「复核完成」= 记一笔 + 直接打开导出对话框，不要求再点一次
+          markWorkflow({ reviewed: true })
+          setShowExport(true)
+          break
+        case 'export':
+          setShowExport(true)
+          break
+        case 'openOutput':
+          if (outputDir) {
+            openPath(outputDir).catch((e) =>
+              pushLog(`打开目录失败：${e instanceof Error ? e.message : String(e)}`),
+            )
+          } else {
+            setShowExport(true)
+          }
+          break
+      }
+    },
+    [appStatus, onDetect, onImportRoi, markWorkflow, outputDir, pushLog],
+  )
+
+  /**
+   * 点步进器上已完成的步骤 = 回看 / 重做这一步。
+   *
+   * 注意这里是"回到该步骤对应的界面"，不是"把数据回滚"——
+   * 回滚数据是撤销（Ctrl+Z）的职责，两者混在一起会很危险。
+   */
+  const onJumpStep = useCallback(
+    (key: StepKey) => {
+      switch (key) {
+        case 'data':
+          setWizard(appStatus ?? ({} as AppStatus))
+          break
+        case 'range':
+          setDrawIntent('roi')
+          break
+        case 'detect':
+          setShowSettings(true)
+          break
+        case 'review':
+          setReviewPeek((n) => n + 1)
+          break
+        case 'export':
+          setShowExport(true)
+          break
+      }
+    },
+    [appStatus],
+  )
+
+
+
   return (
     <div className="app">
       {/* 每个区域各自兜底：地图挂了，工具栏 / 图层面板 / 状态栏仍可用 */}
@@ -446,18 +574,21 @@ export default function App() {
       <div className="tb-wrap">
         <ErrorBoundary area="工具栏">
           <TopToolbar
-            drawIntent={drawIntent}
-            setDrawIntent={setDrawIntent}
-            onLoadGaps={loadGaps}
-            onOpenData={() => setWizard(appStatus ?? ({} as AppStatus))}
-            onExport={() => setShowExport(true)}
-            loadingGaps={loadingGaps}
-            exporting={exporting}
-            detecting={detect.running}
-            starting={starting}
-            onDetect={onDetect}
-            onOpenDetectSettings={() => setShowSettings((v) => !v)}
-            onImportRoi={onImportRoi}
+            workflow={workflowInput}
+            onJumpStep={onJumpStep}
+            onChangeData={() => setWizard(appStatus ?? ({} as AppStatus))}
+            onReloadGaps={() => void loadGaps()}
+            onOpenSettings={() => setShowSettings(true)}
+            onAddGap={() => setDrawIntent('add_gap')}
+            onBoxSelect={() => setDrawIntent('box_select')}
+            onEstimate={runEstimate}
+            onOpenLog={() => {
+              // 日志目录：开发态在仓库根，打包态在 %LOCALAPPDATA%\fgd\logs
+              // 这里只打开"最可能存在的那个"—— 让 Rust 侧判存在性
+              void openPath(outputDir || '.').catch(() =>
+                pushLog('打开日志目录失败，可在「更多 → 更换影像」里查看当前数据目录'),
+              )
+            }}
           />
         </ErrorBoundary>
 
@@ -476,11 +607,21 @@ export default function App() {
         <ErrorBoundary area="图层面板">
           <LeftPanel />
         </ErrorBoundary>
-        <ErrorBoundary area="地图">
-          <MapCanvas drawIntent={drawIntent} onDrawDone={() => setDrawIntent('none')} />
-        </ErrorBoundary>
+        <div className="map-cell">
+          <ErrorBoundary area="地图">
+            <MapCanvas drawIntent={drawIntent} onDrawDone={() => setDrawIntent('none')} />
+          </ErrorBoundary>
+          {/* 「下一步」卡片浮在地图右下角：只给一个主动作，走完自动换内容 */}
+          <ErrorBoundary area="下一步提示">
+            <NextStepCard
+              input={workflowInput}
+              outputDir={outputDir || null}
+              onAction={onWorkflowAction}
+            />
+          </ErrorBoundary>
+        </div>
         <ErrorBoundary area="属性面板">
-          <RightPanel />
+          <RightPanel peekReview={reviewPeek} />
         </ErrorBoundary>
       </main>
       <ErrorBoundary area="状态栏">

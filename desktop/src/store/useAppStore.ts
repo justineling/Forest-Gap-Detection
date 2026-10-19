@@ -110,6 +110,24 @@ const IDLE_DETECT: DetectRun = {
   finished: null,
 }
 
+export interface WorkflowFlags {
+  /** 载入过结果（即使随后被用户删光） */
+  loaded: boolean
+  /** 本次会话跑过检测（结果已刷新） */
+  detected: boolean
+  /** 用户点了「复核完成」（或已有人工编辑，见 lib/workflow.ts） */
+  reviewed: boolean
+  /** 已导出过交付包 */
+  exported: boolean
+}
+
+const WORKFLOW_INIT: WorkflowFlags = {
+  loaded: false,
+  detected: false,
+  reviewed: false,
+  exported: false,
+}
+
 function initialVisibility(): Record<GapClass, boolean> {
   const out = {} as Record<GapClass, boolean>
   for (const c of ALL_CLASSES) out[c] = CLASS_STYLES[c].defaultVisible
@@ -121,6 +139,16 @@ export interface AppState {
   backendOnline: boolean
   backendError: string | null
   meta: RasterMeta | null
+
+  // —— 工作流进度（UI 五步向导用）——
+  /**
+   * 三个"本次会话做到过"的标记。
+   *
+   * 为什么不用 `gaps.length > 0` 代替 `detected`：
+   * 打开软件时会自动载入磁盘上的历史结果，那时用户**并没有**跑过检测，
+   * 界面该说"这是上次的结果，可以直接复核"，而不是"检测已完成"。
+   */
+  workflow: WorkflowFlags
 
   // —— 数据 ——
   gaps: GapFeature[]
@@ -184,6 +212,8 @@ export interface AppState {
 
   // —— actions ——
   setBackend: (p: { online: boolean; meta?: RasterMeta; error?: string }) => void
+  /** 标记流程进度（detected / reviewed / exported） */
+  markWorkflow: (patch: Partial<WorkflowFlags>) => void
   setGaps: (features: GapFeature[], plantingGrid?: PlantingGrid | null) => void
   toggleClass: (cls: GapClass) => void
   setGroupVisible: (group: PriorityGroup, visible: boolean) => void
@@ -315,6 +345,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
   detectParams: loadDetectParams(),
   detect: { ...IDLE_DETECT },
   outputDir: loadOutputDir(),
+  workflow: { ...WORKFLOW_INIT },
+
+  markWorkflow: (patch) =>
+    set((s) => ({ workflow: { ...s.workflow, ...patch } })),
 
   setBackend: ({ online, meta, error }) =>
     set((s) => ({
@@ -336,6 +370,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
       future: [],
       ...sel([]),
       estimateResult: null,
+      // 人工编辑计数也要归零：换了一批数据，上一轮的"删了 5 块"不该记在新交付上
+      manualAdded: 0,
+      manualDeleted: 0,
+      manualEdited: 0,
+      // 换了基线 → 流程重新开始。只保留"载入过结果"这一位
+      //（它是第 3 步算完成的依据；detected 必须留 false，
+      // 否则首次载入磁盘结果时界面会谎称"刚跑完检测"）。
+      workflow: { ...WORKFLOW_INIT, loaded: features.length > 0 },
       logs: appendLog(
         s.logs,
         `载入 ${features.length} 个多边形` +

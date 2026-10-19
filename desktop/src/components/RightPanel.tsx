@@ -5,7 +5,17 @@ import ReviewList from './ReviewList'
 import { ALL_CLASSES, CLASS_STYLES } from '../lib/classes'
 import type { GapClass } from '../types'
 
-export default function RightPanel() {
+interface Props {
+  /**
+   * 递增即切到「复核」标签。
+   *
+   * 为什么用 nonce 而不是 boolean：用户可能连续点两次第 4 步，
+   * boolean 第二次不会触发 effect（值没变）。
+   */
+  peekReview?: number
+}
+
+export default function RightPanel({ peekReview = 0 }: Props) {
   const gaps = useAppStore((s) => s.gaps)
   const selectedId = useAppStore((s) => s.selectedId)
   const deleteGap = useAppStore((s) => s.deleteGap)
@@ -20,6 +30,11 @@ export default function RightPanel() {
   useEffect(() => {
     if (selectedIds.length > 0) setTab('props')
   }, [selectedIds])
+
+  // 步进器点「复核」→ 切到复核清单（跳过 selectedIds 的自动切属性）
+  useEffect(() => {
+    if (peekReview > 0) setTab('review')
+  }, [peekReview])
 
   const feat = gaps.find((f) => f.properties.gap_id === selectedId)
   const est = estimateResult?.per_gap.find((r) => r.gap_id === selectedId)

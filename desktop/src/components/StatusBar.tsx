@@ -8,6 +8,7 @@ export default function StatusBar() {
   const manualDeleted = useAppStore((s) => s.manualDeleted)
   const manualEdited = useAppStore((s) => s.manualEdited)
   const roi = useAppStore((s) => s.roi)
+  const meta = useAppStore((s) => s.meta)
   const boxRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -24,6 +25,15 @@ export default function StatusBar() {
         </span>
         <span className="sep" />
         <span className="dim">ROI：{roi ? '已圈选' : '未圈选（将处理整幅）'}</span>
+        {meta && (
+          <>
+            <span className="sep" />
+            <span className="mono dim">
+              {meta.res_m.toFixed(2)} m/px · {meta.width.toLocaleString()}×
+              {meta.height.toLocaleString()} px
+            </span>
+          </>
+        )}
         <span className="sep" />
         <span className="dim">
           人工编辑：+{manualAdded} / −{manualDeleted} / ✎{manualEdited}
@@ -31,10 +41,7 @@ export default function StatusBar() {
       </div>
       <div className="sb-logs" ref={boxRef}>
         {logs.length === 0 && (
-          <span className="dim">
-            就绪。三步：① 点「数据」选影像 → ② 「圈选 Target Block」框出要检测的地 →
-            ③ 「开始检测」。
-          </span>
+          <span className="dim">就绪。跟着地图右下角的「下一步」走就行。</span>
         )}
         {logs.map((l, i) => (
           <div key={i} className="log-line">
