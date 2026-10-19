@@ -28,6 +28,7 @@ import {
   type AppStatus,
 } from './api/backend'
 import { toInput, type ActionKind, type StepKey } from './lib/workflow'
+import { decideGapsLoad } from './lib/gapsLoad'
 import type { DetectProgress, GapCollection, PreflightResult } from './types'
 
 export default function App() {
@@ -38,6 +39,14 @@ export default function App() {
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null)
   /** 非 null 时显示首次使用引导 */
   const [wizard, setWizard] = useState<AppStatus | null>(null)
+  /**
+   * 载入结果时后端明确说"读不到文件"（`/gaps` 返回空集合 + error）。
+   *
+   * ⚠️ 必须与"检测结果确实是 0 块"区分开：前者是数据链路问题（文件在别的目录 /
+   * 服务指向旧路径），后者是真的没有空地。混在一起就是实测那个 bug ——
+   * 1,762 个要素躺在磁盘上，界面却说"没有空地"。
+   */
+  const [gapsError, setGapsError] = useState<string | null>(null)
   /** 非 null 时显示预检结果对话框 */
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
   /** 正在预检 / 启动（按钮显示"检查中…"） */
@@ -75,6 +84,11 @@ export default function App() {
    *
    * `rerun=true` 时走「合并人工编辑」而不是直接替换 —— 重跑后 gap_id 全部重编，
    * 直接替换会让用户上一轮删掉的误报复活、改判的类别被算法覆盖回去。
+   *
+   * ⚠️ **空响应绝不覆盖已有结果**。`applyRerun([])` 会把当前结果全丢掉
+   *    （合并以新结果为主体，只重放人工操作），实测会造成"检测跑完，结果没了"。
+   *    判定逻辑单独抽在 `lib/gapsLoad.ts`（可被 npm test 覆盖），这里只负责
+   *    按判定结果打日志 / 报错。
    */
   const loadGaps = useCallback(
     async (opts?: { rerun?: boolean }) => {
@@ -82,6 +96,46 @@ export default function App() {
       try {
         const fc = await fetchGaps()
         const feats = fc.features ?? []
+        const st = useAppStore.getState()
+        const existing = st.gaps.length
+        // sidecar 的 result 事件自报的空地块数；没有这个事件就是 null
+        //（不能当 0 —— "算法说没找到"和"没收到报告"是两回事）
+        const reported = st.detect.finished?.gaps ?? null
+
+        const decision = decideGapsLoad({
+          incoming: feats.length,
+          existing,
+          reported,
+          error: fc.error,
+        })
+        if (decision.action === 'keep') {
+          setGapsError(decision.detail)
+          const parts = [
+            decision.reason === 'missing_file'
+              ? `⚠️ ${decision.detail}`
+              : `⚠️ 读到的结果文件是空的（可能还在写盘，或文件已损坏）：${decision.detail}`,
+          ]
+          if (existing > 0) parts.push(`现有 ${existing.toLocaleString()} 块结果已保留`)
+          parts.push(
+            decision.reason === 'missing_file'
+              ? '结果可能写在别的目录 —— 请点右上角「⋯ 更多 → 更换影像或结果文件」指一下，或重新检测'
+              : '请稍后点「重新载入结果」重试，或重新检测',
+          )
+          pushLog(parts.join('。'))
+          // 刚跑完检测的话，顶部横幅还写着"结果已载入"—— 与"没读到"同时出现
+          // 会让人以为界面在乱报。改掉它（保留 ok：检测确实成功了，
+          // 失败的是"读取结果"这一步）。
+          if (opts?.rerun && st.detect.finished) {
+            detectFinish({
+              ...st.detect.finished,
+              message:
+                `检测已完成，但没读到结果：${decision.detail}` +
+                (existing > 0 ? '（现有结果已保留）' : ''),
+            })
+          }
+          return
+        }
+        setGapsError(null)
         if (opts?.rerun) {
           applyRerun(feats, 'keep_manual')
           setLoadingGaps(false)
@@ -90,7 +144,19 @@ export default function App() {
         // 把算法网格一起带上 —— 前端估算的格点相位才能与 Python 侧逐株一致
         setGaps(feats, fc.planting_grid ?? null)
       } catch (e) {
-        // 后端不在线时退回内置样例，保证界面可独立演示
+        // 后端不在线时退回内置样例，保证界面可独立演示。
+        // ⚠️ 但**已经有真实结果时不能拿样例覆盖它** —— 那是另一种数据丢失
+        //    （而且是拿演示数据换掉用户跑出来的结果，更糟）。
+        setGapsError(null)
+        const existing = useAppStore.getState().gaps.length
+        if (existing > 0) {
+          pushLog(
+            `⚠️ 后端不可用（${e instanceof Error ? e.message : e}）；` +
+              `现有 ${existing.toLocaleString()} 块结果已保留（未载入内置样例）。` +
+              '请检查影像服务是否在运行，或点「重新载入结果」重试。',
+          )
+          return
+        }
         try {
           const res = await fetch('/sample-gaps.geojson')
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -104,7 +170,7 @@ export default function App() {
         setLoadingGaps(false)
       }
     },
-    [setGaps, pushLog, applyRerun],
+    [setGaps, pushLog, applyRerun, detectFinish],
   )
 
   /** 探测瓦片服务并载入结果（向导完成后也会调它） */
@@ -118,7 +184,7 @@ export default function App() {
       )
     } else {
       pushLog(
-        '影像服务未连接。若是第一次使用，请点右上角「数据」选择正射影像；' +
+        '影像服务未连接。若是第一次使用，请点右上角「⋯ 更多 → 更换影像或结果文件」；' +
           '已选过则稍等几秒（首次要建索引），仍不行请查看日志文件。',
       )
     }
@@ -207,6 +273,10 @@ export default function App() {
             has_overviews: true,
           } as never,
         })
+      }
+      // 浏览器模式下 `?gapsError=1` 预览"结果文件没找到"的卡片态（截图 / 回归用）
+      if (!isTauri() && qs.has('gapsError')) {
+        setGapsError('未找到检测结果文件（已查找：D:/fgd/data/output）')
       }
       // 浏览器模式下 `?settings=1` 打开检测参数面板（截图 / 回归用）
       if (!isTauri() && qs.has('settings')) setShowSettings(true)
@@ -617,6 +687,7 @@ export default function App() {
               input={workflowInput}
               outputDir={outputDir || null}
               onAction={onWorkflowAction}
+              loadError={gapsError}
             />
           </ErrorBoundary>
         </div>

@@ -1676,6 +1676,18 @@ kbd {
   border-left-color: var(--accent);
   background: rgba(24, 42, 35, 0.97);
 }
+/* 结果文件没找到：数据链路异常，用警示色，别和"流程走完了"混在一起 */
+.next-card.warn,
+.next-pill.warn {
+  border-left-color: var(--warn);
+}
+.next-card.warn {
+  background: rgba(42, 34, 18, 0.97);
+}
+.nc-warn {
+  color: var(--warn);
+  font-size: 13px;
+}
 
 .nc-head {
   display: flex;

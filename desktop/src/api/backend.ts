@@ -67,6 +67,8 @@ interface RawResult {
   blocks?: Array<{ block_id?: string; block_name?: string; gaps?: GapCollection['features'] }>
   planting_grid?: GapCollection['planting_grid']
   summary?: Record<string, unknown>
+  /** 后端读不到结果文件时给的人类说明（`features` 为空时才有意义） */
+  error?: string
 }
 
 /**
@@ -78,17 +80,23 @@ interface RawResult {
  * 界面看起来"后端连上了、地图也有影像"，但一个多边形都不显示，
  * 也不会报错。内置样例 `public/sample-gaps.geojson` 是扁平结构，
  * 所以离线演示时反而正常，更容易掩盖这个 bug。
+ *
+ * ⚠️ **第二个坑（本函数存在的第二个理由）**：`/gaps` 读不到文件时返回的是
+ * `{features: [], error: "未找到检测结果文件…"}`。如果这里只取 features，
+ * "没找到文件"就退化成了"检测结果是 0 块" —— 用户看到"没有空地"，
+ * 完全不知道检测其实成功了、只是文件在别处。所以 `error` 必须原样透传。
  */
 export function normalizeCollection(raw: RawResult | null | undefined): GapCollection {
   const grid = raw?.planting_grid
+  const error = typeof raw?.error === 'string' && raw.error ? raw.error : undefined
   if (raw?.features?.length) {
-    return { type: 'FeatureCollection', features: raw.features, planting_grid: grid }
+    return { type: 'FeatureCollection', features: raw.features, planting_grid: grid, error }
   }
   const features: GapCollection['features'] = []
   for (const b of raw?.blocks ?? []) {
     for (const g of b.gaps ?? []) features.push(g)
   }
-  return { type: 'FeatureCollection', features, planting_grid: grid }
+  return { type: 'FeatureCollection', features, planting_grid: grid, error }
 }
 
 /** 读取最近一次检测结果（真实数据，来自 output/*.geojson） */

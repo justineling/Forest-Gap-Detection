@@ -21,7 +21,7 @@ export default function StatusBar() {
       <div className="sb-left">
         <span className={backendOnline ? 'dot ok' : 'dot bad'} />
         <span className="dim">
-          {backendOnline ? '影像已就绪' : '影像未连接 —— 点右上角「数据」选择正射影像'}
+          {backendOnline ? '影像已就绪' : '影像未连接 —— 点右上角「⋯ 更多 → 更换影像」'}
         </span>
         <span className="sep" />
         <span className="dim">ROI：{roi ? '已圈选' : '未圈选（将处理整幅）'}</span>

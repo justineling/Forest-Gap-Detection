@@ -139,7 +139,7 @@ export default function WelcomeWizard({
           <div className="dim wizard-hint">
             数据目录：<span className="mono">{status.data_root}</span>
             <br />
-            以后想换数据，点右上角「数据」随时改。
+            以后想换数据，点右上角「⋯ 更多 → 更换影像或结果文件」随时改。
           </div>
           <div className="wizard-actions">
             {busy && <span className="dim">{stage}</span>}
