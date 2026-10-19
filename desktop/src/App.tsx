@@ -35,6 +35,14 @@ import type { DetectProgress, GapCollection, PreflightResult } from './types'
 
 export default function App() {
   const [drawIntent, setDrawIntent] = useState<DrawIntent>('none')
+  /**
+   * 绘制结束的回调。
+   *
+   * ⚠️ 必须 `useCallback` 稳定引用：它被传给 MapCanvas 的绘制 effect 当依赖，
+   *    内联箭头函数会让 App 每次重渲染都重挂 contextmenu / finish 监听。
+   *    QA 实测 add=2 / rem=1 —— 净 1 没泄漏，但属于噪音，且以后很容易演变成泄漏。
+   */
+  const onDrawDone = useCallback(() => setDrawIntent('none'), [])
   // 只用到 setter —— 载入中的提示改由「下一步」卡片承担，按钮上不再显示"载入中…"
   const [, setLoadingGaps] = useState(false)
   /** 当前应用状态（后端形态 / 影像路径 / 是否要引导） */
@@ -265,6 +273,12 @@ export default function App() {
       // 浏览器模式下 `?mock=ready` 伪造"影像已就绪"，用来预览复核 / 导出阶段的界面
       // （Headless 里连不上真正的瓦片服务；只影响截图与回归，不进打包逻辑）
       if (!isTauri() && qs.get('mock') === 'ready') {
+        // ⚠️ 字段必须**完整**：这是给截图 / 回归用的假 meta，少一个字段就会真崩。
+        //    `bounds_wgs84` 少了 → MapCanvas 的 `const [w,s,e,n] = meta.bounds_wgs84`
+        //    解构 undefined → 抛 "undefined is not iterable" → 整个地图被 ErrorBoundary 顶掉。
+        //    而这个崩溃**不会让截图失败**（页面其余部分照常），于是"截图看起来正常"
+        //    变成了一种假象 —— 实测就是这样漏了一轮。
+        //    教训：mock 的字段要与 `RasterMeta` 类型逐项对齐，不能只填"看起来够用"的。
         setBackend({
           online: true,
           meta: {
@@ -274,6 +288,12 @@ export default function App() {
             height: 44686,
             crs: 'EPSG:4326',
             res_m: 0.033,
+            // WGR17-002 的实测 WGS84 外包框（rasterio transform_bounds 算的，不是估的）
+            bounds_wgs84: [111.1969, 1.1771, 111.2109, 1.1904],
+            center: [111.2039, 1.1838],
+            zoom: 15,
+            valid_ratio: 0.57,
+            tile_url: '',
             has_overviews: true,
           } as never,
         })
@@ -685,7 +705,7 @@ export default function App() {
         </ErrorBoundary>
         <div className="map-cell">
           <ErrorBoundary area="地图">
-            <MapCanvas drawIntent={drawIntent} onDrawDone={() => setDrawIntent('none')} />
+            <MapCanvas drawIntent={drawIntent} onDrawDone={onDrawDone} />
           </ErrorBoundary>
           {/* 「下一步」卡片浮在地图右下角：只给一个主动作，走完自动换内容 */}
           <ErrorBoundary area="下一步提示">

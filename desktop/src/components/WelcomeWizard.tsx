@@ -65,8 +65,13 @@ export default function WelcomeWizard({
     try {
       // 选「检测结果」时直接从数据根的 output/ 打开 —— 结果文件就在那儿。
       // 选影像不指定：用户自己的照片可能在任何盘，沿用系统记忆的目录更顺手。
-      const defaultPath =
-        kind === 'gaps' ? `${status.data_root.replace(/[\\/]+$/, '')}/output` : undefined
+      //
+      // ⚠️ `data_root` 在 `appStatus` 还是 null 时会是 undefined
+      //    （App 用 `appStatus ?? {}` 兜底），直接 `.replace` 会抛 TypeError，
+      //    被 catch 成"打开文件选择框失败：Cannot read properties of undefined"。
+      //    拿不到就不指定目录，退化成系统记忆 —— 比报错好。
+      const root = typeof status.data_root === 'string' ? status.data_root.trim() : ''
+      const defaultPath = kind === 'gaps' && root ? `${root.replace(/[\\/]+$/, '')}/output` : undefined
       const p = await pickFile(kind, { defaultPath })
       if (!p) return
       if (kind === 'image') setImage(p)
