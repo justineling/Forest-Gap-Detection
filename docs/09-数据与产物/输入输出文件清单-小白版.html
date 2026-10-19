@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>这个软件要什么文件、给什么文件 · 小白版</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #161c20; --panel-2: #1c2429;
+    --line: #263137; --text: #e6edf1; --dim: #8b9aa3;
+    --accent: #3ddc97; --warn: #f0b429; --danger: #e05252;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 24px 72px;
+    background: var(--bg); color: var(--text);
+    font: 16px/1.85 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+  h1 { margin: 0 0 8px; font-size: 25px; }
+  .sub { color: var(--dim); font-size: 13.5px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 5px; background: #232e33; color: var(--dim); font-size: 11.5px; }
+  h2 { margin: 42px 0 12px; font-size: 19px; padding-left: 11px; border-left: 3px solid var(--accent); }
+  h3 { margin: 24px 0 8px; font-size: 16px; }
+  p { margin: 11px 0; }
+  .lead { font-size: 16.5px; color: #cfdae1; }
+  code { font-family: Consolas, monospace; font-size: 13px; background: #1b2429; padding: 1px 5px; border-radius: 4px; color: #a8e6c8; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 16px 0; }
+  .card.warn { border-color: rgba(240,180,41,.4); background: rgba(240,180,41,.06); }
+  .card h4 { margin: 0 0 8px; font-size: 15px; }
+  ul, ol { margin: 10px 0; padding-left: 24px; }
+  li { margin: 7px 0; }
+  .fig { margin: 24px 0; }
+  .figcap { color: var(--dim); font-size: 12.5px; text-align: center; margin-top: 8px; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); color: var(--dim); font-size: 13px; }
+  .must { color: var(--danger); font-weight: 700; }
+  .rec { color: var(--warn); font-weight: 700; }
+  .ok { color: var(--accent); font-weight: 700; }
+  .big { font-size: 17px; font-weight: 600; color: var(--accent); }
+  footer { margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>这个软件要什么文件、给什么文件</h1>
+  <div class="sub">Forest Gap Detection · 油棕园空地检测 · 2026-10-19 <span class="tag">小白版</span></div>
+</header>
+
+<p class="lead">
+把它想成<b>做一顿饭</b>：你负责买食材，它负责洗切炒，最后给你打好包的外卖。
+本文只讲三件事：<b>你要买什么、它中间用了哪些锅碗、最后给你几个盒子。</b>
+</p>
+
+<div class="fig">
+<svg viewBox="0 0 820 250" width="100%" height="250" role="img" aria-label="做饭比喻：食材到外卖">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3ddc97"/>
+    </marker>
+  </defs>
+
+  <rect x="10" y="70" width="170" height="110" rx="12" fill="#161c20" stroke="#263137"/>
+  <text x="95" y="100" fill="#e6edf1" font-size="15" text-anchor="middle">🧺 你买的菜</text>
+  <text x="95" y="126" fill="#8b9aa3" font-size="12.5" text-anchor="middle">航拍图（必须）</text>
+  <text x="95" y="148" fill="#f0b429" font-size="12.5" text-anchor="middle">+ 3 样配料</text>
+  <text x="95" y="168" fill="#6f7f88" font-size="11.5" text-anchor="middle">越全越好吃</text>
+
+  <rect x="230" y="70" width="160" height="110" rx="12" fill="#161c20" stroke="#263137"/>
+  <text x="310" y="100" fill="#e6edf1" font-size="15" text-anchor="middle">🍳 它自己备的</text>
+  <text x="310" y="126" fill="#8b9aa3" font-size="12.5" text-anchor="middle">切好的半成品</text>
+  <text x="310" y="148" fill="#8b9aa3" font-size="12.5" text-anchor="middle">下次还能接着用</text>
+  <text x="310" y="168" fill="#6f7f88" font-size="11.5" text-anchor="middle">删了也没事</text>
+
+  <rect x="440" y="70" width="160" height="110" rx="12" fill="#161c20" stroke="#263137"/>
+  <text x="520" y="100" fill="#e6edf1" font-size="15" text-anchor="middle">🍲 炒好的一锅</text>
+  <text x="520" y="126" fill="#3ddc97" font-size="12.5" text-anchor="middle">1,762 块空地</text>
+  <text x="520" y="148" fill="#8b9aa3" font-size="12.5" text-anchor="middle">就是你屏幕上看到的</text>
+
+  <rect x="650" y="70" width="160" height="110" rx="12" fill="#161c20" stroke="#3ddc97"/>
+  <text x="730" y="100" fill="#3ddc97" font-size="15" text-anchor="middle">📦 外卖盒</text>
+  <text x="730" y="126" fill="#e6edf1" font-size="12.5" text-anchor="middle">21 个文件</text>
+  <text x="730" y="148" fill="#8b9aa3" font-size="12.5" text-anchor="middle">分给不同的人</text>
+
+  <line x1="182" y1="125" x2="222" y2="125" stroke="#3ddc97" stroke-width="1.6" marker-end="url(#a2)"/>
+  <line x1="392" y1="125" x2="432" y2="125" stroke="#3ddc97" stroke-width="1.6" marker-end="url(#a2)"/>
+  <line x1="602" y1="125" x2="642" y2="125" stroke="#3ddc97" stroke-width="1.6" marker-end="url(#a2)"/>
+
+  <text x="410" y="228" fill="#6f7f88" font-size="12.5" text-anchor="middle">中间的锅碗（半成品）删了不会坏事，重做一次就回来了</text>
+</svg>
+<div class="figcap">图 1 · 从你的素材到你的交付</div>
+</div>
+
+<h2>一、你要给什么</h2>
+
+<p><b>只给 1 个文件也能跑</b>：航拍图。另外 3 个是「配料」，给了结果才准。</p>
+
+<h3>① 航拍图 <span class="must">必须</span></h3>
+<p>就是无人机拍的那张大图（<code>.tif</code>），4 GB 左右。没有它什么也做不了。</p>
+<p>在软件第一次打开时选一次，以后它会记住。</p>
+
+<h3>② 三个配料 <span class="rec">强烈建议</span></h3>
+
+<p>这三个不是必须，但<b>少了会算错</b>，而且错得「看不出来」——界面照常出结果，只是数字偏了。</p>
+
+<table>
+  <thead><tr><th style="width:30%">配料</th><th>用大白话说</th><th style="width:30%">少了会怎样</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>高度图</b><br><code>chm.tif</code></td>
+      <td>每个位置「地面往上有多高」。软件靠它判断「这棵到底是不是树」。</td>
+      <td>水塘只能认出 <b>2 块</b>（本该 21 块）<br>天然林一块都没剔掉</td>
+    </tr>
+    <tr>
+      <td><b>识别图</b><br><code>segment.tif</code></td>
+      <td>大疆软件已经帮你标好的「哪里是水、哪里是树」。</td>
+      <td>水塘只能认出 <b>8%</b>（本该 98%）</td>
+    </tr>
+    <tr>
+      <td><b>林地边界</b><br><code>forest-mask*.geojson</code></td>
+      <td>哪一片是「还没开发的林子」，不算你的种植区。</td>
+      <td>天然林被当成空地<br><b>多出 221 个不该挖的坑</b></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>③ 可选：圈个范围 <span style="color:#8b9aa3;font-weight:700">可选</span></h3>
+<p>
+有明确的作业区块时，可以画个框或导入 KML。<b>不圈也行</b>，只是慢一倍：
+不圈约 6 分钟，圈了约 3 分钟。
+</p>
+
+<div class="card">
+  <h4>配料放哪儿？</h4>
+  <p style="margin:0">
+  最省事的办法：<b>和航拍图放在同一个文件夹里</b>，软件会自己去找。<br>
+  或者放进这个目录：<code>%LOCALAPPDATA%\fgd\data\output\</code><br>
+  <span style="color:#8b9aa3">（把这个路径复制到文件管理器地址栏回车就能打开）</span>
+  </p>
+</div>
+
+<div class="card warn">
+  <h4>⚠️ 一件真事</h4>
+  <p style="margin:0">
+  有位用户跑完检测，结果水体只有 2 块。查了半天才发现：配料放在项目文件夹里，
+  但软件装好之后看的是<b>另一个数据目录</b>，那里是空的。
+  把 3 个配料复制过去、重跑一次，就正常了。<br>
+  <b>所以：配料一定要放在软件能找到的地方。</b>
+  </p>
+</div>
+
+<h2>二、它自己会造什么（你不用管）</h2>
+
+<p>就像做菜时的砧板、碗、保鲜盒。这些是软件自己产生的，<b>删了也不会有事</b>，重做一次就回来。</p>
+
+<ul>
+  <li><b>切好的半成品</b> —— 一张图太大，软件会切成几百小块慢慢处理。下次接着用，不用从头来。</li>
+  <li><b>缩略图</b> —— 让你在地图上缩放时不卡。没有它也能用，就是慢。</li>
+  <li><b>记住你上次选了哪个文件</b> —— 下次打开不用重选。</li>
+  <li><b>工作记录（日志）</b> —— 出问题时，把最后 20 行发给技术人员就能定位。</li>
+</ul>
+
+<h2>三、它给你什么</h2>
+
+<p><b>屏幕上看到的</b>：1,762 块空地，按颜色分成 8 类（连片空地、株位空缺、道路、水体、待复核……）。</p>
+
+<p><b>点「导出交付包」之后</b>：得到 <span class="big">21 个文件</span>。数量看着吓人，其实只是<b>同一份数据换了几种格式</b>，因为不同的人要用不同的工具打开。</p>
+
+<table>
+  <thead><tr><th style="width:26%">给谁</th><th style="width:34%">发哪个</th><th>为什么</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>给主管 / 甲方</b></td>
+      <td>一页报告（HTML）</td>
+      <td>一页纸讲清「要补多少、多少钱、最大的 20 块在哪」。打开后按 <code>Ctrl+P</code> 就能存成 PDF。</td>
+    </tr>
+    <tr>
+      <td><b>给现场工人</b></td>
+      <td>点位表（CSV）或 点位地图（KML）</td>
+      <td>3,691 个坑的坐标。CSV 导进手持 GPS；KML 拖进手机地图就能导航到每个坑。</td>
+    </tr>
+    <tr>
+      <td><b>给画图的同事</b></td>
+      <td>Shapefile 压缩包</td>
+      <td>ArcGIS / QGIS 里能直接打开、量距离、出图。</td>
+    </tr>
+    <tr>
+      <td><b>留着自己查</b></td>
+      <td>复核记录（CSV）</td>
+      <td>记着哪几块是你手工改过的、原来判成什么。以后有人问「这块为什么改了」，翻它。</td>
+    </tr>
+    <tr>
+      <td><b>只想在地图上看</b></td>
+      <td>KML</td>
+      <td>拖进 Google Earth 或奥维就显示，不用装专业软件。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <h4>不用全发</h4>
+  <p style="margin:0">
+  21 个文件里，<b>真正要发出去的通常只有 2~3 个</b>：一页报告给主管、点位表给现场、
+  Shapefile 给画图的。其余的（按类别分的 8 个压缩包、两种坐标系各一份）是给专业用途留的。
+  </p>
+</div>
+
+<h2>四、要占多大地方</h2>
+
+<table>
+  <thead><tr><th style="width:52%">东西</th><th>大小</th></tr></thead>
+  <tbody>
+    <tr><td>航拍图</td><td>4.7 GB（最大头）</td></tr>
+    <tr><td>缩略图（自动生成）</td><td>1.1 GB</td></tr>
+    <tr><td>3 个配料</td><td>共 62 MB</td></tr>
+    <tr><td>处理过程的半成品</td><td>16 MB</td></tr>
+    <tr><td>检测结果</td><td>14.5 MB</td></tr>
+    <tr><td>交付包</td><td>12 MB</td></tr>
+  </tbody>
+</table>
+
+<p><b>一套数据大约 6 GB</b>，其中 96% 是那张航拍图。多套数据时，把航拍图放移动硬盘也可以 ——
+在软件里选一下路径就行，不要求拷到某个固定位置。</p>
+
+<h2>五、一句话记住</h2>
+
+<p class="lead">
+<b>给 1 个能跑，给 4 个才准；中间那些删了不心疼；最后 21 个挑 2~3 个发出去就行。</b>
+</p>
+
+<footer>
+  想看每个文件的完整名字、大小、放在哪个目录：读
+  <code>输入输出文件清单.html</code>（专业版）。<br>
+  想知道怎么一步步操作：读 <code>桌面端使用手册.md</code>。
+</footer>
+
+</div>
+</body>
+</html>

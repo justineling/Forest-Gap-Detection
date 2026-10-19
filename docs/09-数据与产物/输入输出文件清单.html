@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>输入输出文件清单 · Forest Gap Detection</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #161c20; --panel-2: #1c2429;
+    --line: #263137; --text: #e6edf1; --dim: #8b9aa3;
+    --accent: #3ddc97; --warn: #f0b429; --danger: #e05252;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px 72px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 30px; }
+  h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: .3px; }
+  .sub { color: var(--dim); font-size: 13.5px; }
+  .tag {
+    display: inline-block; padding: 1px 8px; border-radius: 5px;
+    background: #232e33; color: var(--dim); font-size: 11.5px; margin-right: 6px;
+  }
+  h2 {
+    margin: 44px 0 14px; font-size: 19px;
+    padding-left: 11px; border-left: 3px solid var(--accent);
+  }
+  h3 { margin: 26px 0 10px; font-size: 15.5px; color: var(--text); }
+  p { margin: 10px 0; }
+  .lead { font-size: 15.5px; color: #cfdae1; }
+  .mono { font-family: Consolas, "Courier New", monospace; font-size: 13px; }
+  code {
+    font-family: Consolas, "Courier New", monospace; font-size: 12.5px;
+    background: #1b2429; padding: 1px 5px; border-radius: 4px; color: #a8e6c8;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); color: var(--dim); font-weight: 600; font-size: 12.5px; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  .must { color: var(--danger); font-weight: 600; }
+  .rec { color: var(--warn); font-weight: 600; }
+  .opt { color: var(--dim); }
+  .ok { color: var(--accent); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 18px; margin: 16px 0;
+  }
+  .card.warn { border-color: rgba(240,180,41,.4); background: rgba(240,180,41,.06); }
+  .card.bad { border-color: rgba(224,82,82,.4); background: rgba(224,82,82,.06); }
+  .card h4 { margin: 0 0 8px; font-size: 14px; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  .fig { margin: 22px 0; }
+  .figcap { color: var(--dim); font-size: 12.5px; text-align: center; margin-top: 8px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; }
+  .kpi {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .kpi .n { font-size: 24px; font-weight: 700; color: var(--accent); line-height: 1.2; }
+  .kpi .k { font-size: 12px; color: var(--dim); margin-top: 3px; }
+  .tree {
+    font-family: Consolas, "Courier New", monospace; font-size: 12.5px;
+    line-height: 1.85; background: #0b1114; border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px 16px; overflow-x: auto; white-space: pre;
+  }
+  .tree .c { color: #6f7f88; }
+  .tree .d { color: var(--accent); }
+  .tree .w { color: var(--warn); }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12.5px; }
+  @media (max-width: 720px) { .grid3 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>输入输出文件清单</h1>
+  <div class="sub">
+    Forest Gap Detection · 油棕园空地智能检测 · 2026-10-19
+    <span class="tag">专业版</span>
+  </div>
+</header>
+
+<p class="lead">
+一句话：<b>你给 1 个文件就能跑，给 4 个才准；程序给你 21 个文件。</b>
+本文按「必须提供 → 程序自己生成 → 最终交付」三段时间线，说清每个文件的名字、位置、体积，以及缺了会怎样。
+</p>
+
+<div class="grid3">
+  <div class="kpi"><div class="n">1</div><div class="k">必需输入（正射影像）</div></div>
+  <div class="kpi"><div class="n">3</div><div class="k">强烈建议的配套文件</div></div>
+  <div class="kpi"><div class="n">21</div><div class="k">最终交付文件</div></div>
+</div>
+
+<h2>一、你必须提供的文件</h2>
+
+<p>只有第 1 项是硬性要求。另外 3 项决定结果「准不准」，不是「能不能跑」。</p>
+
+<table>
+  <thead>
+    <tr><th style="width:21%">文件</th><th style="width:9%">必需性</th><th style="width:36%">缺了会怎样（实测量级）</th><th>放哪 / 怎么给</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>正射影像</b><br><span class="mono">*.tif</span></td>
+      <td class="must">必需</td>
+      <td>无法检测。程序只会显示「请选择影像」。</td>
+      <td>任意位置，在首次引导或「⋯ 更多 → 更换影像」里选。<br><span class="dim">参考：WGR17-002.tif 4.7 GB / 47,130×44,686 px / 3.3 cm/px / EPSG:4326</span></td>
+    </tr>
+    <tr>
+      <td><b>冠层高度模型</b><br><span class="mono">chm.tif</span></td>
+      <td class="rec">强烈建议</td>
+      <td>
+        <b>退化纯 RGB</b>：水塘从 21 块掉到 <b>2 块</b>；未开发林 <b>0 块</b>（本应剔除 25 块）。
+        它提供「多高才算树」的第二道判据。
+      </td>
+      <td rowspan="3">
+        <b>优先级</b>（自动探测，不用手填）：<br>
+        ① 影像同目录<br>
+        ② 影像目录下的 <span class="mono">output/</span><br>
+        ③ 数据根 <span class="mono">%LOCALAPPDATA%\fgd\data\</span><br>
+        ④ 数据根下的 <span class="mono">output/</span><br>
+        <span class="dim">检测前会预检并提示缺哪一项。</span>
+      </td>
+    </tr>
+    <tr>
+      <td><b>语义分割结果</b><br><span class="mono">segment.tif</span></td>
+      <td class="rec">强烈建议</td>
+      <td>水塘识别率从 <b>98%</b> 掉到 <b>7.9%</b>（含藻类的绿水塘不满足「蓝 &gt; 绿 &gt; 红」的 RGB 规则）。</td>
+    </tr>
+    <tr>
+      <td><b>森林掩膜</b><br><span class="mono">forest-mask*.geojson</span></td>
+      <td class="rec">强烈建议</td>
+      <td>未开发天然林被算成「可补种」，实测<b>多出 221 个放样点</b>——现场会挖到不该挖的地方。</td>
+    </tr>
+    <tr>
+      <td><b>检测范围</b><br><span class="mono">*.kml</span> / <span class="mono">*.geojson</span></td>
+      <td class="opt">可选</td>
+      <td>不导入就跑整幅：<b>约 6 分钟</b>；圈定后只跑圈内：<b>约 3 分钟</b>，且圈外天然林、邻园天然被排除。</td>
+      <td>「下一步」卡片的「导入 KML」/「手绘范围」。<br><span class="dim">KML 里的高程（lon,lat,alt）会被自动剥掉；多个多边形取面积最大的那个。</span></td>
+    </tr>
+    <tr>
+      <td><b>树心表</b><br><span class="mono">tree_info.json</span></td>
+      <td class="opt">仅重建掩膜</td>
+      <td>不影响日常检测。只有重新生成森林掩膜（<span class="mono">build_forest_mask.py</span>）时才需要。</td>
+      <td>大疆智图「果树模式」的输出，放在影像同目录。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="card warn">
+  <h4>⚠️ 一个真实的踩坑记录（2026-10-19）</h4>
+  <p style="margin:0">
+  打包版的数据目录 <span class="mono">%LOCALAPPDATA%\fgd\data\output\</span> 是<b>空的</b>。
+  用户选了仓库里的影像，但 CHM / 掩膜在仓库的 <span class="mono">output/</span> 里，
+  不在数据根里 → 检测跑出来 water 只有 2 块、undeveloped 0 块。
+  <b>界面上看起来一切正常</b>，只是数字偏了。
+  把这两个文件复制到数据根的 <span class="mono">output/</span> 再重跑即可。
+  </p>
+</div>
+
+<h2>二、文件是怎么流的</h2>
+
+<div class="fig">
+<svg viewBox="0 0 900 300" width="100%" height="300" role="img" aria-label="数据流：输入 → 中间产物 → 结果 → 交付包">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3ddc97"/>
+    </marker>
+  </defs>
+
+  <!-- 输入 -->
+  <rect x="14" y="60" width="176" height="176" rx="10" fill="#161c20" stroke="#263137"/>
+  <text x="102" y="86" fill="#8b9aa3" font-size="12" text-anchor="middle">① 你提供</text>
+  <text x="30" y="114" fill="#e6edf1" font-size="12.5" font-family="Consolas,monospace">正射影像 .tif</text>
+  <text x="30" y="138" fill="#f0b429" font-size="12.5" font-family="Consolas,monospace">chm.tif</text>
+  <text x="30" y="162" fill="#f0b429" font-size="12.5" font-family="Consolas,monospace">segment.tif</text>
+  <text x="30" y="186" fill="#f0b429" font-size="12.5" font-family="Consolas,monospace">forest-mask*.geojson</text>
+  <text x="30" y="210" fill="#8b9aa3" font-size="12.5" font-family="Consolas,monospace">*.kml（可选）</text>
+
+  <!-- 中间 -->
+  <rect x="240" y="60" width="186" height="176" rx="10" fill="#161c20" stroke="#263137"/>
+  <text x="333" y="86" fill="#8b9aa3" font-size="12" text-anchor="middle">② 程序自己生成</text>
+  <text x="256" y="114" fill="#8b9aa3" font-size="12.5" font-family="Consolas,monospace">jobs/{job}/tiles/*.json</text>
+  <text x="256" y="138" fill="#8b9aa3" font-size="12.5" font-family="Consolas,monospace">grid-survey.json</text>
+  <text x="256" y="162" fill="#8b9aa3" font-size="12.5" font-family="Consolas,monospace">影像.ovr 金字塔</text>
+  <text x="256" y="186" fill="#8b9aa3" font-size="12.5" font-family="Consolas,monospace">settings.json</text>
+  <text x="256" y="210" fill="#8b9aa3" font-size="12.5" font-family="Consolas,monospace">app.log</text>
+
+  <!-- 结果 -->
+  <rect x="476" y="60" width="176" height="176" rx="10" fill="#161c20" stroke="#263137"/>
+  <text x="564" y="86" fill="#8b9aa3" font-size="12" text-anchor="middle">③ 检测结果</text>
+  <text x="492" y="114" fill="#3ddc97" font-size="12.5" font-family="Consolas,monospace">{job}-gaps.geojson</text>
+  <text x="492" y="140" fill="#8b9aa3" font-size="11.5">1,762 要素 · 8 类</text>
+  <text x="492" y="162" fill="#8b9aa3" font-size="11.5">params 参数指纹</text>
+  <text x="492" y="184" fill="#8b9aa3" font-size="11.5">planting_grid 网格</text>
+  <text x="492" y="206" fill="#8b9aa3" font-size="11.5">summary 三档口径</text>
+
+  <!-- 交付 -->
+  <rect x="702" y="60" width="184" height="176" rx="10" fill="#161c20" stroke="#3ddc97"/>
+  <text x="794" y="86" fill="#3ddc97" font-size="12" text-anchor="middle">④ 交付包</text>
+  <text x="718" y="114" fill="#e6edf1" font-size="12.5" font-family="Consolas,monospace">21 个文件</text>
+  <text x="718" y="140" fill="#8b9aa3" font-size="11.5">GeoJSON ×3</text>
+  <text x="718" y="162" fill="#8b9aa3" font-size="11.5">Shapefile ×10</text>
+  <text x="718" y="184" fill="#8b9aa3" font-size="11.5">KML ×2 · CSV ×2</text>
+  <text x="718" y="206" fill="#8b9aa3" font-size="11.5">一页报告 ×1</text>
+
+  <!-- 箭头 -->
+  <line x1="196" y1="148" x2="232" y2="148" stroke="#3ddc97" stroke-width="1.6" marker-end="url(#ar)"/>
+  <line x1="432" y1="148" x2="468" y2="148" stroke="#3ddc97" stroke-width="1.6" marker-end="url(#ar)"/>
+  <line x1="658" y1="148" x2="694" y2="148" stroke="#3ddc97" stroke-width="1.6" marker-end="url(#ar)"/>
+
+  <text x="450" y="276" fill="#6f7f88" font-size="12" text-anchor="middle">
+    ② 可以随时删（重跑会重建）；③ 是 ④ 的唯一来源，人工复核的修改会写进 ④
+  </text>
+</svg>
+<div class="figcap">图 1 · 数据从哪来、到哪去</div>
+</div>
+
+<h2>三、程序自己生成的中间文件</h2>
+
+<p>这些不用你管，但知道它们在哪，排障时有用。</p>
+
+<table>
+  <thead><tr><th style="width:30%">文件 / 目录</th><th style="width:12%">体积</th><th>作用</th><th style="width:15%">能删吗</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="mono">output/jobs/{job}/tiles/*.json</span></td>
+      <td>529 个<br>约 16 MB</td>
+      <td>逐瓦片缓存。断点续跑靠它；改参数（含 CHM 档位）会让缓存整体失效。</td>
+      <td class="ok">能（下次重算）</td>
+    </tr>
+    <tr>
+      <td><span class="mono">output/jobs/{job}/grid-survey.json</span></td>
+      <td>几 KB</td>
+      <td>网格勘察结果：株距 / 行距 / 方位角 / 置信度。</td>
+      <td class="ok">能</td>
+    </tr>
+    <tr>
+      <td><span class="mono">影像.tif.ovr</span></td>
+      <td>1.08 GB</td>
+      <td>影像金字塔。没有它，低缩放级瓦片要 35~104 秒才能出一张。</td>
+      <td class="ok">能（但会明显变慢）</td>
+    </tr>
+    <tr>
+      <td><span class="mono">%LOCALAPPDATA%\fgd\settings.json</span></td>
+      <td>1 KB</td>
+      <td>记住上次选的影像与结果文件。</td>
+      <td class="ok">能（会重新弹引导）</td>
+    </tr>
+    <tr>
+      <td><span class="mono">%LOCALAPPDATA%\fgd\logs\app.log</span></td>
+      <td>几 KB</td>
+      <td><b>release 版没有控制台，这是唯一的排障入口。</b>报问题时附最后 20 行。</td>
+      <td class="ok">能</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>目录结构（打包版）</h3>
+<div class="tree"><span class="c">D:\Forest Gap Detection\</span>          <span class="c">← 安装目录（别手删，用 uninstall.exe）</span>
+├─ fgd-desktop.exe
+└─ py-runtime\desktop_entry\          <span class="c">← 内置 Python 运行时（179 MB）</span>
+
+<span class="c">%LOCALAPPDATA%\fgd\</span>                  <span class="c">← 数据根（你的数据放这）</span>
+├─ settings.json                      <span class="c">← 上次选的影像</span>
+├─ logs\app.log                       <span class="c">← 排障日志</span>
+└─ output\
+   ├─ <span class="d">chm.tif</span>                          <span class="w">← 建议放这里（60 MB）</span>
+   ├─ <span class="d">segment.tif</span>                      <span class="w">← 建议放这里（1.9 MB）</span>
+   ├─ <span class="d">forest-mask-*.geojson</span>           <span class="w">← 建议放这里（384 KB）</span>
+   ├─ <span class="d">wgr17-desktop-gaps.geojson</span>      <span class="c">← 检测结果（14.5 MB）</span>
+   └─ jobs\wgr17-desktop\
+      ├─ tiles\*.json                  <span class="c">← 瓦片缓存</span>
+      └─ grid-survey.json</div>
+
+<h2>四、检测结果：<span class="mono">{job}-gaps.geojson</span></h2>
+
+<p>
+文件名里的 <span class="mono">{job}</span> 由任务名决定，桌面端固定是 <span class="mono">wgr17-desktop</span>，
+所以产物叫 <span class="mono">wgr17-desktop-gaps.geojson</span>。它既是界面展示的数据源，也是导出交付包的输入。
+</p>
+
+<table>
+  <thead><tr><th style="width:24%">字段</th><th>内容</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">features[]</span></td><td>1,762 个多边形。每块带 <span class="mono">gap_id</span> / <span class="mono">class</span> / <span class="mono">area_sqm</span> / <span class="mono">class_confidence</span> / <span class="mono">class_reason</span> / <span class="mono">node_distance_m</span></td></tr>
+    <tr><td><span class="mono">params</span></td><td>本次实际用的参数（含 <span class="mono">elevation_core_chm</span> / <span class="mono">elevation_veto_chm</span> / <span class="mono">workers</span>），一页报告从这里读</td></tr>
+    <tr><td><span class="mono">planting_grid</span></td><td>株距 8.45 m / 行距 7.32 m / 方位角 / UTM 原点。放样点位靠它逐株对齐</td></tr>
+    <tr><td><span class="mono">summary.by_class</span></td><td>8 类计数：连片空地 420 · 株位空缺 342 · 不确定 540 · 林间空隙 293 · 道路 116 · 办公 49 · 水体 2 · 非种植区 0</td></tr>
+    <tr><td><span class="mono">summary.by_priority</span></td><td>三档业务口径：确定需补种 / 待复核 / 无需补种 / 不可种植</td></tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <h4>为什么不是顶层 <span class="mono">features</span></h4>
+  <p style="margin:0">
+  整幅结果把要素放在 <span class="mono">blocks[].gaps</span> 下，顶层没有 <span class="mono">features</span>。
+  前端读取时会自动展开两条路径 —— 直接按顶层 <span class="mono">features</span> 读会得到空数组，这个坑踩过。
+  </p>
+</div>
+
+<h2>五、交付包：21 个文件</h2>
+
+<p>导出时选一个目录，程序生成下面这些文件。四组用途不同，别一股脑全发。</p>
+
+<div class="tree"><span class="c">输出目录\</span>
+├─ <span class="d">gaps-all-wgs84.geojson</span>            <span class="c">10.6 MB  全部要素 · 经纬度</span>
+├─ <span class="d">gaps-all-utm49n.geojson</span>           <span class="c"> 8.2 MB  全部要素 · UTM 49N 投影</span>
+├─ <span class="d">gaps-all-wgs84-shp.zip</span>            <span class="c"> 1.1 MB  Shapefile · 经纬度</span>
+├─ <span class="d">gaps-all-utm49n-shp.zip</span>           <span class="c">755 KB  Shapefile · UTM 49N（测绘制图用这个）</span>
+├─ <span class="d">gaps-all.kml</span>                       <span class="c"> 4.1 MB  Google Earth / 奥维 直接打开</span>
+├─ <span class="d">gaps-edited.csv</span>                    <span class="c">136 KB  人工复核留痕（新增/改判/剔除）</span>
+├─ <span class="d">planting-points-wgs84.geojson</span>      <span class="c">996 KB  放样点位 · 经纬度</span>
+├─ <span class="d">planting-points-utm49n.geojson</span>     <span class="c">981 KB  放样点位 · UTM</span>
+├─ <span class="d">planting-points-wgs84-shp.zip</span>      <span class="c">139 KB</span>
+├─ <span class="d">planting-points-utm49n-shp.zip</span>     <span class="c">119 KB</span>
+├─ <span class="d">planting-points.kml</span>                <span class="c">720 KB  手机/平板导航用</span>
+├─ <span class="d">planting-points.csv</span>                <span class="c">332 KB  3,691 个点 · 手簿/GPS 导入</span>
+├─ <span class="d">补种勘察一页报告.html</span>              <span class="c"> 12 KB  给主管签字（Ctrl+P 存 PDF）</span>
+└─ <span class="c">by-class\</span>                           <span class="c">← 8 个按类别分包的 Shapefile</span>
+   ├─ gaps-open_patch-utm49n-shp.zip    <span class="c">连片空地</span>
+   ├─ gaps-vacant_slot-utm49n-shp.zip   <span class="c">株位空缺</span>
+   ├─ gaps-uncertain-utm49n-shp.zip     <span class="c">待复核</span>
+   ├─ gaps-alley_gap-utm49n-shp.zip     <span class="c">林间空隙</span>
+   ├─ gaps-road-utm49n-shp.zip          <span class="c">道路</span>
+   ├─ gaps-water-utm49n-shp.zip         <span class="c">水体</span>
+   ├─ gaps-office-utm49n-shp.zip        <span class="c">办公生活区</span>
+   └─ gaps-undeveloped-utm49n-shp.zip   <span class="c">非种植区（未开发林）</span></div>
+
+<h3>谁该拿哪个文件</h3>
+
+<table>
+  <thead><tr><th style="width:22%">给谁</th><th style="width:34%">发这个</th><th>为什么</th></tr></thead>
+  <tbody>
+    <tr><td><b>主管 / 甲方</b></td><td><span class="mono">补种勘察一页报告.html</span></td><td>一页纸：口径、株数、Top 20 大斑块、人工留痕。可打印成 A4 PDF。</td></tr>
+    <tr><td><b>现场施工</b></td><td><span class="mono">planting-points.csv</span> 或 <span class="mono">.kml</span></td><td>3,691 个坑位坐标。CSV 进手簿/GPS；KML 进手机导航。</td></tr>
+    <tr><td><b>GIS / 测绘</b></td><td><span class="mono">gaps-all-utm49n-shp.zip</span></td><td>UTM 49N 投影，ArcGIS / QGIS 里量距、出图不会变形。</td></tr>
+    <tr><td><b>归档 / 审计</b></td><td><span class="mono">gaps-edited.csv</span></td><td>记录哪几块是人工改的、原判是什么，事后能追溯。</td></tr>
+    <tr><td><b>只想在地图上看</b></td><td><span class="mono">gaps-all.kml</span></td><td>拖进 Google Earth / 奥维即可，不用装 GIS。</td></tr>
+  </tbody>
+</table>
+
+<h2>六、磁盘占用参考（本项目实测）</h2>
+
+<table>
+  <thead><tr><th style="width:34%">项</th><th style="width:16%">体积</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>正射影像 <span class="mono">WGR17-002.tif</span></td><td>4.7 GB</td><td>47,130×44,686 px，3.3 cm/px</td></tr>
+    <tr><td>影像金字塔 <span class="mono">.ovr</span></td><td>1.08 GB</td><td>一次性生成，之后开图快 10 倍以上</td></tr>
+    <tr><td>CHM</td><td>60 MB</td><td>由 DSM 减去地面高程得到</td></tr>
+    <tr><td>语义分割 <span class="mono">segment.tif</span></td><td>1.9 MB</td><td>大疆智图的域外分割结果</td></tr>
+    <tr><td>森林掩膜</td><td>384 KB</td><td>GeoJSON 多边形</td></tr>
+    <tr><td>瓦片缓存</td><td>16 MB</td><td>529 个 JSON</td></tr>
+    <tr><td>检测结果</td><td>14.5 MB</td><td>1,762 要素</td></tr>
+    <tr><td>交付包</td><td>12 MB</td><td>21 个文件</td></tr>
+  </tbody>
+</table>
+
+<div class="card bad">
+  <h4>空间规划建议</h4>
+  <p style="margin:0">
+  一套完整数据约 <b>6 GB</b>（影像占 96%）。跑多套数据时，把影像放外接盘、只把
+  <span class="mono">chm.tif</span> / <span class="mono">segment.tif</span> / <span class="mono">forest-mask</span>
+  放在数据根，也能正常检测 —— 影像路径由界面选择，不要求在数据根里。
+  </p>
+</div>
+
+<footer>
+  数据来源：本项目 2026-10-19 实测（<span class="mono">scripts/sidecar.py</span> 的 PARAM_SPEC、
+  <span class="mono">scripts/export_arcgis.py</span>、<span class="mono">desktop/src-tauri/src/lib.rs</span>、
+  <span class="mono">output/desktop-export-e2e/</span>）。<br>
+  配套阅读：<span class="mono">桌面端使用手册.md</span>（怎么操作）· <span class="mono">输入输出文件清单-小白版.html</span>（非技术版）
+</footer>
+
+</div>
+</body>
+</html>
