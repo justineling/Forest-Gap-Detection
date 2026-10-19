@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forest Gap Detection · 项目说明（供外部评审）</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #161c20; --panel-2: #1c2429;
+    --line: #263137; --text: #e6edf1; --dim: #8b9aa3;
+    --accent: #3ddc97; --warn: #f0b429; --danger: #e05252; --info: #4a90d9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px 80px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.78 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 30px; }
+  h1 { margin: 0 0 8px; font-size: 27px; letter-spacing: .3px; }
+  .sub { color: var(--dim); font-size: 13.5px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 5px; background: #232e33; color: var(--dim); font-size: 11.5px; margin-right: 6px; }
+  h2 { margin: 44px 0 14px; font-size: 19px; padding-left: 11px; border-left: 3px solid var(--accent); }
+  h3 { margin: 26px 0 10px; font-size: 15.5px; }
+  p { margin: 10px 0; }
+  .lead { font-size: 15.5px; color: #cfdae1; }
+  .mono, code { font-family: Consolas, "Courier New", monospace; }
+  code { font-size: 12.5px; background: #1b2429; padding: 1px 5px; border-radius: 4px; color: #a8e6c8; }
+  pre {
+    background: #0b1114; border: 1px solid var(--line); border-radius: 9px;
+    padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.8;
+    font-family: Consolas, "Courier New", monospace; color: #c3d0d8;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); color: var(--dim); font-weight: 600; font-size: 12.5px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 16px 0; }
+  .card.info { border-left: 3px solid var(--info); }
+  .card.warn { border-left: 3px solid var(--warn); }
+  .card.bad { border-left: 3px solid var(--danger); }
+  .card h4 { margin: 0 0 8px; font-size: 14.5px; }
+  ul, ol { margin: 10px 0; padding-left: 22px; }
+  li { margin: 6px 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 18px 0; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 13px 15px; }
+  .kpi .n { font-size: 22px; font-weight: 700; color: var(--accent); line-height: 1.2; }
+  .kpi .k { font-size: 11.5px; color: var(--dim); margin-top: 3px; }
+  .q { background: rgba(74,144,217,.08); border: 1px solid rgba(74,144,217,.35); border-radius: 9px; padding: 14px 16px; margin: 12px 0; }
+  .q b { color: #79b8f0; }
+  .badge { display:inline-block; padding:0 6px; border-radius:4px; font-size:11px; }
+  .b-ok { background: rgba(61,220,151,.16); color: var(--accent); }
+  .b-warn { background: rgba(240,180,41,.16); color: var(--warn); }
+  .b-bad { background: rgba(224,82,82,.16); color: #ff9b9b; }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Forest Gap Detection · 项目说明</h1>
+  <div class="sub">
+    油棕种植园空地检测桌面应用 · 2026-10-19 · <span class="tag">供外部评审 / 求改进建议</span>
+  </div>
+</header>
+
+<p class="lead">
+这是一个<b>单人开发、约 6 周</b>的行业工具：给油棕种植园找出"需要补种的空地"，
+输出可直接施工的交付包。已封版并发布安装包，但我知道它离"产品"还有距离。
+本文按「它是什么 → 怎么做的 → 我踩过的坑 → 目前卡在哪」组织，
+<b>最后列出我最想要外部意见的 7 个问题</b>。
+</p>
+
+<div class="grid">
+  <div class="kpi"><div class="n">20,945</div><div class="k">行代码（TS + Rust + Python）</div></div>
+  <div class="kpi"><div class="n">477</div><div class="k">自动化断言</div></div>
+  <div class="kpi"><div class="n">229 ha</div><div class="k">单园区覆盖面积</div></div>
+  <div class="kpi"><div class="n">350 s</div><div class="k">全量检测耗时</div></div>
+</div>
+
+<h2>一、它解决什么问题</h2>
+
+<p>
+油棕园里总有树死了、漏种了。传统做法是人拿着平板在园区里走一遍记位置 ——
+229 公顷走完要大半天，还容易漏。这个软件用无人机航拍影像自动找出全部空地，
+并按种植网格算出"每棵树该补在哪"。
+</p>
+
+<h3>1.1 用户是谁</h3>
+
+<table>
+  <thead><tr><th style="width:22%">角色</th><th style="width:34%">他关心什么</th><th>软件给他什么</th></tr></thead>
+  <tbody>
+    <tr><td>种植园管理者</td><td>要补多少棵苗、花多少钱</td><td>一页报告：确定需补种 702 块 / 309,143 m² / 约 3,691 棵</td></tr>
+    <tr><td>现场施工队长</td><td>坑挖在哪</td><td>3,691 个放样点（CSV 进手持 GPS，KML 进手机导航）</td></tr>
+    <tr><td>GIS / 测绘</td><td>要能进 ArcGIS 出图</td><td>双坐标系 Shapefile + 8 个按类别分包</td></tr>
+  </tbody>
+</table>
+
+<h3>1.2 一条完整的活</h3>
+
+<pre>① 选影像（4.7 GB 正射图）
+② 圈范围（可选：整幅 6 分钟 / 圈定 3 分钟）
+③ 检测 → 1,726 个多边形，分 8 类
+④ 复核 → 删误报、改错判（1,726 块里通常几百块要人工看）
+⑤ 导出 → 21 个文件 + 一页报告</pre>
+
+<h2>二、技术架构</h2>
+
+<h3>2.1 三个进程，各管一段</h3>
+
+<pre>┌─────────────────────────────────────────────────────────┐
+│ Tauri 宿主（Rust，2,206 行）                            │
+│   窗口 / 进程监督 / 文件对话框 / 预检 / 文件日志        │
+└───────┬──────────────────────────────┬──────────────────┘
+        │ stdio NDJSON（数据通道）      │ HTTP 127.0.0.1:8765
+        │ stderr（人类日志）            │ （唯一 HTTP 边界）
+┌───────▼──────────────┐   ┌───────────▼──────────────────┐
+│ sidecar.py           │   │ tile_server.py               │
+│ 算法跑批（多进程）    │   │ 瓦片 / 结果 / 导出 / 点位    │
+└──────────────────────┘   └──────────────┬───────────────┘
+        │                                 │
+┌───────▼─────────────────────────────────▼───────────────┐
+│ WebView（React 18 + TS，7,480 行 / 33 文件）            │
+│ 地图 MapLibre GL 4 · 绘制 Terra Draw · 状态 zustand     │
+└─────────────────────────────────────────────────────────┘</pre>
+
+<div class="card info">
+  <h4>为什么检测不走 HTTP</h4>
+  <p style="margin:0">
+  350 秒的跑批要持续回传进度。走 HTTP 得设计轮询 / SSE / WebSocket，
+  还要考虑端口占用、跨域、超时重连。<b>stdio NDJSON 只有一行一个 JSON，
+  进程死了立刻能感知</b> —— 用一条管道换掉整套通信基础设施。
+  只有"按需取瓦片"这一件事走 HTTP（浏览器内核只认 URL）。
+  </p>
+</div>
+
+<h3>2.2 技术栈与理由</h3>
+
+<table>
+  <thead><tr><th style="width:26%">选择</th><th>为什么不是别的</th></tr></thead>
+  <tbody>
+    <tr><td>Tauri v2（不是 Electron）</td><td>安装包 67.8 MiB vs Electron 通常 150 MB+；Rust 侧能直接管子进程</td></tr>
+    <tr><td>React 18 + zustand（不是 Vue / Redux）</td><td>zustand 的快照式撤销栈实现最直接；项目只有 33 个文件，Redux 样板太重</td></tr>
+    <tr><td>手写 CSS（不是 MUI / Tailwind）</td><td>只有一个界面、一套深色主题；引入 UI 库反而要为覆盖样式写更多代码</td></tr>
+    <tr><td>Terra Draw（不是 Leaflet-Geoman）</td><td>与 MapLibre GL 4 原生适配，无需额外底图适配层</td></tr>
+  </tbody>
+</table>
+
+<h2>三、算法核心（这是最难的部分）</h2>
+
+<p>
+输入是一张 RGB 正射影像。要回答"这一小块是不是空地"，靠三层证据叠加：
+</p>
+
+<table>
+  <thead><tr><th style="width:20%">证据</th><th style="width:32%">怎么做</th><th>为什么不能只靠它</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>颜色</b></td>
+      <td>ExG = 2G−R−B，阈值取 40% 分位并夹在 40~80</td>
+      <td>跨航带曝光差 3 倍（ExG 中位 37~116）；草地 ExG 比油棕还高（159 vs 64~102）——<b>"太绿"反而可能不是树</b></td>
+    </tr>
+    <tr>
+      <td><b>高度</b></td>
+      <td>CHM = DSM − 地面高程。<b>≥5.2 m 一定判树，&lt;1.2 m 一定否决</b>，中间靠颜色</td>
+      <td>大疆 DSM 被平滑，树高系统性低估 <b>约 40%</b>；阈值每动 ±1 m，需补种面积变 ±3.0 万 m²</td>
+    </tr>
+    <tr>
+      <td><b>语义分割</b></td>
+      <td>用大疆的域外分割结果识别水体（绿水塘 RGB 判断不出来）</td>
+      <td><b>51% 的"非树"判定完全依赖它</b> —— 航拍没跑这一步，精度掉一半</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>3.1 一个不直观的发现</h3>
+
+<div class="card warn">
+  <h4>纹理标准差是判"株位空缺"与"连片空地"最有效的单一特征</h4>
+  <p style="margin:0">
+  实测分档：株位空缺 <b>8~15</b> / 连片空地 <b>22~26</b> / 油棕 <b>39~47</b> / 草地 <b>46.3</b>。<br>
+  但<b>草地与油棕完全重叠</b> —— 这就是"高草 vs 幼龄油棕"至今分不开的根本原因（残缺 122,784 m²）。
+  </p>
+</div>
+
+<h2>四、工程上做了什么（可能值得参考的部分）</h2>
+
+<h3>4.1 确定性自检</h3>
+<p>
+450 秒的跑批如果结果不可复现，"改进了"和"改坏了"就分不清。所以：
+<b>任何参数变更都进参数指纹</b>，瓦片缓存按指纹命中；同一影像同一参数重跑，
+逐位一致。
+</p>
+
+<h3>4.2 三道防"静默算错"的闸</h3>
+<p>这个项目最大的教训是：<b>最坏的错误不是崩溃，是"看起来正常但算错"</b>。所以：</p>
+<ul>
+  <li><b>检测前预检 7 项</b>：缺 CHM / 分割 / 掩膜时 sidecar 只回一条 warn 就照常跑完 ——
+  必须在点按钮之前拦掉</li>
+  <li><b>空响应不覆盖已有数据</b>：区分"算法自报 0 块"（可清空）与"没收到报告"（必须保留）</li>
+  <li><b>区分「用户指定时刻」与「文件 mtime」</b>：否则回看旧批次时会被目录里更新的文件顶掉，
+  而 <code>planting_grid</code> 跟着换 → <b>块数完全正确、点位整体偏移</b></li>
+</ul>
+
+<h3>4.3 文档分三个层级</h3>
+<table>
+  <thead><tr><th style="width:26%">文档</th><th>给谁</th></tr></thead>
+  <tbody>
+    <tr><td><code>桌面端使用手册.md</code></td><td>现场作业员：跟着「下一步」卡片点就行，含 9 条排障表</td></tr>
+    <tr><td><code>桌面端实现说明.html</code></td><td>技术同事：进程模型、每个设计决定的理由</td></tr>
+    <tr><td><code>desktop/README.md</code></td><td>接手开发：<b>58 条坑</b>，每条带错误原文与复现条件</td></tr>
+  </tbody>
+</table>
+
+<h2>五、我知道的短板（不用你重复指出来）</h2>
+
+<table>
+  <thead><tr><th style="width:30%">项</th><th style="width:14%">严重度</th><th>具体状态</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>高草 vs 幼龄油棕不可分</td>
+      <td><span class="badge b-bad">P0</span></td>
+      <td>122,784 m² 绿色区域归属不明。单期影像的物理极限，只能靠人工删</td>
+    </tr>
+    <tr>
+      <td>51% 非树判定依赖外部分割</td>
+      <td><span class="badge b-bad">P0</span></td>
+      <td>没有 <code>segment.tif</code> 时水塘识别率从 98% 掉到 7.9%</td>
+    </tr>
+    <tr>
+      <td>CHM 阈值泛化脆弱</td>
+      <td><span class="badge b-warn">P1</span></td>
+      <td>5.2 / 1.2 m 只用 5 个真值点标定。已给三档林龄预设兜底，但自动标定需要标注集（目前 0 个）</td>
+    </tr>
+    <tr>
+      <td>全图单一网格原点</td>
+      <td><span class="badge b-warn">P1</span></td>
+      <td>整体对齐率 46%，局部细扫可达 79~97%。没做局域网格拟合</td>
+    </tr>
+    <tr>
+      <td>没有标注验证集</td>
+      <td><span class="badge b-bad">P0</span></td>
+      <td>全部验证证据 = 5 个真值点 + 目视抽查。<b>这是所有算法改进的瓶颈</b></td>
+    </tr>
+    <tr>
+      <td>无 CI</td>
+      <td><span class="badge b-warn">P1</span></td>
+      <td>477 个断言全靠本地手动跑；e2e 脚本依赖真浏览器，进了 <code>tests/e2e/</code> 但没接入流水线</td>
+    </tr>
+    <tr>
+      <td>无日志轮转 / 无错误上报</td>
+      <td><span class="badge b-warn">P1</span></td>
+      <td><code>app.log</code> 无限增长；用户崩溃时只能让他手动发日志文件</td>
+    </tr>
+    <tr>
+      <td>单园区硬编码</td>
+      <td><span class="badge b-warn">P1</span></td>
+      <td>代码里 23 处 <code>WGR17*</code>；换园区靠"文件名叫对 + 目录放对"，不是配置驱动</td>
+    </tr>
+    <tr>
+      <td>UI 无自动化回归</td>
+      <td><span class="badge b-warn">P1</span></td>
+      <td>有 CDP 驱动脚本但依赖真 Chrome；React 组件层没有测试（只有纯函数与 store）</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>六、我最想要的 7 个外部意见</h2>
+
+<div class="q">
+<b>Q1 · 算法验证路线</b>：0 标注样本的情况下，如何<b>低成本</b>建立可信验证集？
+我的想法是"在 1,726 块里随机抽 200 块，人工标 4 类（真空地/误报/林间空隙/拿不准）"，
+但标注本身要 2~3 人日。有没有更聪明的采样策略（active learning？按置信度分层？），
+能让人工标注量降到 1 人日以内且结论依然可信？
+</div>
+
+<div class="q">
+<b>Q2 · 高草 vs 幼龄油棕</b>：单期 RGB + CHM 分不开（纹理重叠）。
+除了"等多时相影像"，还有别的物理信号吗？我考虑过：
+① DSM 的树冠形状（幼棕榈是放射状，草是面状）；② 阴影方向一致性（种植园有固定行向）。
+这两个方向值得投入吗，还是注定是噪声？
+</div>
+
+<div class="q">
+<b>Q3 · 外部分割依赖</b>：现在 51% 的非树判定靠大疆的 <code>segment.tif</code>。
+如果要在本地跑一个轻量分割头（不联网、CPU 可接受、PyInstaller 能打包），
+现实吗？我的判断是"用 1,726 块人工标注做弱监督 + 小模型微调"，
+但没有 GPU，也不敢引入 PyTorch（安装包会从 68 MB 涨到 500 MB+）。
+有没有 CPU 友好（ONNX / 量化）的路线推荐？
+</div>
+
+<div class="q">
+<b>Q4 · 网格对齐</b>：全图用单一网格原点，整体对齐率只有 46%。
+我在 300 m 窗口做细扫能到 79~97%，说明存在局域形变。
+问题：<b>做局域网格拟合（分块求相位再插值）会不会引入"接缝"？</b>
+以及，有没有成熟的"周期性点阵相位恢复"算法（类似晶体学的相位展开）可以直接用？
+</div>
+
+<div class="q">
+<b>Q5 · 架构取舍</b>：现在是"Python 算法 + Rust 外壳 + React 前端 + stdio 管道"。
+如果未来要做 Web 版（多用户、浏览器里跑），这套 sidecar 架构要怎么演进？
+我的直觉是"抽出一个任务队列 + 对象存储"，但这等于重写。
+有没有更平滑的迁移路径？
+</div>
+
+<div class="q">
+<b>Q6 · 工程质量</b>：477 个断言、58 条坑记录、零 CI。
+在单人项目里，<b>投入产出比最高的下一件事是什么</b>？
+（CI？E2E？组件测试？类型收紧？）如果只能做一件，你选哪个，为什么？
+</div>
+
+<div class="q">
+<b>Q7 · 产品化</b>：现在换园区需要"文件名叫对 + 目录放对"，是隐式契约。
+真正的产品化应该长什么样 —— 是"项目/工作区"概念（每个园区一个目录，带 manifest），
+还是"导入向导"（选文件时自动推断关系）？两种对现有代码的改动量差多少？
+</div>
+
+<h2>七、如果你想看得更深</h2>
+
+<table>
+  <thead><tr><th style="width:34%">文件</th><th>内容</th></tr></thead>
+  <tbody>
+    <tr><td><code>docs/08-桌面端/桌面端实现说明.html</code></td><td>每个设计决定的理由（9 章）</td></tr>
+    <tr><td><code>docs/03-算法教学/算法缺陷与桌面端协同看板.html</code></td><td>12 个算法缺陷的实测量级 + 修复方向</td></tr>
+    <tr><td><code>desktop/README.md</code></td><td>58 条坑，分 7 组，每条带错误原文</td></tr>
+    <tr><td><code>docs/09-数据与产物/输入输出文件清单.html</code></td><td>3 个源文件 → 21 个交付文件的完整链路</td></tr>
+  </tbody>
+</table>
+
+<div class="card info">
+  <h4>评审时请优先关注</h4>
+  <p style="margin:0">
+  ① <b>算法</b>：验证集怎么建、高草问题有没有别的路；<br>
+  ② <b>架构</b>：sidecar 模式的天花板在哪；<br>
+  ③ <b>工程</b>：单人项目该把有限的精力投在哪。<br>
+  UI 细节不用管 —— 那是最容易改的部分。
+  </p>
+</div>
+
+<footer>
+  Forest Gap Detection · 项目说明（供外部评审）· 2026-10-19<br>
+  代码规模：前端 7,480 行 / 33 文件 · Rust 2,206 行 · Python 11,259 行 / 19 文件<br>
+  自动化：`npm test` 445 项 · `cargo test` 32 项 · 契约测试 95 项 · e2e 4 个脚本（未进 CI）
+</footer>
+
+</div>
+</body>
+</html>

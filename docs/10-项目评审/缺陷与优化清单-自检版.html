@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forest Gap Detection · 缺陷与优化清单（自检版）</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #161c20; --panel-2: #1c2429;
+    --line: #263137; --text: #e6edf1; --dim: #8b9aa3;
+    --accent: #3ddc97; --warn: #f0b429; --danger: #e05252; --info: #4a90d9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px 80px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.78 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1020px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 26px; }
+  h1 { margin: 0 0 8px; font-size: 27px; }
+  .sub { color: var(--dim); font-size: 13.5px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 5px; background: #232e33; color: var(--dim); font-size: 11.5px; }
+  h2 { margin: 42px 0 12px; font-size: 19px; padding-left: 11px; border-left: 3px solid var(--accent); }
+  p { margin: 10px 0; }
+  .lead { font-size: 15.5px; color: #cfdae1; }
+  code, .mono { font-family: Consolas, "Courier New", monospace; }
+  code { font-size: 12.5px; background: #1b2429; padding: 1px 5px; border-radius: 4px; color: #a8e6c8; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); color: var(--dim); font-size: 12.5px; font-weight: 600; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 15px 18px; margin: 16px 0; }
+  .card.ok { border-left: 3px solid var(--accent); }
+  .card.warn { border-left: 3px solid var(--warn); }
+  .card.bad { border-left: 3px solid var(--danger); }
+  .card h4 { margin: 0 0 8px; font-size: 14.5px; }
+  ul, ol { margin: 9px 0; padding-left: 22px; }
+  li { margin: 6px 0; }
+  .def { border: 1px solid var(--line); border-radius: 10px; margin: 16px 0; overflow: hidden; }
+  .def-h {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 12px 16px; background: var(--panel-2);
+  }
+  .def-h b { font-size: 14.5px; }
+  .def-b { padding: 14px 16px; background: var(--panel); }
+  .lv { padding: 1px 8px; border-radius: 5px; font-size: 11.5px; font-weight: 700; }
+  .lv-p0 { background: rgba(224,82,82,.18); color: #ff9b9b; }
+  .lv-p1 { background: rgba(240,180,41,.18); color: #f5cd7a; }
+  .lv-p2 { background: rgba(74,144,217,.18); color: #85bff0; }
+  .lv-p3 { background: #232e33; color: var(--dim); }
+  .kv { display: grid; grid-template-columns: 74px 1fr; gap: 10px; font-size: 13px; margin: 5px 0; }
+  .kv span:first-child { color: var(--dim); }
+  .num { display: inline-block; min-width: 22px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  footer { margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>缺陷与优化清单（自检版）</h1>
+  <div class="sub">
+    Forest Gap Detection · 2026-10-19 全量自检 · <span class="tag">P0 5 项 / P1 11 项 / P2 9 项</span>
+  </div>
+</header>
+
+<p class="lead">
+这份是我自己在封版前逐层翻了一遍的结论。<b>不是"待办清单"，是带证据的缺陷台账</b> ——
+每条都标了「怎么发现的 / 影响了谁 / 修它的成本」。
+排序原则不是"技术上多难"，而是<b>「用户会不会因此拿到错的结果还不知道」</b>。
+</p>
+
+<div class="card ok">
+  <h4>先说这轮已经修掉的（避免重复提）</h4>
+  <ul style="margin:0">
+    <li>结果文件写死文件名 → 检测成功但界面全空（改为扫目录取最新 + 缓存按 mtime 失效）</li>
+    <li>空响应覆盖现有 1,762 块数据（改为区分"算法自报 0 块"与"没收到报告"）</li>
+    <li>网格串批次 → 块数正确但点位整体偏移（改为区分「指定时刻」与「文件 mtime」）</li>
+    <li><code>?mock=ready</code> 缺 <code>bounds_wgs84</code> → 地图整块崩（这个坑曾让截图自检变成假绿）</li>
+    <li>坑文档编号断层（37 直接跳 41）+ 三处条数引用不一致</li>
+  </ul>
+</div>
+
+<h2>P0 · 会让用户拿到错结果，而且看不出来</h2>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p0">P0-1</span><b>检测完不重跑也能"看起来正常"地交付</b></div>
+  <div class="def-b">
+    <div class="kv"><span>怎么发现</span><span>做"生成高度图"功能时想到：用户换 CHM 后如果不重跑，报告里的株数是按旧 CHM 算的</span></div>
+    <div class="kv"><span>影响</span><span>已完成态文案写了"下一步：重跑检测"，但<b>只是提示，没有阻断</b>。用户点「知道了」就过去了</span></div>
+    <div class="kv"><span>建议</span><span>在结果文件里存 <code>chm_mtime</code>；<code>/gaps</code> 返回时比对当前 <code>chm.tif</code> 的 mtime，不一致就在状态栏挂一条橙色警示「结果是用旧的高度图算的」</span></div>
+    <div class="kv"><span>成本</span><span>小（半天）：Python 写 mtime，Rust 透传，前端显示</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p0">P0-2</span><b>没有标注验证集 —— 所有算法改进都在盲改</b></div>
+  <div class="def-b">
+    <div class="kv"><span>怎么发现</span><span>翻缺陷台账：CHM 阈值 5.2/1.2 只用 <b>5 个真值点</b>标定</span></div>
+    <div class="kv"><span>影响</span><span>任何阈值调整都无法判断"变好还是变坏"。<b>这是整个项目的天花板</b></span></div>
+    <div class="kv"><span>建议</span><span>从 1,726 块里按"面积降序 + 置信度分层"抽 150~200 块人工标注（4 类）。<br>
+      关键设计：<b>标注界面就用桌面端现有的复核清单</b> —— 标"这是不是真空地"顺手就完成了，不用另做工具</span></div>
+    <div class="kv"><span>成本</span><span>中（2~3 人日标注）。但它是解锁 P1-3 / P1-4 / P0-1 的前置条件</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p0">P0-3</span><b>生成派生数据不可取消 —— 但失败时没有任何恢复指引</b></div>
+  <div class="def-b">
+    <div class="kv"><span>怎么发现</span><span>自己测"生成中途杀进程"时发现会留半个 CHM</span></div>
+    <div class="kv"><span>影响</span><span>断电 / 蓝屏 / 强制关机后，<code>output/chm.tif</code> 可能是半截文件，<b>而检测读到它不报错</b>
+      （NaN 变少但仍是有效栅格）→ 结果偏了但没人知道</span></div>
+    <div class="kv"><span>建议</span><span>写临时文件 <code>chm.tif.part</code>，成功后原子 rename；启动时若有 <code>.part</code> 残留就提示"上次生成中断，请重新生成"。<br>
+      这是标准的 write-temp-then-rename，但现在的 <code>build_chm.py</code> 直接写目标路径</span></div>
+    <div class="kv"><span>成本</span><span>小（半天）：改 <code>build_chm.py</code> 与 <code>build_forest_mask.py</code> 的写出逻辑 + 启动时探测</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p0">P0-4</span><b>"换园区"靠隐式契约，没有任何校验</b></div>
+  <div class="def-b">
+    <div class="kv"><span>怎么发现</span><span>代码里 <b>23 处 <code>WGR17*</code> 硬编码</b>；用户问"我换园区要准备什么"时，答案是一堆"要放对目录"</span></div>
+    <div class="kv"><span>影响</span><span>换园区后如果目录结构不对，检测会静默降级（缺 CHM → 纯 RGB）。
+      虽然预检能提示，但<b>预检本身也可能因为路径规则说不清而漏判</b></span></div>
+    <div class="kv"><span>建议</span><span>引入 <b>工作区（project）概念</b>：一个目录 = 一个园区，内含
+      <code>manifest.json</code>（影像/DSM/segment/树心表的相对路径 + 创建时间）。
+      打开工作区即校验，缺文件当场列表。<br>
+      代价：要改 <code>data_base()</code> 与 <code>settings.json</code> 的语义</span></div>
+    <div class="kv"><span>成本</span><span>大（3~5 天）。但每换一次园区都能省下"为什么结果不对"的排查</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p0">P0-5</span><b>同一份数据跑两次，块数会差几十块（未复现，存疑）</b></div>
+  <div class="def-b">
+    <div class="kv"><span>怎么发现</span><span>对比不同时间的导出：1,726 / 1,762 / 1,751 三个数字都出现过</span></div>
+    <div class="kv"><span>影响</span><span>如果是真差异，说明存在<b>未控的随机性</b>（多进程浮点累加顺序？）——
+      这会推翻"逐位可复现"的承诺</span></div>
+    <div class="kv"><span>目前判断</span><span><b>大概率不是 bug</b>：这三次用的输入不同
+      （一次补掩膜前、一次补掩膜后、一次不同 CHM）。但没有一次<b>受控的 A/B</b> 证明过</span></div>
+    <div class="kv"><span>建议</span><span>做一次受控实验：同影像、同参数、<code>--force</code> 重跑两次，
+      比 <code>summary.by_class</code> 的每一位。这条要么变成 P0 真 bug，要么从此关闭</span></div>
+    <div class="kv"><span>成本</span><span>小（1 小时），但必须先做 —— 不确定性本身就有成本</span></div>
+  </div>
+</div>
+
+<h2>P1 · 会让人困惑或返工，但不会算错</h2>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-1</span><b>没有日志轮转 · <code>app.log</code> 无限增长</b></div>
+  <div class="def-b">
+    <div class="kv"><span>证据</span><span><code>grep -n "rotate\|maxBytes" desktop/src-tauri/src/lib.rs</code> → 零命中</span></div>
+    <div class="kv"><span>影响</span><span>长期使用后日志文件会到几百 MB。用户报障时也不好意思发一个大文件</span></div>
+    <div class="kv"><span>建议</span><span>超过 5 MB 就滚动，保留 3 份。<b>或者只保留最近 500 行</b>（排障只需要最后几十行）</span></div>
+    <div class="kv"><span>成本</span><span>很小（1 小时）</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-2</span><b>没有错误上报 —— 用户崩溃时只能手动发日志</b></div>
+  <div class="def-b">
+    <div class="kv"><span>证据</span><span>全项目搜 <code>sentry / telemetry / crash_report</code> → 零命中</span></div>
+    <div class="kv"><span>影响</span><span>现场用户说"它报错了"，你只能让他去找 <code>%LOCALAPPDATA%\fgd\logs\app.log</code>。
+      <b>而多数人找不到路径</b></span></div>
+    <div class="kv"><span>建议</span><span>不做联网上报（行业工具、内网环境）。改成
+      <b>「⋯ 更多 → 导出诊断包」</b>：打包 app.log 最后 200 行 + settings + 系统信息 + 最近一次预检结果，
+      生成一个 zip 让用户发过来</span></div>
+    <div class="kv"><span>成本</span><span>小（半天）。比接 Sentry 更适合这个场景</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-3</span><b>零 CI —— 477 个断言全靠手动跑</b></div>
+  <div class="def-b">
+    <div class="kv"><span>证据</span><span><code>.github/workflows</code> 不存在</span></div>
+    <div class="kv"><span>影响</span><span>这次连续改了两天，每次靠"我记得跑一下"。<b>如果哪次忘了，回归会静默存在</b></span></div>
+    <div class="kv"><span>建议</span><span>最小 CI 只跑三件事：<code>tsc --noEmit</code>、<code>npm test</code>、
+      <code>cargo test</code>。e2e 那几个脚本依赖真 Chrome，做成可选 job（手动触发）</span></div>
+    <div class="kv"><span>成本</span><span>小（半天，含 Windows runner 上 cargo 缓存调优）</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-4</span><b>没有 React 组件测试</b></div>
+  <div class="def-b">
+    <div class="kv"><span>证据</span><span>10 个测试文件全部是纯函数 / store，没有一个 <code>.test.tsx</code></span></div>
+    <div class="kv"><span>影响</span><span>"属性 tab 只在选中时出现""帮助弹窗三入口"这类<b>渲染条件</b>只能靠 CDP 手工验。
+      而 CDP 脚本跑得慢、依赖真浏览器</span></div>
+    <div class="kv"><span>建议</span><span>不追求全覆盖。只给<b>条件渲染</b>写测试（约 8 个用例）：
+      右栏标签、卡片状态、弹窗开关。<code>@testing-library/react</code> + jsdom 即可</span></div>
+    <div class="kv"><span>成本</span><span>中（1~2 天，含测试环境搭建）</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-5</span><b><code>output/</code> 里有 20 个测试残留 geojson</b></div>
+  <div class="def-b">
+    <div class="kv"><span>证据</span><span><code>ls output/*gaps*.geojson | wc -l</code> → 20；
+      最新一份在 40.8 小时前，<code>wgr17-final-gaps</code> 排第 6</span></div>
+    <div class="kv"><span>影响</span><span><b>任何拿仓库根当 cwd 的验收都会看到 12 块而不是 1,726 块</b>。
+      这次它浪费了我和 QA 各一次排查</span></div>
+    <div class="kv"><span>建议</span><span>把测试产物统一写进 <code>output/_tests/</code>，并把 <code>output/*.geojson</code>
+      里非交付的加进 <code>.gitignore</code>。<b>根因是"测试直接写仓库 output/"这个约定本身不好</b></span></div>
+    <div class="kv"><span>成本</span><span>小（半天，要改几个测试脚本的输出路径）</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-6</span><b>全局 <code>CARGO_TARGET_DIR</code> 指向外部，与打包脚本冲突</b></div>
+  <div class="def-b">
+    <div class="kv"><span>证据</span><span>本机环境变量 <code>CARGO_TARGET_DIR=D:\forest-gap-tools\rust\target</code>（6.98 GB）；
+      项目内 <code>target/</code> 另有 2.5 GB</span></div>
+    <div class="kv"><span>影响</span><span><code>cargo check/test</code> 写外部、<code>tauri build</code> 写项目内（脚本中和了变量）——
+      <b>两份产物，且会撞 "error deleting lock file" 警告</b></span></div>
+    <div class="kv"><span>建议</span><span>二选一：① 删掉全局变量，统一用项目内 <code>target/</code>；
+      ② 文档里显式写明"所有 cargo 命令都要 <code>env -u CARGO_TARGET_DIR</code>"。<br>
+      <b>现在的情况是两者都没做，靠记忆</b></span></div>
+    <div class="kv"><span>成本</span><span>很小（5 分钟），但要确认 6.98 GB 里哪些还能删</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-7</span><b>NC 设计里的"帮助内容"是手写的，会随界面漂移</b></div>
+  <div class="def-b">
+    <div class="kv"><span>现状</span><span>已经做了缓解：<code>helpContent.test.ts</code> 用 135 条断言校验
+      "帮助里出现的类别名 = <code>CLASS_STYLES</code> 的 label"</span></div>
+    <div class="kv"><span>仍有的洞</span><span>只有"名称"被校验了，<b>"含义描述"没有任何校验</b>。
+      比如以后把 <code>alley_gap</code> 的业务规则从"不补种"改成"补种"，帮助里那段话不会自动更新</span></div>
+    <div class="kv"><span>建议</span><span>把"是否参与补种"这类业务属性提到 <code>CLASS_STYLES</code>，
+      帮助文案从属性生成而不是手写。这样规则变了文案必然跟着变</span></div>
+    <div class="kv"><span>成本</span><span>中（1 天，要重构 helpContent 的生成方式）</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-8</span><b>检测进度是"瓦片数"，但用户不知道一个瓦片多大</b></div>
+  <div class="def-b">
+    <div class="kv"><span>现状</span><span>显示「128 / 528 块」—— 528 是什么？每块 2048 px，约 67 m 见方</span></div>
+    <div class="kv"><span>建议</span><span>改成「已完成 24%（约 1.4 公顷 / 229 公顷）」，或直接「已扫过园区 24%」。
+      <b>瓦片数是实现细节，不是用户的心智单位</b></span></div>
+    <div class="kv"><span>成本</span><span>很小（1 小时）。需要后端在 progress 事件里带累计面积</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-9</span><b>"排坑退让距离"改了要重新导出，但界面没说</b></div>
+  <div class="def-b">
+    <div class="kv"><span>现状</span><span>左栏改退让 → 点位重算 → 但已经导出的交付包还是旧的</span></div>
+    <div class="kv"><span>建议</span><span>导出后如果改了退让，在「下一步」卡片上提示"退让已改，需重新导出"。
+      store 里记一个 <code>lastExportClearance</code> 即可</span></div>
+    <div class="kv"><span>成本</span><span>小（半天）</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-10</span><b>没有"我上次做到哪"的持久化</b></div>
+  <div class="def-b">
+    <div class="kv"><span>现状</span><span>关掉软件再开，五步流程回到"复核"（因为结果已加载），但
+      <b>哪些块复核过、哪些还没</b>只在本次会话有效</span></div>
+    <div class="kv"><span>影响</span><span>1,726 块复核到一半下班，明天不知道从哪继续</span></div>
+    <div class="kv"><span>建议</span><span>把"已复核"标记落到 <code>localStorage</code>（按 job + gap_id 集合）。
+      或者更彻底：复核时写 <code>output/&lt;job&gt;-reviewed.json</code></span></div>
+    <div class="kv"><span>成本</span><span>中（1 天）</span></div>
+  </div>
+</div>
+
+<div class="def">
+  <div class="def-h"><span class="lv lv-p1">P1-11</span><b>导出没有"部分失败"的可见性</b></div>
+  <div class="def-b">
+    <div class="kv"><span>现状</span><span><code>/export</code> 返回 <code>notes[]</code>，前端只 pushLog</span></div>
+    <div class="kv"><span>影响</span><span>如果 8 个分类分包里失败了 2 个，用户看到"导出完成 21 个文件"（实际 19），
+      <b>差异只在滚动日志里</b></span></div>
+    <div class="kv"><span>建议</span><span>notes 非空时导出对话框显示黄色警示块，列出缺了什么</span></div>
+    <div class="kv"><span>成本</span><span>很小（2 小时）</span></div>
+  </div>
+</div>
+
+<h2>P2 · 体验与工程债</h2>
+
+<table>
+  <thead><tr><th style="width:8%">#</th><th style="width:30%">项</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>P2-1</td><td>状态栏日志不能搜索/复制</td><td>排障时想找一条 W1004，只能肉眼滚。加个"复制全部"按钮即可</td></tr>
+    <tr><td>P2-2</td><td>没有键盘导航</td><td>复核清单不能用 ↑↓ 移动、回车选中。1,726 块纯鼠标点很累</td></tr>
+    <tr><td>P2-3</td><td>没有"撤销历史"面板</td><td>只有 ↶ 3 这个数字。用户不知道撤的是什么，不敢按</td></tr>
+    <tr><td>P2-4</td><td>影像元信息不完整</td><td>状态栏只有分辨率，没有采集日期 / 航高 / 云量 —— 实际复核时会看</td></tr>
+    <tr><td>P2-5</td><td>多选后批量改判没有预览</td><td>选中 40 块改成一类，点下去才知道结果。可以 hover 预览</td></tr>
+    <tr><td>P2-6</td><td>地图没有"回到全园"按钮</td><td>飞远之后只能滚轮缩回来</td></tr>
+    <tr><td>P2-7</td><td><code>sidecar.py</code> 与 <code>tile_server.py</code> 共享逻辑靠复制</td><td>两处都有 GeoJSON 读取与类别标签，改一处忘了另一处就分叉</td></tr>
+    <tr><td>P2-8</td><td>Python 侧无类型检查</td><td>没有 mypy / pyright。这次 <code>mask_skip</code> 未定义就是自己发现的（运行时报 NameError）</td></tr>
+    <tr><td>P2-9</td><td><code>scripts/</code> 19 个文件平铺</td><td>算法 / 导出 / 测试 / 打包脚本混在一起，新人不知道从哪读</td></tr>
+  </tbody>
+</table>
+
+<h2>如果只能做三件事</h2>
+
+<div class="card bad">
+  <h4>按"每单位投入能消掉多少不确定性"排</h4>
+  <ol style="margin:0">
+    <li><b>P0-5 · 受控 A/B 重跑（1 小时）</b> —— 先把"到底可不可复现"这件事钉死。
+      如果它是 bug，其他所有优化都白谈；如果不是，这条从此关闭，不再反复怀疑</li>
+    <li><b>P1-3 · 最小 CI（半天）</b> —— 477 个断言现在靠"我记得跑"。接上 CI 之后，
+      后面所有改动都自动有回归网，投入产出比最高</li>
+    <li><b>P0-2 · 标注验证集（2~3 人日）</b> —— 它是算法侧的天花板。
+      没有它，P1-3 的 CHM 自适应、P1-4 的局域网格都做不了；
+      有了它，那些都能从"猜"变成"测"</li>
+  </ol>
+</div>
+
+<div class="card warn">
+  <h4>不建议现在做的</h4>
+  <ul style="margin:0">
+    <li><b>P0-4 工作区概念（3~5 天）</b>：改动面大（<code>data_base</code> + <code>settings</code> + 全链路路径）。
+      在只有一个园区的阶段做它，等于为想象中的第二园区付钱</li>
+    <li><b>P1-4 组件测试</b>：CDP 脚本已经能覆盖渲染条件，只是慢。等 P1-3 的 CI 建起来再补更划算</li>
+    <li><b>任何算法调参</b>：P0-2 完成前，改阈值只是换一个"不知道好不好的结果"</li>
+  </ul>
+</div>
+
+<h2>附：这次自检的方法</h2>
+
+<p>如果别人也想给这个项目做自检，我的顺序是（从最贵的错往下）：</p>
+
+<ol>
+  <li><b>先问"哪种错是用户看不出来的"</b> —— 崩溃、白屏都不可怕，最可怕的是"数字看着正常的错"
+    （这次的网格串批次就是这类）</li>
+  <li><b>查同一份数据的多个消费者</b>：结果文件被谁读？<code>/gaps</code> / <code>/export</code> / 前端载入
+    各取哪些字段？<b>要素对了但网格没对</b>就是这么发现的</li>
+  <li><b>跑真实的产物，不跑 mock</b>：我因为 mock 缺字段，把"地图崩了"当成"正常"验了一轮</li>
+  <li><b>验证"新代码在包里"要比 hash</b>，不能看时间戳 —— 我因此假绿过一次</li>
+  <li><b>文档条数要机器数</b>：坑编号断层是肉眼看不出来的</li>
+</ol>
+
+<footer>
+  Forest Gap Detection · 缺陷与优化清单（自检版）· 2026-10-19<br>
+  优先级定义：<b>P0</b> = 用户会拿到错结果且看不出；<b>P1</b> = 困惑/返工但不算错；<b>P2</b> = 体验与工程债
+</footer>
+
+</div>
+</body>
+</html>
