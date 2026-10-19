@@ -15,14 +15,16 @@
   **禁止用系统 python**（无 numpy）。执行策略需 `-ExecutionPolicy Bypass`。
 - 运行态资源（`.venv/`、`output/`、`models/` 权重）被 `.gitignore` 排除，**新克隆后需重建**。
   `.workbuddy-ai/` 自 7f7c1f8 起已入库；`output/arcgis/` 需重跑 `scripts/export_arcgis.py`。
-- 大影像实际在用的是 `WGR17-002.tif`（旧名 `WGR17.tif`）：**4.66 GB**，47,130×44,686，EPSG:4326，
-  3.3 cm/px，**4 波段**（第4恒 255=Alpha），**内嵌 6 级金字塔 [2,4,8,16,32,64]**（DJI 导出自带，
-  不是本项目生成的）。同目录 `WGR17.tif.ovr`(1.08 GB) 是改名前的残留，对不上。
-  园区占外接矩形 57%。
-- **桌面端从不建金字塔**（`lib.rs` 起 `tile_server.py` 不传 `--build-overviews`，代码零命中）。
-  无金字塔时不报错，只提示"低缩放级慢（z=13 约 104 s）"；手动 `--build-overviews` 默认
-  生成**外置 .ovr**（不碰源文件），无 gdaladdo 时 auto 会**复制整份副本**到 `output/.tile-cache`
-  （4.7 GB 影像 = 额外 4.7 GB 磁盘）；`--ovr-mode inplace` 才真改源文件且不可逆。
+- 大影像 `drone data/WGR17-002.tif`（**一直叫这个名字**，10-13 记录里 Downloads 就是它）：
+  47,130×44,686，EPSG:4326，3.3 cm/px，**4 波段**（第4恒 255=Alpha）。园区占外接矩形 57%。
+- ⚠️ **体积 3.48 GiB → 4.66 GB 是本项目改的**（不是 DJI 自带）：2026-10-17 手动跑
+  `tile_server.py --build-overviews`（174 s），对 BigTIFF 而言 GDAL **写进文件内部**而非 `.ovr`，
+  +1.19 GB，`ds.files` 只返回 .tif。收益 z=13 104,407 ms → 700 ms（149×）。
+  **原始 3.48 GiB 版本本机已无副本**；回退要 `gdaladdo -clean`（本机 PATH 没有 gdaladdo）
+  → 最稳是重新拷原始影像。同目录 `WGR17.tif.ovr`(1.08 GB) 是 DJI 原始命名时期的残留，对不上。
+- **桌面端运行时不会自动建金字塔**（`lib.rs` 起 `tile_server.py` 不传该参数，代码零命中）；
+  无金字塔时不报错，只提示"低缩放级慢（z=13 约 104 s）"。手动跑时默认策略是生成**外置 .ovr**
+  （不碰源文件），但**本机这个 BigTIFF 走了内部写入**；`--ovr-mode inplace` 不可逆。
 
 ## 3. 核心实测数据（改算法前必读）
 - 株距 8.35 m / 行距 7.23 m / 错行角 60°（三角形种植）/ 密度 165.6 株/公顷

@@ -112,7 +112,10 @@
       <td><b>正射影像</b><br><span class="mono">*.tif</span></td>
       <td class="must">必需</td>
       <td>无法检测。程序只会显示「请选择影像」。</td>
-      <td>任意位置，在首次引导或「⋯ 更多 → 更换影像」里选。<br><span class="dim">参考：WGR17-002.tif 4.7 GB / 47,130×44,686 px / 3.3 cm/px / 4 波段 / 6 层金字塔</span></td>
+      <td>任意位置，在首次引导或「⋯ 更多 → 更换影像」里选。<br><span class="dim">参考：WGR17-002.tif 4.7 GB / 47,130×44,686 px / 3.3 cm/px / 4 波段 / 6 层金字塔<br>
+⚠️ 这里的 4.7 GB 与 6 层金字塔<b>是本项目建的</b>：原始下载体积约 3.5 GB、无内嵌金字塔，
+2026-10-17 跑了一次 <span class="mono">tile_server.py --build-overviews</span>（174 秒）后
+被就地写入文件内部（+1.2 GB）。详见 <span class="mono">desktop/README.md</span> 坑 3。</span></td>
     </tr>
     <tr>
       <td><b>语义分割</b><br><span class="mono">segment.tif</span></td>
@@ -192,7 +195,7 @@
 <table>
   <thead><tr><th style="width:27%">文件</th><th style="width:11%">体积</th><th style="width:34%">是什么</th><th>程序用不用</th></tr></thead>
   <tbody>
-    <tr><td><span class="mono">WGR17-002.tif</span></td><td>4.7 GB</td><td>正射影像，4 波段，47130×44686，6 层金字塔</td><td class="ok">✅ 必需</td></tr>
+    <tr><td><span class="mono">WGR17-002.tif</span></td><td>4.7 GB<br><span class="dim">原始约 3.5 GB</span></td><td>正射影像，4 波段，47130×44686，6 层金字塔<br><span class="dim">金字塔由本项目建（见上）</span></td><td class="ok">✅ 必需</td></tr>
     <tr><td><span class="mono">segment.tif</span></td><td>2.0 MB</td><td>语义分割标签图，6222×5899，<b>无 CRS</b>（按像素对齐影像）</td><td class="ok">✅ 强烈建议</td></tr>
     <tr><td><span class="mono">dsm.tif</span></td><td>890 MB</td><td>地表高程（含树），23565×22343</td><td class="ok">✅ 用来算 CHM</td></tr>
     <tr><td><span class="mono">tree_info.json</span></td><td>1.3 MB</td><td>树心坐标表（大疆果树模式输出）</td><td class="ok">✅ 重建森林掩膜时用</td></tr>
