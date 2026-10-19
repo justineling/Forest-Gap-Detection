@@ -292,7 +292,208 @@
   </tbody>
 </table>
 
-<h2>如果只能做三件事</h2>
+<h2>外部评审结论与落地情况（2026-10-19 晚）</h2>
+
+<p>
+这份清单发出去后拿到了外部评审。结论大体认同，但<b>有三处优先级调整</b>被我采纳，
+另有一处技术建议<b>经验证不成立</b>（下面标注）。
+</p>
+
+<h3>已落地（本轮，约 2 小时）</h3>
+
+<table>
+  <thead><tr><th style="width:10%">项</th><th style="width:34%">做了什么</th><th>关键收获</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>P1-5</b><br><span class="badge b-ok">提级到第 1 步</span></td>
+      <td>17 个测试残留 <code>*gaps*.geojson</code> 归档到 <code>output/_tests/archive/</code>，
+        并写了一份清单说明每个是什么</td>
+      <td><b>评审说对了</b>：清理后默认扫描才第一次稳定命中交付基线 1,726 块。之前那 17 个残留里最小的只有 8 块</td>
+    </tr>
+    <tr>
+      <td><b>P0-3</b></td>
+      <td><code>build_chm.py</code> / <code>build_forest_mask.py</code> 改为
+        <code>.part</code> → <code>os.replace</code> 原子写入</td>
+      <td>6 行改动。半截 CHM 会让检测<b>读到但不报错</b>，这是最贵的错</td>
+    </tr>
+    <tr>
+      <td><b>P0-1</b></td>
+      <td>结果 JSON 记 <code>inputs_snapshot</code>（4 个输入文件的 mtime + size）；
+        <code>/gaps</code> 比对后返回 <code>stale_warnings</code>；
+        状态栏加整宽橙带常驻显示</td>
+      <td>只报不拦 + 老结果无快照时不报（避免假警报）+ 2 秒容差</td>
+    </tr>
+    <tr>
+      <td><b>P1-3</b><br><span class="badge b-ok">评审推荐的第 1 优先</span></td>
+      <td><code>scripts/check_all.py</code>（159 秒跑 6 层）+
+        <code>.github/workflows/ci.yml</code>（ubuntu + windows 双 job）</td>
+      <td>顺手抓到 <b><code>process_image.py --help</code> 崩溃</b>的真 bug（见下）</td>
+    </tr>
+    <tr>
+      <td><b>P2-8</b></td>
+      <td>加了 ruff（<code>F821,F823,E9</code>）</td>
+      <td><b>⚠️ 评审这条有偏差</b>，见下方「一条不成立的建议」</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>顺手抓到的一个真 bug：<code>--help</code> 完全不可用</h3>
+
+<div class="card bad">
+  <h4><code>process_image.py --help</code> 直接抛异常</h4>
+  <p style="margin:0 0 8px">
+  <code>ValueError: unsupported format character '?' (0xff08) at index 66</code><br>
+  原因：argparse 会对 <code>help=</code> 做 %-格式化，而某条 help 里写了裸的 <code>7.9%</code>。
+  </p>
+  <p style="margin:0;color:var(--dim)">
+  尴尬的地方不是这个 bug 本身，是<b>它存在了很久没人发现</b> ——
+  我们从来都是直接传参数跑，从不看 help。
+  这类"没人走的路径坏了也不知道"的洞，只能靠自动化冒烟看住。
+  </p>
+</div>
+
+<h3>⚠️ 一条不成立的建议：ruff 抓不住 <code>mask_skip</code> 那类 bug</h3>
+
+<div class="card warn">
+  <h4>实测结论</h4>
+  <p style="margin:0 0 8px">
+  评审建议用 <code>ruff check --select F821,F823,E9</code> 抓
+  "<code>mask_skip</code> 只在某个分支被赋值、另一分支使用"这类 bug。
+  <b>实测抓不到</b>：
+  </p>
+  <pre style="margin:0 0 8px">def demo(flag):
+    if flag:
+        v = 1
+    return v        # ruff F821/F823/E9 → All checks passed</pre>
+  <p style="margin:0;color:var(--dim)">
+  原因是这两个概念不同：
+  <b>undefined name</b>（名字从没出现过）vs <b>possibly-unbound</b>（可能没赋过值）。
+  pyflakes / ruff 不做控制流分析，只能抓前者。要抓后者得上 mypy / pyright。
+  </p>
+</div>
+
+<p>所以那一层补了一个<b>成本更低但覆盖不同</b>的检查：<b>每个 CLI 脚本跑一次 <code>--help</code></b>。
+2 秒覆盖 9 个脚本，能抓——</p>
+
+<ul>
+  <li>argparse 配置错误（裸 <code>%</code>、参数名冲突）—— <b>当场抓到了一个真 bug</b></li>
+  <li>模块级导入失败</li>
+  <li>参数定义处的 NameError</li>
+</ul>
+
+<p>它抓不到"函数体内的可能未绑定"，但那类问题<b>跑一次真实流程就会暴露</b>，
+而 <code>--help</code> 冒烟是零成本的——两者互补，不冲突。</p>
+
+<h3>采纳的 3 处优先级调整</h3>
+
+<ol>
+  <li><b>P1-5 提到第 1 位</b> —— 采纳。理由充分：不清理残留，后面所有验收都在读错的基准</li>
+  <li><b>P0-1 + P0-3 合并成"文件完整性小补丁"</b> —— 采纳。原本各估半天，实际合计 1 小时</li>
+  <li><b>P2-8 并入 CI</b> —— 采纳（但内容按实测修正为"ruff + --help 冒烟"）</li>
+</ol>
+
+<h3>未采纳 / 待验证</h3>
+
+<table>
+  <thead><tr><th style="width:30%">建议</th><th>我的判断</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>P0-5 受控 A/B（评审放在第 1 位）</td>
+      <td><b>正在跑</b>。已在跑受控对照（同代码、同参数、只改 workers），
+        结果见下方「P0-5 的初步发现」</td>
+    </tr>
+    <tr>
+      <td>Q4 用「2D 复数解调」做局域网格</td>
+      <td><b>方向可信，但要等验证集</b>。它解决的是"相位接缝"，而当前问题是
+        "没标注集所以不知道对齐率变了是变好还是变坏"。先做 Q1</td>
+    </tr>
+    <tr>
+      <td>Q1 三层分层抽样（150 块 / 15 分钟）</td>
+      <td><b>采纳，但需要先加快捷键工作</b>（P2-2）。这是下一步的主线</td>
+    </tr>
+    <tr>
+      <td>Q2 放弃 DSM 冠形，改用"斑块孤立度 + 太阳方位偶极子"</td>
+      <td><b>同意放弃 DSM 冠形</b>（大疆平滑后确实没有放射几何）。
+        偶极子可行性已记入待办，同样需要验证集才能评估</td>
+    </tr>
+    <tr>
+      <td>Q7 不要重型工作区，用「导入向导 + project.fgd.json」</td>
+      <td><b>采纳</b>。改动量差 5 倍的判断成立：<code>data_base()</code> 一改，
+        所有测试夹具路径都得跟着改</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>P0-5 已结案：不是随机性，是网格改过</h3>
+
+<div class="card ok">
+  <h4>受控实验结论（2026-10-19，全量 528 瓦片 × 2 次）</h4>
+  <p style="margin:0 0 10px">
+  <b>① workers=6 与 workers=1：8 个类别逐位一致</b><br>
+  同一份影像、同一套参数、只改进程数，两次跑完 <code>by_class</code> 完全相同。
+  多进程的"按 tile_idx 排序后再累加"那条护栏确实有效。
+  </p>
+  <table style="margin:0 0 10px">
+    <thead><tr><th>类别</th><th>workers=6</th><th>workers=1</th><th>差</th></tr></thead>
+    <tbody>
+      <tr><td>open_patch</td><td>464</td><td>464</td><td>0</td></tr>
+      <tr><td>vacant_slot</td><td>263</td><td>263</td><td>0</td></tr>
+      <tr><td>uncertain</td><td>439</td><td>439</td><td>0</td></tr>
+      <tr><td>alley_gap</td><td>252</td><td>252</td><td>0</td></tr>
+      <tr><td>road / water / office / undeveloped</td><td>180 / 21 / 82 / 25</td><td>180 / 21 / 82 / 25</td><td>0</td></tr>
+      <tr><td><b>总计</b></td><td><b>1,726</b></td><td><b>1,726</b></td><td><b>0</b></td></tr>
+    </tbody>
+  </table>
+  <p style="margin:0 0 10px">
+  <b>② 那为什么"1,726 / 1,762 / 1,751"三个数字不同？</b><br>
+  因为它们的<b>输入不一样</b>（补森林掩膜前 / 后 / 不同 CHM）。总数 1,726 其实每次都一致。
+  </p>
+  <p style="margin:0">
+  <b>③ 但发现了一个更值得注意的事实：类别归属会随网格参数变。</b><br>
+  交付基线（10-17）用的是网格 <code>8.45 / 7.3179 m</code>（origin_x 158.95）；
+  当前代码算出 <code>8.35 / 7.2313 m</code>（origin_x 159.32）—— 这是
+  <b>建金字塔后的已知改进</b>（更接近真实物理株行距）。网格变了，株位空缺/连片空地/待复核的
+  判定跟着变：open_patch +15、vacant_slot +10、uncertain −26，<b>但总数仍是 1,726</b>。
+  </p>
+</div>
+
+<div class="card warn">
+  <h4>⚠️ 由此产生一个需要决策的事（不是 bug）</h4>
+  <p style="margin:0">
+  <b>当前代码重新跑，会得到与已交付基线不同的类别分布</b>（总数相同）。
+  也就是说：如果现在重新生成交付包，「确定需补种」会从 <b>702 块变成 727 块</b>
+  （open_patch + vacant_slot），苗木量跟着变。<br><br>
+  这<b>不是错误</b> —— 新网格更准。但它意味着：
+  <b>已交付的旧数字和将来的新数字不能混用</b>。要么保持基线不动，
+  要么重新生成基线并通知所有拿到旧交付包的人。这个决定需要业务侧拍板。
+  </p>
+</div>
+
+<h3>P0-5 的结论怎么写才准确</h3>
+
+<p>原来的承诺是「逐位可复现」。实测后应该改成更精确的两句话：</p>
+
+<table>
+  <thead><tr><th style="width:46%">条件</th><th>结果</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>同影像 + 同参数（<b>含 workers 1 vs 6</b>）</td>
+      <td><b>逐位一致</b>（8 个类别全对得上）</td>
+    </tr>
+    <tr>
+      <td>同影像 + <b>网格参数变了</b>（株距 8.45→8.35）</td>
+      <td>总数可能不变，但<b>类别归属会变</b></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+所以"可复现"要限定为<b>"同参数"</b>，而不是笼统的"重跑结果一样"。
+参数指纹里已经包含网格相关参数，所以这个限定在技术上本来就是成立的 ——
+只是之前的表述没写清楚，容易被理解成"随便重跑都一样"。
+</p>
+
+<h2>如果只能做三件事</h2><h2>如果只能做三件事</h2>
 
 <div class="card bad">
   <h4>按"每单位投入能消掉多少不确定性"排</h4>
