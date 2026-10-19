@@ -1,7 +1,10 @@
+import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { probeBackend } from '../api/backend'
 import StepRail from './StepRail'
 import MoreMenu from './MoreMenu'
+import HelpDialog from './HelpDialog'
+import { HEADER_HELP } from '../lib/helpContent'
 import type { StepKey, WorkflowInput } from '../lib/workflow'
 
 interface Props {
@@ -50,6 +53,7 @@ export default function TopToolbar({
   onEstimate,
   onOpenLog,
 }: Props) {
+  const [help, setHelp] = useState(false)
   const backendOnline = useAppStore((s) => s.backendOnline)
   const setBackend = useAppStore((s) => s.setBackend)
   const pushLog = useAppStore((s) => s.pushLog)
@@ -112,6 +116,16 @@ export default function TopToolbar({
           ↷<span className="icon-n">{future.length || ''}</span>
         </button>
 
+        <button
+          type="button"
+          className="btn icon"
+          onClick={() => setHelp(true)}
+          title="这个软件怎么用？（五步流程 / 图标含义 / 快捷键）"
+          aria-label="使用说明"
+        >
+          ?
+        </button>
+
         <MoreMenu
           gapCount={workflow.gapCount}
           hasImage={workflow.hasImage}
@@ -124,6 +138,8 @@ export default function TopToolbar({
           onOpenLog={onOpenLog}
         />
       </div>
+
+      {help && <HelpDialog doc={HEADER_HELP} onClose={() => setHelp(false)} />}
     </header>
   )
 }

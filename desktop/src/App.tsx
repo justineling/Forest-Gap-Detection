@@ -8,6 +8,8 @@ import StatusBar from './components/StatusBar'
 import DetectBar from './components/DetectBar'
 import DetectSettings from './components/DetectSettings'
 import NextStepCard from './components/NextStepCard'
+import HelpDialog from './components/HelpDialog'
+import { HEADER_HELP } from './lib/helpContent'
 import PreflightDialog from './components/PreflightDialog'
 import ExportDialog from './components/ExportDialog'
 import { parseKmlOrGeoJsonRoi } from './lib/roiImport'
@@ -55,6 +57,8 @@ export default function App() {
   const [showExport, setShowExport] = useState(false)
   /** 递增即让右面板切到「复核」标签（步进器点第 4 步时用） */
   const [reviewPeek, setReviewPeek] = useState(0)
+  /** 浏览器模式下 `?help=1` 直接预览帮助弹窗（截图 / 回归用，不进打包逻辑） */
+  const [demoHelp, setDemoHelp] = useState(false)
 
   const setBackend = useAppStore((s) => s.setBackend)
   const setGaps = useAppStore((s) => s.setGaps)
@@ -274,6 +278,8 @@ export default function App() {
           } as never,
         })
       }
+      // 浏览器模式下 `?help=1` 预览帮助弹窗（截图 / 回归用）
+      if (!isTauri() && qs.has('help')) setDemoHelp(true)
       // 浏览器模式下 `?gapsError=1` 预览"结果文件没找到"的卡片态（截图 / 回归用）
       if (!isTauri() && qs.has('gapsError')) {
         setGapsError('未找到检测结果文件（已查找：D:/fgd/data/output）')
@@ -699,8 +705,12 @@ export default function App() {
         <StatusBar />
       </ErrorBoundary>
 
+      {demoHelp && <HelpDialog doc={HEADER_HELP} onClose={() => setDemoHelp(false)} />}
+
       {/* 首次使用引导：盖在最上层，选好影像后自动消失 */}
-      {wizard && <WelcomeWizard status={wizard} onDone={onWizardDone} />}
+      {wizard && (
+        <WelcomeWizard status={wizard} onDone={onWizardDone} onCancel={() => setWizard(null)} />
+      )}
 
       {/* 导出交付包 */}
       {showExport && (

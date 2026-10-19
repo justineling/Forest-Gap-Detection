@@ -551,6 +551,8 @@ kbd {
 }
 
 .wizard {
+  /* × 按钮用 absolute 定位，必须给锚点 */
+  position: relative;
   width: min(700px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
@@ -1825,5 +1827,224 @@ kbd {
   .next-card.raised,
   .next-pill.raised {
     bottom: 68px;
+  }
+}
+
+/* 复核清单：自定义最小面积输入框 */
+.rv-area-input {
+  width: 74px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 3px 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rv-area-input::placeholder {
+  color: #6f7f88;
+  text-align: center;
+}
+.rv-area-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.rv-area-input.active {
+  border-color: var(--accent);
+  background: rgba(61, 220, 151, 0.08);
+}
+/* 数字输入框的上下箭头在窄框里很挤，去掉 */
+.rv-area-input::-webkit-outer-spin-button,
+.rv-area-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.rv-area-input {
+  -moz-appearance: textfield;
+}
+
+/* 引导弹窗的关闭按钮 */
+.wizard-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.wizard-close:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+.wizard-close:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ============================================================================
+   帮助弹窗（左栏 / 右栏 / header 三处复用）
+   ----------------------------------------------------------------------------
+   刻意不做成"首次自动弹"：用户第一次打开时已经有引导卡片，
+   再弹三个说明会把人劝退。帮助应该是"想不起来时能查"。
+   ============================================================================ */
+.ph-help {
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.ph-help:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(61, 220, 151, 0.1);
+}
+
+.help-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 10, 12, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.help-dialog {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.7);
+}
+
+.help-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.help-head h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  padding: 0;
+  border: none;
+}
+.help-intro {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--dim);
+  max-width: 58ch;
+}
+.help-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+.help-close:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.help-body {
+  padding: 6px 22px 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.help-sec {
+  margin: 16px 0 4px;
+}
+.help-sec h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+}
+
+.help-item {
+  display: grid;
+  grid-template-columns: 148px 1fr;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(38, 49, 55, 0.7);
+}
+.help-item:first-of-type {
+  border-top: none;
+}
+.help-item dt {
+  font-size: 12.5px;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.6;
+}
+.help-item dd {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: #c3d0d8;
+}
+
+.help-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 22px 16px;
+  border-top: 1px solid var(--line);
+}
+.help-foot .dim {
+  font-size: 11.5px;
+  margin-right: auto;
+}
+.help-foot kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #232e33;
+  border: 1px solid var(--line);
+}
+
+@media (max-width: 640px) {
+  .help-item {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 }
