@@ -261,6 +261,27 @@ POST /export { gaps(编辑后), outdir, clearance_m, planting_grid, audit, image
 > 焦点在输入框（`INPUT` / `TEXTAREA` / `SELECT` / contenteditable）时，
 > 以上快捷键**全部让位** —— 否则在搜索框按 Ctrl+Z 会把多边形撤销掉。
 
+### 结果文件发现：不写死文件名（2026-10-19）
+
+**曾经的问题**：用户跑完检测，界面显示"没有空地"，但产物里躺着 1,762 块。
+
+三方路径互不相认：
+
+| 环节 | 它认为结果在哪 |
+|---|---|
+| sidecar 写 | `output/{job}-gaps.geojson`，job=`wgr17-desktop` |
+| Rust `resolve_gaps` | 只认 `wgr17-final-gaps.geojson` / `wgr17-elev-gaps.geojson` |
+| tile_server `GAPS_CANDIDATES` | 同样写死，且基于 `ROOT=Path(__file__).parent.parent`；打包态 ROOT 指向 `py-runtime/desktop_entry/`，那里没有 output/ |
+
+现在两边都改成 **"扫目录里名字含 gaps 的 .geojson，按 mtime 取最新"**：
+
+- Rust：`scan_gaps(dir)` → `resolve_gaps_in(data_base)`，看 `output/` 与数据根本身
+- tile_server：`discover_gaps(source)` 按优先级去重 ——
+  ① 影像同目录 ② 影像目录/output ③ ROOT/output（开发态）④ **cwd/output（打包态）**
+
+**懒发现**：`gaps_json()` / `current_gaps()` 每次请求都重新确认"当前文件是否仍是最新"，
+缓存按 `(path, mtime_ns, size)` 失效 —— 检测完**不用重启服务**也能看到新结果。
+
 ### 顶部工具栏：五步工作流（2026-10-19）
 
 **改之前**：14 个平铺按钮 —— 影像状态 / 载入结果 / 数据 / 撤销 / 重做 /
@@ -929,3 +950,31 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     测试里有一条硬断言：正文不得包含 `sidecar` / `W1004` / `CHM` / `geojson` /
     `参数指纹` / `HTTP`。用户要知道的是"少了这个文件，水塘会被当成空地"，
     不是"W1004 冠层数据缺失"。
+
+41. **结果文件的路径不能写死文件名 —— 它由 `job` 决定，而 `job` 是契约的一部分**
+
+    `job='wgr17-desktop'` → 产物叫 `wgr17-desktop-gaps.geojson`。
+    Rust 与 tile_server 却各自写死了 `wgr17-final-gaps` / `wgr17-elev-gaps`，
+    于是"检测成功、界面全空"。
+
+    正确做法：**扫目录 + 名字含 `gaps` + 按 mtime 取最新**。
+    注意三个细节：① 必须判 `is_file()`（`gaps-archive/` 这种目录名也含 gaps）；
+    ② `forest-mask-*.geojson` 名字里没有 gaps，天然被排除；
+    ③ 打包态的 `ROOT` 指向 `py-runtime/desktop_entry/`，**候选目录必须包含 `cwd/output`**
+    （打包时 cwd 是数据根）。
+
+42. **结果文件的缓存必须按 mtime 失效，否则"检测完看不到新结果"**
+
+    旧实现只在首次读盘后缓存 `_gaps_cache`。用户检测完、文件已更新，
+    但服务还返回旧内容（或空）—— 只能重启软件。
+    现在按 `(path, mtime_ns, size)` 判断，且每次请求都重新确认"当前文件是否最新"。
+
+43. **空响应绝不能覆盖已有数据**
+
+    `loadGaps({rerun:true})` 走 `applyRerun(feats)`。若 `/gaps` 返回空
+    （文件正在写 / 路径不对 / 损坏），`applyRerun([])` 会把用户 1,762 块**清空** ——
+    比"看不到结果"更糟。
+
+    `lib/gapsLoad.ts` 的 `decideGapsLoad()` 把判断抽成纯函数，关键是区分
+    **"算法自报 0 块"** 与 **"没收到报告"**：前者允许清空，后者必须保留。
+    测试里有一条反证（`applyRerun([])` 真的会清空），证明这道保护不是多余的。
