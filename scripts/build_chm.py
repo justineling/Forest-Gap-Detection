@@ -36,6 +36,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import os
+
 import numpy as np
 import rasterio
 from rasterio.warp import reproject, Resampling
@@ -115,8 +117,16 @@ def build_chm(dsm_path: str, segment_path: str | None, ortho_path: str,
                 dtype="float32", crs=o_crs, transform=d_tr,
                 nodata=np.nan, compress="deflate", tiled=True,
                 blockxsize=512, blockysize=512)
-    with rasterio.open(out_path, "w", **prof) as dst:
+    # ⚠️ **原子写入**：先写 .part，成功后再 replace。
+    #
+    #    为什么必须这样：CHM 要跑 30~40 秒，中途断电 / 蓝屏 / 强杀进程会留下
+    #    一个**半截 GeoTIFF**。而检测读到半截 CHM **不会报错** ——
+    #    它只是 NaN 区域变少、数值偏小，于是"树高变矮了"，结果静默变错。
+    #    半成品比没有更糟：没有的话预检会提示，半截的话什么都看不出来。
+    tmp = Path(out_path).with_suffix(Path(out_path).suffix + ".part")
+    with rasterio.open(tmp, "w", **prof) as dst:
         dst.write(chm_o, 1)
+    os.replace(tmp, out_path)  # 同盘 rename 是原子的
     log(f"已写出 {out_path}")
 
     return {

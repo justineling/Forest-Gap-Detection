@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -254,11 +255,15 @@ def build_mask(chm_path: str, tree_info_path: str, ortho_path: str,
                           "properties": {"area_ha": round(ar, 2)},
                           "geometry": geom})
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(out_path).write_text(json.dumps({
+    # 同样先写 .part 再 replace —— 半截的掩膜 JSON 会让 apply_forest_mask 解析失败
+    # （这个至少会报错，但错误信息指向 json 解析，跟"生成中断"毫无关联，难排查）
+    tmp = Path(str(out_path) + ".part")
+    tmp.write_text(json.dumps({
         "type": "FeatureCollection",
         "crs": {"type": "name",
                 "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}},
         "features": feats}, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, out_path)
     tot = sum(f["properties"]["area_ha"] for f in feats)
     log(f"已写出 {out_path}  （{len(feats)} 个多边形，{tot:.1f} ha）")
 
