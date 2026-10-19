@@ -46,7 +46,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <header>
   <h1>这个桌面软件到底在干什么？</h1>
-  <p class="sub">大白话版 ｜ 不用懂代码，也不用懂航拍 ｜ 2026-10-18</p>
+  <p class="sub">大白话版 ｜ 不用懂代码，也不用懂航拍 ｜ 2026-10-19</p>
 </header>
 
 <div class="card verdict">
@@ -219,7 +219,69 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 <p class="figcap" style="text-align:left">如果生成时提示"没找到 dsm.tif"，把大疆导出目录里的
 <code>dsm.tif</code>（地表高程）放到航拍图同一个文件夹就行。</p>
 
-<h2>八、交付包里到底有什么</h2>
+<h2>八、算法到底有多准？——抽 150 块，验一下</h2>
+
+<p>前面七节都在说「怎么用」。这一节说的是一个更硬的问题：<b>它算的到底对不对？</b></p>
+
+<p>全园 1,726 块，人一块块判要五个小时，判到后面眼睛已经花了。所以软件帮你<b>抽 150 块</b>
+出来，你只判这 150 块，它再倒推全园。</p>
+
+<div class="card verdict">
+  <p style="margin:0"><b>为什么不随便抽？</b><span class="analogy">像抽查考试卷子</span>：
+  如果闭着眼睛抽，可能抽到的全是 50 平方米的小块，而那些 3,000 平方米的大块一块都没抽到 ——
+  可判错一个大块的面积代价，等于判错几十个小块。<br>
+  所以它按「判错的代价」分了三层来抽：<b>大块抽 40、算法自己拿不准的抽 60、其余按类别各抽一些</b>。</p>
+</div>
+
+<p>怎么判？<b>全键盘，不用鼠标</b>：</p>
+
+<table>
+  <thead><tr><th style="width:26%">按键</th><th>作用</th></tr></thead>
+  <tbody>
+    <tr><td><code>↑</code> / <code>↓</code></td><td>上一条 / 下一条（地图自动飞过去）</td></tr>
+    <tr><td><code>1</code></td><td>真该补种（算法判对了）</td></tr>
+    <tr><td><code>2</code></td><td>其实不该补（算法判错了，那儿是树或水泥地）</td></tr>
+    <tr><td><code>3</code></td><td>真值也说不清（跳过，不算进准确率）</td></tr>
+    <tr><td><code>4</code></td><td>算法漏了，但这块确实该补</td></tr>
+    <tr><td><code>Space</code></td><td>确认并跳下一条</td></tr>
+  </tbody>
+</table>
+
+<p>判完一块自动跳下一块，节奏是「看一眼 → 敲个数字 → 下一条」。150 块大约 <b>20~30 分钟</b>。</p>
+
+<p>进度<b>不会丢</b>：每判一块就存一次，关掉软件、重启电脑回来还在，列表顶部写着「已判 87 / 130」（130 = 150 减去已经被删掉的块）。</p>
+
+<div class="card" style="border-color:#c9852b;background:#fdf6e6">
+  <p style="margin:0"><b>一个反直觉的规定</b>：抽到「算法自己拿不准」的那些块时，
+  <b>不能直接按空格确认</b>，必须按 1/2/3 给个真值。<br>
+  原因很实在：这一层的块算法本来就没把握，你要是也"拿不准"跳过去，这 60 块就白抽了。
+  （第一版真的这么错过：60 块里 51 块被存成"存疑"，等于这一层完全没做。）</p>
+</div>
+
+<p>判完点「导出标注 JSON」，然后跑一句话就能得出结果：</p>
+
+<pre>.venv/Scripts/python.exe scripts/eval_validation.py 你的标注.json</pre>
+
+<p>它给你三个数，看中间那个就行：</p>
+
+<table>
+  <thead><tr><th style="width:32%">数字</th><th>意思</th></tr></thead>
+  <tbody>
+    <tr><td>样本准确率</td><td>这 150 块里判对了多少（不加权）</td></tr>
+    <tr><td><b>全园无偏准确率 ★</b></td><td><b>代表全园 1,726 块</b> —— 对外报数只报这个</td></tr>
+    <tr><td>面积加权准确率</td><td>按面积算 —— 看"错的那些是不是恰好都是大块"</td></tr>
+  </tbody>
+</table>
+
+<p>还会告诉你「哪一类最容易错成哪一类」，以及"确定需补种"里混进了多少不该补的（纯度）。</p>
+
+<div class="card verdict">
+  <p style="margin:0"><b>为什么只有 150 块也敢报数？</b>因为它不是简单平均，而是每块带一个
+  <b>「它代表多少块」的权重</b>：抽中概率越小的块，代表的块数越多。加起来的权重正好等于全园块数 ——
+  <span class="analogy">像按人口比例分选票，不是一人一票</span>。</p>
+</div>
+
+<h2>九、交付包里到底有什么</h2>
 
 <p>点「导出交付包」，选一个文件夹，几秒后那里会出现 <b>21 个文件</b>。</p>
 
@@ -241,7 +303,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
   以前导出的永远是算法原版，你在软件里改了半天等于白改。</p>
 </div>
 
-<h2>九、那张"一页纸"长什么样</h2>
+<h2>十、那张"一页纸"长什么样</h2>
 
 <p>五块内容，从上到下：</p>
 <ol>
@@ -254,7 +316,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <p>它是<b>浅色</b>的（不是软件那种深色界面），因为要打印 —— 深色打印出来一片黑，还费墨。</p>
 
-<h2>十、现在还不能做什么（说实话）</h2>
+<h2>十一、现在还不能做什么（说实话）</h2>
 
 <table>
   <thead><tr><th>做不到</th><th>为什么</th></tr></thead>
@@ -272,7 +334,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 </div>
 
 <footer>
-  Forest Gap Detection · 桌面端实现说明（小白版）· 2026-10-18<br>
+  Forest Gap Detection · 桌面端实现说明（小白版）· 2026-10-19<br>
   想看技术细节：<span class="code">桌面端实现说明.html</span> ｜ 想知道怎么操作：<span class="code">桌面端使用手册.md</span>
 </footer>
 

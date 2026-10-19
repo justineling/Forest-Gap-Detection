@@ -72,9 +72,19 @@
 <b>最后列出我最想要外部意见的 7 个问题</b>。
 </p>
 
+<div class="card ok">
+  <h4>本文状态：Q1 已按评审批复落地（2026-10-19 深夜）</h4>
+  <p style="margin:0">上一轮外部评审批复「保持 702 块基线不动，同时启动 Q1（P0-2）」。
+  已实现：三层分层抽样 150 块（<code>lib/validation.ts</code>）+ Horvitz-Thompson 逆概率权重
+  + 复核清单内嵌的「🎯 验证集」键盘流打标 + 进度 localStorage 持久化
+  + <code>scripts/eval_validation.py</code>（三档准确率 / 混淆矩阵 / 多结果对比）
+  + 自检升到 9 层。<b>剩余一环是人工判 150 块真值</b> —— 在此之前 702 vs 727 不做决定。
+  所以本文的 Q1 已从"待办"变成"工具就绪、待数据"。</p>
+</div>
+
 <div class="grid">
   <div class="kpi"><div class="n">20,945</div><div class="k">行代码（TS + Rust + Python）</div></div>
-  <div class="kpi"><div class="n">477</div><div class="k">自动化断言</div></div>
+  <div class="kpi"><div class="n">529</div><div class="k">自动化断言</div></div>
   <div class="kpi"><div class="n">229 ha</div><div class="k">单园区覆盖面积</div></div>
   <div class="kpi"><div class="n">350 s</div><div class="k">全量检测耗时</div></div>
 </div>
@@ -210,7 +220,7 @@
   <tbody>
     <tr><td><code>桌面端使用手册.md</code></td><td>现场作业员：跟着「下一步」卡片点就行，含 9 条排障表</td></tr>
     <tr><td><code>桌面端实现说明.html</code></td><td>技术同事：进程模型、每个设计决定的理由</td></tr>
-    <tr><td><code>desktop/README.md</code></td><td>接手开发：<b>58 条坑</b>，每条带错误原文与复现条件</td></tr>
+    <tr><td><code>desktop/README.md</code></td><td>接手开发：<b>45 条坑</b>，每条带错误原文与复现条件</td></tr>
   </tbody>
 </table>
 
@@ -247,7 +257,7 @@
     <tr>
       <td>无 CI</td>
       <td><span class="badge b-warn">P1</span></td>
-      <td>477 个断言全靠本地手动跑；e2e 脚本依赖真浏览器，进了 <code>tests/e2e/</code> 但没接入流水线</td>
+      <td>529 个断言全靠本地手动跑；e2e 脚本依赖真浏览器，进了 <code>tests/e2e/</code> 但没接入流水线</td>
     </tr>
     <tr>
       <td>无日志轮转 / 无错误上报</td>
@@ -306,7 +316,7 @@
 </div>
 
 <div class="q">
-<b>Q6 · 工程质量</b>：477 个断言、58 条坑记录、零 CI。
+<b>Q6 · 工程质量</b>：529 个断言、45 条坑记录、零 CI。
 在单人项目里，<b>投入产出比最高的下一件事是什么</b>？
 （CI？E2E？组件测试？类型收紧？）如果只能做一件，你选哪个，为什么？
 </div>
@@ -324,7 +334,7 @@
   <tbody>
     <tr><td><code>docs/08-桌面端/桌面端实现说明.html</code></td><td>每个设计决定的理由（9 章）</td></tr>
     <tr><td><code>docs/03-算法教学/算法缺陷与桌面端协同看板.html</code></td><td>12 个算法缺陷的实测量级 + 修复方向</td></tr>
-    <tr><td><code>desktop/README.md</code></td><td>58 条坑，分 7 组，每条带错误原文</td></tr>
+    <tr><td><code>desktop/README.md</code></td><td>45 条坑，分 8 组，每条带错误原文</td></tr>
     <tr><td><code>docs/09-数据与产物/输入输出文件清单.html</code></td><td>3 个源文件 → 21 个交付文件的完整链路</td></tr>
   </tbody>
 </table>

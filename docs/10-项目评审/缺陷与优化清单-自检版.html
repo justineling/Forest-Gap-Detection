@@ -94,13 +94,16 @@
 </div>
 
 <div class="def">
-  <div class="def-h"><span class="lv lv-p0">P0-2</span><b>没有标注验证集 —— 所有算法改进都在盲改</b></div>
+  <div class="def-h"><span class="lv lv-p0">P0-2</span><b>没有标注验证集 —— 所有算法改进都在盲改</b><span class="tag">工具已就绪 · 待人工打标</span></div>
   <div class="def-b">
     <div class="kv"><span>怎么发现</span><span>翻缺陷台账：CHM 阈值 5.2/1.2 只用 <b>5 个真值点</b>标定</span></div>
     <div class="kv"><span>影响</span><span>任何阈值调整都无法判断"变好还是变坏"。<b>这是整个项目的天花板</b></span></div>
     <div class="kv"><span>建议</span><span>从 1,726 块里按"面积降序 + 置信度分层"抽 150~200 块人工标注（4 类）。<br>
       关键设计：<b>标注界面就用桌面端现有的复核清单</b> —— 标"这是不是真空地"顺手就完成了，不用另做工具</span></div>
     <div class="kv"><span>成本</span><span>中（2~3 人日标注）。但它是解锁 P1-3 / P1-4 / P0-1 的前置条件</span></div>
+    <div class="kv"><span>已落地</span><span>2026-10-19：按建议实现（复核清单里加「🎯 验证集」模式）。三层分层抽 150 块 +
+      Horvitz-Thompson 逆概率权重 + 键盘流打标 + localStorage 持久化 + <code>eval_validation.py</code>。
+      详见下方「Q1 已落地」一节。<b>剩余动作只有一件事：人真的去判一次</b></span></div>
   </div>
 </div>
 
@@ -170,7 +173,7 @@
 </div>
 
 <div class="def">
-  <div class="def-h"><span class="lv lv-p1">P1-3</span><b>零 CI —— 477 个断言全靠手动跑</b></div>
+  <div class="def-h"><span class="lv lv-p1">P1-3</span><b>零 CI —— 529 个断言全靠手动跑</b><span class="tag">已闭环</span></div>
   <div class="def-b">
     <div class="kv"><span>证据</span><span><code>.github/workflows</code> 不存在</span></div>
     <div class="kv"><span>影响</span><span>这次连续改了两天，每次靠"我记得跑一下"。<b>如果哪次忘了，回归会静默存在</b></span></div>
@@ -253,7 +256,7 @@
 </div>
 
 <div class="def">
-  <div class="def-h"><span class="lv lv-p1">P1-10</span><b>没有"我上次做到哪"的持久化</b></div>
+  <div class="def-h"><span class="lv lv-p1">P1-10</span><b>没有"我上次做到哪"的持久化</b><span class="tag">已闭环</span></div>
   <div class="def-b">
     <div class="kv"><span>现状</span><span>关掉软件再开，五步流程回到"复核"（因为结果已加载），但
       <b>哪些块复核过、哪些还没</b>只在本次会话有效</span></div>
@@ -261,6 +264,9 @@
     <div class="kv"><span>建议</span><span>把"已复核"标记落到 <code>localStorage</code>（按 job + gap_id 集合）。
       或者更彻底：复核时写 <code>output/&lt;job&gt;-reviewed.json</code></span></div>
     <div class="kv"><span>成本</span><span>中（1 天）</span></div>
+    <div class="kv"><span>已落地</span><span>2026-10-19：验证集打标进度按 <code>localStorage</code>
+      （key 含 scope，即 job/影像指纹）逐块写入，关软件不丢。<br>
+      <b>但只覆盖了验证集，复核本身仍未持久化</b> —— 那一半还开着，原因见「Q1 已落地」末尾</span></div>
   </div>
 </div>
 
@@ -281,7 +287,9 @@
   <thead><tr><th style="width:8%">#</th><th style="width:30%">项</th><th>说明</th></tr></thead>
   <tbody>
     <tr><td>P2-1</td><td>状态栏日志不能搜索/复制</td><td>排障时想找一条 W1004，只能肉眼滚。加个"复制全部"按钮即可</td></tr>
-    <tr><td>P2-2</td><td>没有键盘导航</td><td>复核清单不能用 ↑↓ 移动、回车选中。1,726 块纯鼠标点很累</td></tr>
+    <tr><td>P2-2</td><td>没有键盘导航 <span class="tag">已闭环（验证集）</span></td><td>复核清单不能用 ↑↓ 移动、回车选中。1,726 块纯鼠标点很累。<br>
+      <b>2026-10-19</b>：验证集模式已全套键盘（<code>↑↓</code> 换块 + <code>1-4</code> 打标 + 自动跳下一条），
+      护栏抽成 <code>lib/hotkeys.ts</code> 可单测；<b>复核模式本身仍是鼠标流</b>，没顺手改（理由见下节）</td></tr>
     <tr><td>P2-3</td><td>没有"撤销历史"面板</td><td>只有 ↶ 3 这个数字。用户不知道撤的是什么，不敢按</td></tr>
     <tr><td>P2-4</td><td>影像元信息不完整</td><td>状态栏只有分辨率，没有采集日期 / 航高 / 云量 —— 实际复核时会看</td></tr>
     <tr><td>P2-5</td><td>多选后批量改判没有预览</td><td>选中 40 块改成一类，点下去才知道结果。可以 hover 预览</td></tr>
@@ -291,6 +299,85 @@
     <tr><td>P2-9</td><td><code>scripts/</code> 19 个文件平铺</td><td>算法 / 导出 / 测试 / 打包脚本混在一起，新人不知道从哪读</td></tr>
   </tbody>
 </table>
+
+<h2>Q1 已落地：P0-2 / P2-2 / P1-10（2026-10-19 深夜）</h2>
+
+<p>外部评审批复「保持 702 块基线不动，同时立刻启动 Q1」。这一节记<b>实际做出来的东西</b>
+和<b>做的时候才发现的三个坑</b>——后者比功能本身更值得留档。</p>
+
+<div class="card ok">
+  <h4>交付内容</h4>
+  <ul style="margin:0">
+    <li><code>desktop/src/lib/validation.ts</code>（纯函数，可单测）：分层配额、<code>mulberry32</code>
+      确定性抽样（seed=42）、HT 权重、<code>evaluate()</code>、<code>nextUnlabeled()</code> 环形取下一个</li>
+    <li><code>desktop/src/lib/hotkeys.ts</code>：<code>shouldIgnoreHotkey()</code> 四条护栏
+      （修饰键 / 长按重复 / 有弹窗 / 焦点在输入框）</li>
+    <li><code>ReviewList.tsx</code>：<code>复核 ｜ 🎯 验证集</code> 模式切换 + 键盘流 + 进度持久化</li>
+    <li><code>scripts/eval_validation.py</code>：三档准确率 + 混淆矩阵 + 分层表 + 可补种 P/R +
+      多结果对比（差 &lt; 2pp 判「不可区分」）+ <code>--selftest</code> 13 项</li>
+    <li><code>scripts/check_all.py</code>：自检从 8 层升到 <b>9 层</b>，新增 CLI <code>--help</code>
+      冒烟与评估脚本自检</li>
+  </ul>
+</div>
+
+<h3>坑一：<code>uncertain</code> 层用 <code>Space</code> 确认，等于这一层白抽</h3>
+
+<div class="card bad">
+  <p style="margin:0 0 6px"><b>现象</b>：第一次拿真实 1,726 块跑完抽样、判了一部分，
+  看分层统计时发现 L2（60 块）里有 <b>51 块</b>的真值是"存疑"。</p>
+  <p style="margin:0 0 6px"><b>原因</b>：<code>Space</code> 的语义是"按算法类别确认"。
+  而 L2 抽的正是算法标 <code>uncertain</code> 的块 → 确认一次就得到"存疑"。
+  录进去的是<b>算法的输出</b>，不是人的判断。<b>用算法检验算法，结果必然好看且毫无意义。</b></p>
+  <p style="margin:0"><b>修法</b>：加 <code>canConfirm(cls)</code>，<code>uncertain</code> 只能靠
+  <code>1/2/3</code> 给真值；<code>Space</code> 在 L2 上提示「请按 1/2/3 选一个真值」。</p>
+</div>
+
+<p><b>为什么单测没抓到</b>：我构造的测试数据里，每条记录都是"人认真判了真值"的理想情况。
+只有真跑一遍、看分层汇总，才会发现某一层的真值分布退化成单一值。
+这条已写进单元测试（<code>canConfirm</code> 对 8 个类别逐一断言），但更重要的教训是
+<b>抽样质量要看「每层的真值分布」，不是只看"总进度条走到 100%"</b>。</p>
+
+<h3>坑二：加权的"一眼自检"—— <code>Σwᵢ = 1,726.0</code></h3>
+
+<p>HT 加权算错的典型表现是<b>一个看起来非常正常的百分比</b>，肉眼无法分辨对错
+（把 72% 算成 94% 不会引发任何怀疑）。所以必须有一个不依赖真值的恒等式检查：</p>
+
+<pre>Σ wᵢ = Σ_h (N_h / n_h · n_h) = Σ_h N_h = N = 1,726</pre>
+
+<p>实测输出 <code>权重和 1726.0</code>。权重公式写反、层号配错、抽中块被删后没重算，
+都会让这个和不成立。已写进 <code>eval_validation.py --selftest</code> 与
+<code>validation.test.ts</code>。</p>
+
+<h3>坑三：StrictMode 双跑会重新抽样、抹掉进度</h3>
+
+<div class="card warn">
+  <p style="margin:0"><b>现象</b>：界面显示「进度 0/—」但列表是空的；再刷新一次又正常。
+  一开始以为是数据没加载。</p>
+  <p style="margin:0"><b>原因</b>：<code>initValidation</code> 的 effect 依赖写窄了
+  （只依赖 <code>gaps</code>），React StrictMode 开发态双跑时第二次命中<b>旧闭包</b> →
+  用旧 scope 重新 <code>buildValidationSample</code> → 覆盖已存进度。</p>
+  <p style="margin:0"><b>修法</b>：依赖补 <code>validation.scope</code> / <code>samples.length</code>；
+  同时删掉 <code>|| 150</code> 这种兜底默认值 —— 它把"抽了 0 块"这个错误状态伪装成了正常状态。</p>
+</div>
+
+<h3>为什么"复核模式"没顺手也做成键盘流</h3>
+
+<p>P2-2 的原始描述是"复核清单不能用 ↑↓ 移动"。验证集模式做完了，复核模式故意没动，
+理由是<b>两者的动作不同</b>：验证集是「看图 → 打一个标签」，一键一个动作，键盘最快；
+复核是「看图 → 决定改判成哪类 / 删 / 补画 → 必要时拖拐点」，其中改判要选 8 个类别之一，
+键盘要么占掉数字键（和验证集冲突），要么需要二级菜单 —— <b>收益不如验证集明显，风险更高</b>。
+所以 P2-2 标记为"闭环（验证集）"而不是"已完成"。</p>
+
+<div class="card warn">
+  <h4>这一轮没有闭环的那件事</h4>
+  <p style="margin:0">工具就绪 ≠ 数据就绪。<b>150 块真值仍需要人判一次</b>（约 20~30 分钟）。
+  在那之前：</p>
+  <ul style="margin:6px 0 0">
+    <li>交付基线<b>冻结在 702 块 / 309,143 m² / 3,691 株</b>，不因重跑结果而改</li>
+    <li>702 vs 727 的取舍<b>不做决定</b>（当前代码重跑会得 727，差异来自网格参数变更，不是随机性）</li>
+    <li>任何算法调参暂缓 —— 没有真值，改阈值只是换一个"不知道好不好的结果"</li>
+  </ul>
+</div>
 
 <h2>外部评审结论与落地情况（2026-10-19 晚）</h2>
 
@@ -493,16 +580,18 @@
 只是之前的表述没写清楚，容易被理解成"随便重跑都一样"。
 </p>
 
-<h2>如果只能做三件事</h2><h2>如果只能做三件事</h2>
+<h2>如果只能做三件事（2026-10-19 修订）</h2>
+
+<p class="sub" style="margin-top:-4px">下面三条是封版前的判断。截至 10-19 深夜：<b>①已完成</b>（P0-5 结案：不是随机性）、<b>②已完成</b>（CI 两 job + <code>check_all.py</code> 9 层）、<b>③工具已完成、待人工打标</b>。所以现在的第一步很明确：<b>去把 150 块判了</b>。</p>
 
 <div class="card bad">
   <h4>按"每单位投入能消掉多少不确定性"排</h4>
   <ol style="margin:0">
-    <li><b>P0-5 · 受控 A/B 重跑（1 小时）</b> —— 先把"到底可不可复现"这件事钉死。
+    <li><b>P0-5 · 受控 A/B 重跑（1 小时）</b> <span class="tag">已完成</span> —— 先把"到底可不可复现"这件事钉死。
       如果它是 bug，其他所有优化都白谈；如果不是，这条从此关闭，不再反复怀疑</li>
-    <li><b>P1-3 · 最小 CI（半天）</b> —— 477 个断言现在靠"我记得跑"。接上 CI 之后，
+    <li><b>P1-3 · 最小 CI（半天）</b> <span class="tag">已完成</span> —— 529 个断言现在靠"我记得跑"。接上 CI 之后，
       后面所有改动都自动有回归网，投入产出比最高</li>
-    <li><b>P0-2 · 标注验证集（2~3 人日）</b> —— 它是算法侧的天花板。
+    <li><b>P0-2 · 标注验证集（2~3 人日）</b> <span class="tag">工具已完成</span> —— 它是算法侧的天花板。
       没有它，P1-3 的 CHM 自适应、P1-4 的局域网格都做不了；
       有了它，那些都能从"猜"变成"测"</li>
   </ol>

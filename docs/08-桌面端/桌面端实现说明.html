@@ -52,12 +52,12 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <header>
   <h1>桌面端实现说明（专业版）</h1>
-  <p class="sub">Forest Gap Detection · Tauri v2 + React 18 · 2026-10-18 ｜ P0–P2 全部完成，已合入 <span class="code">main</span></p>
+  <p class="sub">Forest Gap Detection · Tauri v2 + React 18 · 2026-10-19 ｜ P0–P2 全部完成 + 验证集（Q1）已合入 <span class="code">main</span></p>
 </header>
 
 <div class="card verdict">
   <p style="margin:0"><b>一句话</b>：把「跑一遍算法、看一个 GeoJSON」变成「双击装包、圈一块地、350 秒出 21 件可直接交付的文件」。
-  本文只讲<b>为什么这么设计</b>；踩坑清单在 <span class="code">desktop/README.md</span>（58 条，每条带错误原文），
+  本文只讲<b>为什么这么设计</b>；踩坑清单在 <span class="code">desktop/README.md</span>（45 条，每条带错误原文），
   操作步骤在 <span class="code">桌面端使用手册.md</span>。</p>
 </div>
 
@@ -398,29 +398,148 @@ CHM 5891×5585 @ 26 cm/px（P50 树高 6.24 m）、掩膜 2 个多边形。</p>
   却不知道下一步该做什么。</p>
 </div>
 
-<h2>7. 58 条坑，按主题分</h2>
+<h2>7. 验证集：把「有多准」变成一个能报出去的数字</h2>
 
-<p>完整清单在 <span class="code">desktop/README.md</span>，每条都带错误原文。按主题归类：</p>
+<p>前面六章解决的是「能不能用」。这一章解决「<b>准不准</b>」——一个此前完全空缺的问题。
+在此之前，项目里所有关于准确率的说法都是<b>间接推理</b>：空地距树心 2 m 内只有 2.0%（基准 14.5%）、
+CHM 阈值 ±1 m 会造成 ±30,400 m² 波动。这些能说明方法可信，但<b>没有一个数字能写进交付说明</b>。</p>
+
+<h3>7.1 为什么必须抽样，而不能全判</h3>
+
+<p>1,726 块要人逐块判真值，按每块 10 秒算也要 5 小时，且判到后半程注意力已经崩了。
+抽样 150 块（约 8.7%）能把工作量压到半小时以内，但——<b>简单随机抽样不能直接反推全园</b>，
+因为「大块」和「不确定块」的判错率完全不同，随机抽会让 40 个 3,000 m² 的大块
+和 1,400 个 50 m² 的小块获得同等代表权。</p>
+
+<p>所以用<b>分层抽样 + 逆概率权重（Horvitz–Thompson）</b>。分层是按「判错代价」分的，
+不是按类别分的 —— 这是设计上的关键选择：</p>
 
 <table>
-  <thead><tr><th>主题</th><th>条数</th><th>代表性问题</th></tr></thead>
+  <thead><tr><th style="width:22%">层</th><th style="width:12%">配额</th><th>为什么单独成层</th></tr></thead>
   <tbody>
-    <tr><td>数据结构与契约</td><td>6</td><td><span class="code">blocks[].gaps</span> 不是 <span class="code">features</span>（静默空数组）；参数名写错只回 W1001 照常跑完</td></tr>
-    <tr><td>管道与进程</td><td>4</td><td>只读 stdout 不读 stderr → 永久死锁且无报错</td></tr>
-    <tr><td>打包与安装</td><td>6</td><td>两份 <span class="code">proj.db</span> 版本不同（只在冻结态炸）；<span class="code">resources</span> 用 <span class="code">**/*</span> 会展平目录撞名</td></tr>
-    <tr><td>批处理脚本</td><td>4</td><td><span class="code">.bat</span> 必须 UTF-8 无 BOM + CRLF；<span class="code">if A if B (X) else (Y)</span> 在 A 假时整条跳过</td></tr>
-    <tr><td>交互与状态</td><td>8</td><td>拖拽 change 洪水吃光撤销栈；框选不传可见性会盲删</td></tr>
-    <tr><td>导入与导出</td><td>5</td><td>KML 三维坐标；网格原点缺失导致点位平移；自检不能搜 <span class="code">"http://"</span></td></tr>
+    <tr><td>L1 大块（≥500 m²）</td><td class="num">40</td><td>面积占大头，一块判错的面积代价等于几十块小的</td></tr>
+    <tr><td>L2 不确定块</td><td class="num">60</td><td>算法自报 <span class="code">uncertain</span> 的 465 块，是错误最集中的地方</td></tr>
+    <tr><td>L3 可补种</td><td class="num">25</td><td>测「确定需补种」的纯度（precision）</td></tr>
+    <tr><td>L3 林间空隙</td><td class="num">15</td><td>测「该补的有没有漏」（alley_gap 的召回）</td></tr>
+    <tr><td>L3 不可种植</td><td class="num">10</td><td>测道路/水体/办公有没有把可补的地判死</td></tr>
   </tbody>
 </table>
 
-<h2>8. 验收基线</h2>
+<p>每块的真值判定是 4 值：<span class="code">plant</span>（真该补）/ <span class="code">not_plant</span>
+（不该补，是树或硬化地）/ <span class="code">unsure</span>（真值也说不清）/ <span class="code">missed</span>
+（算法漏了）。前两个计入准确率，<span class="code">unsure</span> 明确排除 —— <b>宁可样本变少，也不要
+把"说不清"混进分子或分母</b>，否则准确率会被稀释成一个谁都不敢用的数。</p>
+
+<h3>7.2 权重怎么算，以及那个"一眼自检"</h3>
+
+<pre>层的权重  w_h = N_h / n_h        N_h = 该层总块数，n_h = 该层抽中块数
+全园无偏准确率 = Σ(wᵢ · 1[判对]) / Σ(wᵢ)</pre>
+
+<p>因为 <span class="code">Σ(wᵢ) = Σ(N_h/n_h · n_h) = Σ N_h = N</span>，
+所以<b>权重之和必须精确等于全园块数 1,726.0</b>。这是唯一一个"看一眼就知道权重算错没有"的自检 ——
+权重公式写反、层号对错、抽中块被删掉没重算，都会让这个和不成立。
+实测输出 <span class="code">权重和 1726.0</span>，与全园总数逐位一致。</p>
+
+<div class="card verdict-ok">
+  <p style="margin:0"><b>为什么这个自检重要</b>：加权准确率算错的典型表现是"看起来很正常"的百分比
+  （比如把 72% 算成 94%），人眼分辨不出来。<span class="code">Σw = N</span> 是恒等式，
+  不成立就一定是代码错了 —— 不依赖任何真值数据就能验证，所以能放进自动化测试。</p>
+</div>
+
+<h3>7.3 抽样必须可复现</h3>
+
+<p>用 <span class="code">mulberry32</span>（seed = 42）而不是 <span class="code">Math.random()</span>：
+同一份结果文件永远抽出同一批 150 块。否则「上周判的」和「这周判的」不是同一批，
+进度存下来也没法续，两次评估结果更没法比较。</p>
+
+<p>实现上有一个坑值得记：<span class="code">initValidation</span> 的 effect 依赖里必须包含
+<span class="code">validation.scope</span> 和 <span class="code">samples.length</span>。
+依赖太窄时 React StrictMode 的二次执行会复用旧闭包 → <b>重新抽样、把已有进度全抹掉</b>，
+而界面只表现为"进度 0/—"，看起来像没数据。</p>
+
+<h3>7.4 键盘流：为什么不是"填表"</h3>
+
+<p>150 块如果用鼠标点下拉框，30 分钟会变成 2 小时。所以做成
+「<span class="code">↑↓</span> 换块（地图自动 <span class="code">fitBounds</span>）→ 看一眼 →
+<span class="code">1/2/3/4</span> 打标 → 自动跳下一条」的单键流。地图飞过去这一步是省不掉的：
+判真值必须看图，列表摘要不足以判断。</p>
+
+<p>快捷键有四条护栏，全部抽成纯函数 <span class="code">shouldIgnoreHotkey()</span> 以便单测：
+<b>带修饰键</b>让位（Ctrl+Z 不该被当成打标）、<b>长按重复</b>让位、
+<b>有弹窗</b>让位、<b>焦点在输入框</b>让位。前两条是这个功能特有的 ——
+按住 <span class="code">1</span> 不放会在一秒内把后面几十块全打成同一个值。</p>
+
+<div class="card verdict-bad">
+  <p style="margin:0"><b>第一版真跑出来的错</b>：<span class="code">L2 不确定块</span>这层允许
+  <span class="code">Space</span> 直接确认，而 <span class="code">Space</span> 沿用了
+  "按算法类别确认"的语义 → 60 块里有 <b>51 块</b>被存成"存疑"（<span class="code">unsure</span>），
+  这一层等于白抽。<b>一次真实运行才暴露的问题</b>，单测里构造的数据全是"人会好好判"的理想情况。
+  修法：<span class="code">canConfirm(cls)</span> 拦住 <span class="code">uncertain</span>，
+  <span class="code">Space</span> 改为提示「请按 1/2/3 选一个真值」。</p>
+</div>
+
+<h3>7.5 进度持久化与「真值 ≠ 复核」</h3>
+
+<p>每判一块立刻写 <span class="code">localStorage</span>（关软件、重启电脑都不丢）。
+但标注记录<b>不与复核结果混存</b>：复核是"改掉算法错误、影响交付"，验证是"记录算法对错、不影响交付"。
+混在一起的话，用户改完一块再去看验证集，会看到自己刚改的类别被当成"真值"——
+<b>用算法的输出去检验算法</b>，这是自证循环。</p>
+
+<h3>7.6 评估脚本：三档准确率 + 一个"别把噪声当改进"的护栏</h3>
+
+<pre>.venv/Scripts/python.exe scripts/eval_validation.py 标注.json [结果1.geojson 结果2.geojson ...]</pre>
+
+<table>
+  <thead><tr><th style="width:24%">指标</th><th>含义</th><th style="width:28%">什么时候看</th></tr></thead>
+  <tbody>
+    <tr><td>样本准确率</td><td>150 块里判对的比例（不加权）</td><td>想知道抽样本身质量</td></tr>
+    <tr><td><b>全园无偏准确率</b></td><td>HT 加权，代表全园 1,726 块</td><td><b>对外报数只用这个</b></td></tr>
+    <tr><td>面积加权准确率</td><td>按每块面积加权</td><td>判断"错在不在大块上"</td></tr>
+  </tbody>
+</table>
+
+<p>另外输出混淆矩阵（哪一类被错判成哪一类）、分层小表（哪一层最差）、
+以及「确定需补种」的 precision / recall。</p>
+
+<p>多结果对比时脚本会强制一项护栏：<b>两个版本差距小于 2 个百分点时，标注为「不可区分」</b>。
+150 块样本的抽样误差本来就在这个量级，不加这条警告，任何一次参数微调都会被读成"提升"。</p>
+
+<p>脚本自带 <span class="code">--selftest</span>（13 项）：权重恒等式、<span class="code">unsure</span>
+排除、混淆矩阵行列和、单层退化、零样本不除零，都在里面。已并入
+<span class="code">scripts/check_all.py</span> 第 7 层。</p>
+
+<div class="card">
+  <p style="margin:0"><b>尚未闭环的一环</b>：到目前为止跑过的评估用的是<b>模拟标注</b>（构造数据验算管线），
+  真实的 150 块真值需要人工判一次。<b>702 vs 727 的取舍必须在真值跑完之后再定</b> ——
+  在那之前，交付基线冻结在 702 块 / 309,143 m² / 3,691 株。</p>
+</div>
+
+<h2>8. 45 条坑，按主题分</h2>
+
+<p>完整清单在 <span class="code">desktop/README.md</span>（<b>45 条 / 8 组</b>，连续编号），每条都带错误原文。按主题归类：</p>
+
+<table>
+  <thead><tr><th style="width:22%">分组</th><th style="width:8%">条数</th><th>代表性问题</th></tr></thead>
+  <tbody>
+    <tr><td>瓦片服务侧</td><td class="num">3</td><td><span class="code">Window.intersection</span> 无交集时<b>抛错</b>不是返回空；4 波段别把 Alpha 算进索引；无金字塔时低缩放级读全分辨率</td></tr>
+    <tr><td>估算模块侧</td><td class="num">3</td><td>网格索引 i 的范围必须逐 j 算；经纬度→米不能用「1° ≈ 111320 m」常数</td></tr>
+    <tr><td>类型侧</td><td class="num">2</td><td><span class="code">match</span> 表达式类型推断不出；组件抛错卸载整棵 React 树 → 白屏</td></tr>
+    <tr><td>数据契约侧</td><td class="num">3</td><td><span class="code">blocks[].gaps</span> 不是 <span class="code">features</span>（静默空数组）；点位必须基于交付版结果；网格原点不能用"要素顶点均值"</td></tr>
+    <tr><td>Tauri 外壳侧</td><td class="num">2</td><td>缺 <span class="code">icons/icon.ico</span> 直接失败；退出不清子进程 → 下次"端口被占"</td></tr>
+    <tr><td>一键脚本侧</td><td class="num">3</td><td><span class="code">.bat</span> 必须 UTF-8 无 BOM + CRLF；搬家自愈会误删共享的 <span class="code">CARGO_TARGET_DIR</span></td></tr>
+    <tr><td>IPC 桥接侧<br><span class="sub">（含打包 / 交互 / 导出 / 自检）</span></td><td class="num">26</td><td>只读 stdout 不读 stderr → 永久死锁；参数名写错只静默退化；两份 <span class="code">proj.db</span> 版本只在冻结态炸；<span class="code">warn</span> 事件没处理 = 告警全丢；拖拽 change 洪水吃光撤销栈；框选不传可见性会盲删</td></tr>
+    <tr><td>验证集侧</td><td class="num">3</td><td><span class="code">uncertain</span> 层允许"直接确认"→ 存进去的是算法输出（60 块里 51 块存疑）；加权准确率必须有 <span class="code">Σw = N</span> 恒等式自检；<span class="code">localStorage</span> effect 依赖写窄 = StrictMode 双跑抹掉进度</td></tr>
+  </tbody>
+</table>
+
+<h2>9. 验收基线</h2>
 
 <div class="card verdict-ok">
   <div style="display:flex;gap:2.2rem;flex-wrap:wrap">
-    <div><div class="big">445</div><div class="sub">前端断言</div></div>
+    <div><div class="big">529</div><div class="sub">前端断言</div></div>
     <div><div class="big">32/32</div><div class="sub">Rust 单测</div></div>
     <div><div class="big">95/95</div><div class="sub">契约测试</div></div>
+    <div><div class="big">9/9</div><div class="sub">自检层（check_all.py）</div></div>
     <div><div class="big">350 s</div><div class="sub">全量检测（原 1,048 s）</div></div>
     <div><div class="big">42 s</div><div class="sub">生成高度图 + 掩膜</div></div>
     <div><div class="big">67.8 MiB</div><div class="sub">安装包</div></div>
@@ -428,10 +547,11 @@ CHM 5891×5585 @ 26 cm/px（P50 树高 6.24 m）、掩膜 2 个多边形。</p>
   </div>
 </div>
 
-<h2>9. 还没做的</h2>
+<h2>10. 还没做的</h2>
 <table>
   <thead><tr><th>项</th><th>原因</th></tr></thead>
   <tbody>
+    <tr><td>150 块真值打标</td><td>工具与脚本已就绪，需要人工判一次；在此之前 702 vs 727 无法裁决</td></tr>
     <tr><td>真机交互验证</td><td>KML 文件对话框、框选拖拽、<span class="code">Ctrl+Z</span> 需要真实鼠标，自动化环境模拟不了</td></tr>
     <tr><td>MSI 安装包</td><td>WiX 对 4,000+ 文件的 ICE 校验过不去，当前只出 NSIS</td></tr>
     <tr><td>代码签名</td><td>需要证书；未签名时 Windows 会提示"未知发布者"</td></tr>
@@ -441,7 +561,7 @@ CHM 5891×5585 @ 26 cm/px（P50 树高 6.24 m）、掩膜 2 个多边形。</p>
 
 <footer>
   Forest Gap Detection · 桌面端实现说明（专业版）· 2026-10-19<br>
-  配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（58 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
+  配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（45 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
 </footer>
 
 </div>
