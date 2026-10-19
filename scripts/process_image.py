@@ -166,6 +166,32 @@ def fingerprint(input_path: str, params: dict) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
+def _inputs_snapshot(args) -> dict:
+    """记录本次结果依赖的输入文件指纹（mtime + size）。
+
+    用于事后判断「结果是否已经过期」—— 见结果 JSON 里 `inputs_snapshot` 的注释。
+    文件不存在时记 null，不抛错（某些判据本来就是可选的）。
+    """
+    out: dict = {}
+    for key, path in (
+        ("image", args.input),
+        ("chm", getattr(args, "chm", None)),
+        ("segment", getattr(args, "segment", None)),
+        ("forest_mask", getattr(args, "forest_mask", None)),
+    ):
+        if not path:
+            out[key] = None
+            continue
+        p = Path(path)
+        try:
+            st = p.stat()
+            out[key] = {"path": str(p), "mtime": int(st.st_mtime),
+                        "size": int(st.st_size)}
+        except OSError:
+            out[key] = None
+    return out
+
+
 # ============================================================================
 # 瓦片规划
 # ============================================================================
@@ -1055,7 +1081,10 @@ def build_argparser() -> argparse.ArgumentParser:
                     help="关闭道路/水体/办公区检测（退化为旧行为）")
     ap.add_argument("--no-water-segment", action="store_true",
                     help="水体检测不使用 DJI 语义分割证据（退化为纯 RGB 蓝度/暗水规则）。"
-                         "默认使用：RGB 蓝度规则只能覆盖语义分割水体的 7.9%"
+                         # ⚠️ argparse 会对 help 做 %-格式化，裸 %% 会崩：
+                         #    `ValueError: unsupported format character`。
+                         #    所有百分号必须写成 %%。
+                         "默认使用：RGB 蓝度规则只能覆盖语义分割水体的 7.9%%"
                          "（含藻类的灰绿色水塘不满足 B≥G>R，实测漏检 5,691 m²）")
     ap.add_argument("--unplantable-overlap", type=float, default=0.5,
                     help="[已失效，仅为向后兼容] 旧的「整块改判」阈值。"
@@ -1795,6 +1824,16 @@ def build_full_geojson(args, in_path: Path, px_m: float, area_ha: float,
             "node_tol_ratio": args.node_tol_ratio,
             "elongate_ratio": args.elongate_ratio,
         },
+        # 「本次结果是用哪些输入文件算的」—— 每个文件的 mtime 与大小。
+        #
+        # ⚠️ 为什么必须记：用户换园区时先「生成高度图」（40 秒），
+        #    然后**忘了重跑检测**就直接导出。这时报告里的株数是按旧 CHM 算的，
+        #    而界面上完全看不出异常 —— 数字自洽、报告完整，只有到现场才发现不对。
+        #    有了这份快照，`/gaps` 就能比对"当前 chm.tif 是否比结果新"并给出提示。
+        #
+        # 只记 mtime + size 而不是哈希：CHM 有 60 MB，每次检测都算 sha256
+        # 要多花 1~2 秒，而 mtime 已经足够判断"有没有被换过"。
+        "inputs_snapshot": _inputs_snapshot(args),
         "model": {
             "name": "canopy_structural",
             "type": "rule_based_segmentation",

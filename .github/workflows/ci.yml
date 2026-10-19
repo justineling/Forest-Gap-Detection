@@ -1,0 +1,105 @@
+# 最小 CI：只跑"不需要人盯"的自动化断言。
+#
+# ## 为什么分两个 job
+#
+# · `frontend`（ubuntu）：tsc / npm test / ruff / CLI --help 冒烟。不碰 Rust，
+#   所以不需要装 webkit2gtk 那套 GUI 依赖，跑得快。
+# · `backend`（windows）：cargo test / 契约测试。**故意用 Windows** ——
+#   这个项目是 Windows 专属（NSIS 打包、路径带盘符），
+#   cargo test 里还有读 mtime / 临时目录的用例，跟文件系统行为相关。
+#   在 ubuntu 上验过不代表在 Windows 上过。
+#
+# ## 不跑的东西（以及为什么）
+#
+# · e2e（`desktop/tests/e2e/`）：需要真 Chrome + 真影像，手工回归用
+# · `tauri build`：4 分钟且要签名证书，发布时手动跑
+# · 全量检测：350 秒，成本远超收益
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # 允许手动触发
+
+concurrency:
+  # 同一个分支连续推送时取消旧任务 —— CI 是"防回归"不是"存档"，不必排队跑完
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端 + Python 静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装前端依赖
+        working-directory: desktop
+        run: npm ci
+
+      - name: 前端类型检查
+        working-directory: desktop
+        run: npx tsc --noEmit
+
+      - name: 前端断言（445 项）
+        working-directory: desktop
+        run: npm test
+
+      - name: 安装 ruff
+        run: pip install ruff
+
+      - name: Python 静态检查（语法 + 未定义名）
+        run: ruff check --select F821,F823,E9 scripts/
+
+      # 这层抓 argparse 构造期异常。
+      # 现实价值：它当场抓出过 process_image.py --help 崩溃（help 里的裸 % 触发
+      # ValueError: unsupported format character）—— 那是 ruff 和 tsc 都看不见的。
+      - name: 安装 Python 运行依赖（--help 需要 import 顶层模块）
+        run: pip install numpy rasterio scipy shapely pyproj pyshp
+
+      - name: CLI --help 冒烟
+        run: |
+          for f in scripts/process_image.py scripts/sidecar.py scripts/tile_server.py \
+                   scripts/build_chm.py scripts/build_forest_mask.py scripts/build_derived.py \
+                   scripts/export_arcgis.py scripts/planting_points.py scripts/report_summary.py; do
+            echo "--- $f"
+            python "$f" --help > /dev/null || exit 1
+          done
+
+  backend:
+    name: Rust 单测 + 契约测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Rust 单测（32 项）
+        working-directory: desktop/src-tauri
+        run: cargo test --message-format=short
+
+      - name: 安装 Python 依赖
+        run: pip install numpy rasterio scipy shapely pyproj pyshp
+
+      - name: 契约测试（95 项）
+        run: python scripts/test_sidecar_contract.py
