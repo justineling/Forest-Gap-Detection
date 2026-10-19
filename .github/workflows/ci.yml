@@ -77,6 +77,9 @@ jobs:
       - name: 结果过期判定（13 项）
         run: python scripts/test_stale.py
 
+      - name: 验证集评估脚本自检（13 项）
+        run: python scripts/eval_validation.py --selftest
+
       - name: CLI --help 冒烟
         run: |
           for f in scripts/process_image.py scripts/sidecar.py scripts/tile_server.py \

@@ -66,6 +66,8 @@ CLI_SCRIPTS = [
     "scripts/export_arcgis.py",
     "scripts/planting_points.py",
     "scripts/report_summary.py",
+    "scripts/eval_validation.py",
+    "scripts/check_all.py",
 ]
 
 
@@ -169,14 +171,22 @@ def main() -> int:
     ok, dt = run([str(PY), "scripts/test_stale.py"], ROOT, "test_stale（13 项）")
     rec("stale", ok, dt)
 
-    # ---- 7. 文档合规（HTML 三条红线）----
-    print("\n[7] 文档合规")
+    # ---- 7. 验证集评估脚本（用 fixture 跑一遍，确认能算）----
+    print("\n[7] 验证集评估脚本")
+    ok, dt = run(
+        [str(PY), "scripts/eval_validation.py", "--selftest"],
+        ROOT, "eval_validation --selftest",
+    )
+    rec("eval_validation", ok, dt)
+
+    # ---- 8. 文档合规（HTML 三条红线）----
+    print("\n[8] 文档合规")
     ok, dt = run([str(PY), "scripts/check_docs.py"], ROOT, "check_docs（6 个 HTML）")
     rec("docs", ok, dt)
 
     # ---- 7. 契约测试 ----
     if not args.fast:
-        print("\n[8] 契约测试")
+        print("\n[9] 契约测试")
         ok, dt = run([str(PY), "scripts/test_sidecar_contract.py"], ROOT,
                      "test_sidecar_contract（95 项）")
         rec("contract", ok, dt)
