@@ -38,6 +38,12 @@ struct Services {
     tile: Mutex<Option<Child>>,
     /// 正在运行的检测子进程（`scripts/sidecar.py`）。用于防重入与中途取消。
     detect: Mutex<Option<Child>>,
+    /// 正在运行的「生成高度图 / 林地边界」子进程（`scripts/build_derived.py`）。
+    ///
+    /// 为什么不复用 `detect`：两者都会往 `output/` 写文件（CHM/掩膜 vs 检测结果），
+    /// 但**语义不同** —— 检测可以取消（半成品无害），生成中途杀掉会留下**半个 CHM**
+    /// （比没有更糟：检测会读到它而不报错）。分开放，将来给 derive 加"不可取消"更清楚。
+    derive: Mutex<Option<Child>>,
 }
 
 #[derive(Serialize)]
@@ -941,6 +947,311 @@ fn preflight_detect(
     Ok(preflight_core(&data_base(&app), &params))
 }
 
+// ============================================================================
+//  「生成高度图 / 林地边界」（等价于命令行跑 build_chm.py + build_forest_mask.py）
+// ----------------------------------------------------------------------------
+//  为什么要在界面里做：换园区时这两个文件必须重算，而命令行对现场用户不可用
+//  （他们不知道 .venv、不知道 --dsm 该指哪）。不做的话，换个园区就只能出一份
+//  「纯 RGB 的降级结果」，而且**界面不会报错**——这是最坏的一种失败。
+// ============================================================================
+
+/// 找出「生成派生数据」需要的输入。
+///
+/// 与 `preflight_core` 分成两个函数，是因为它们的**输入集不同**：
+/// 检测要 chm/segment/掩膜，生成要 dsm/tree_info。混在一起会让两边的检查项互相污染。
+fn derive_core(base: &Path, params: &serde_json::Value) -> PreflightResult {
+    let mut items: Vec<PreflightItem> = Vec::new();
+    let mut has_error = false;
+    let mut resolved = serde_json::Map::new();
+
+    let s = |k: &str| -> String {
+        params
+            .get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+
+    // ---- 1. 正射影像（必需：决定 CHM 的对齐网格）----
+    let input = s("input");
+    let img_path = {
+        let pb = PathBuf::from(&input);
+        if pb.is_absolute() {
+            pb
+        } else {
+            base.join(&input)
+        }
+    };
+    let img_dir = img_path.parent().map(|d| d.to_path_buf());
+    if input.is_empty() {
+        has_error = true;
+        items.push(pf_item(
+            "input", "正射影像", Path::new(""), "error",
+            "没有选择正射影像 —— 高度图需要按它的网格对齐",
+        ));
+    } else if img_path.exists() {
+        items.push(pf_item(
+            "input", "正射影像", &img_path, "ok",
+            format!("{} MB", file_mb(&img_path)),
+        ));
+        resolved.insert("input".to_string(), img_path.to_string_lossy().into());
+    } else {
+        has_error = true;
+        items.push(pf_item(
+            "input", "正射影像", &img_path, "error",
+            "文件不存在 —— 先选好影像",
+        ));
+    }
+
+    // ---- 2. DSM（必需，唯一真正必需的输入）----
+    //   CHM = DSM − 地面高程。没有 DSM 就无从谈起。
+    let dsm = match find_companion(img_dir.as_deref(), base, "dsm.tif") {
+        Some(p) => {
+            items.push(pf_item(
+                "dsm", "地表高程 DSM", &p, "ok",
+                format!("{} MB · 用于算树高", file_mb(&p)),
+            ));
+            resolved.insert("dsm".to_string(), p.to_string_lossy().into());
+            Some(p)
+        }
+        None => {
+            has_error = true;
+            items.push(pf_item(
+                "dsm", "地表高程 DSM", Path::new(""), "error",
+                "在影像同目录与 output/ 下都没找到 dsm.tif —— 这是唯一必需的输入，\
+                 大疆智图导出目录里叫 dsm.tif",
+            ));
+            None
+        }
+    };
+    let _ = dsm;
+
+    // ---- 3. 语义分割（可选：只影响水面在 CHM 里是否置空）----
+    match find_companion(img_dir.as_deref(), base, "segment.tif") {
+        Some(p) => {
+            items.push(pf_item(
+                "segment", "语义分割", &p, "ok",
+                "用于把水面在高度图里置空（缺了水面会被当成矮树）",
+            ));
+            resolved.insert("segment".to_string(), p.to_string_lossy().into());
+        }
+        None => items.push(pf_item(
+            "segment", "语义分割", Path::new(""), "warn",
+            "没找到 segment.tif —— 水面不会被置空，水塘可能算出偏高的树高",
+        )),
+    }
+
+    // ---- 4. 树心表（可选：缺了只出 CHM，跳过林地边界）----
+    match find_companion(img_dir.as_deref(), base, "tree_info.json") {
+        Some(p) => {
+            items.push(pf_item(
+                "tree_info", "树心表", &p, "ok",
+                format!("{} KB · 用于算林地边界", file_kb(&p)),
+            ));
+            resolved.insert("tree_info".to_string(), p.to_string_lossy().into());
+        }
+        None => items.push(pf_item(
+            "tree_info", "树心表", Path::new(""), "info",
+            "没找到 tree_info.json —— 这次只生成高度图，林地边界会被跳过",
+        )),
+    }
+
+    // ---- 5. 输出目录（必需：写不进去就白跑几十秒）----
+    let out_dir = base.join("output");
+    match std::fs::create_dir_all(&out_dir) {
+        Ok(()) => {
+            // 建得出来 ≠ 写得进去（只读盘上就是这种情况），真写一个探针再删
+            let probe = out_dir.join(".fgd-derive-probe");
+            match std::fs::write(&probe, b"x") {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&probe);
+                    items.push(pf_item(
+                        "out_dir", "输出目录", &out_dir, "ok", "可写",
+                    ));
+                    resolved.insert(
+                        "out_chm".to_string(),
+                        out_dir.join("chm.tif").to_string_lossy().into(),
+                    );
+                    resolved.insert(
+                        "out_mask".to_string(),
+                        out_dir.join("forest-mask.geojson").to_string_lossy().into(),
+                    );
+                }
+                Err(e) => {
+                    has_error = true;
+                    items.push(pf_item(
+                        "out_dir", "输出目录", &out_dir, "error",
+                        format!("目录建得出来但写不进去：{e}"),
+                    ));
+                }
+            }
+        }
+        Err(e) => {
+            has_error = true;
+            items.push(pf_item(
+                "out_dir", "输出目录", &out_dir, "error",
+                format!("无法创建：{e}"),
+            ));
+        }
+    }
+
+    // ---- 6. 会被覆盖提示（不是错误，但要让人知道）----
+    let chm_exists = out_dir.join("chm.tif").exists();
+    let mask_exists = out_dir.join("forest-mask.geojson").exists();
+    if chm_exists || mask_exists {
+        let mut what = Vec::new();
+        if chm_exists {
+            what.push("chm.tif");
+        }
+        if mask_exists {
+            what.push("forest-mask.geojson");
+        }
+        items.push(pf_item(
+            "overwrite", "已有同名文件", &out_dir, "warn",
+            format!(
+                "{} 已存在，生成后会覆盖。如果当前检测结果是用旧的高度图算的，\
+                 建议生成完重跑一次检测",
+                what.join(" 与 ")
+            ),
+        ));
+    }
+
+    PreflightResult {
+        ok: !has_error,
+        items,
+        resolved: serde_json::Value::Object(resolved),
+    }
+}
+
+fn file_mb(p: &Path) -> String {
+    std::fs::metadata(p)
+        .map(|m| format!("{:.1}", m.len() as f64 / 1_048_576.0))
+        .unwrap_or_else(|_| "?".into())
+}
+
+fn file_kb(p: &Path) -> String {
+    std::fs::metadata(p)
+        .map(|m| format!("{:.0}", m.len() as f64 / 1024.0))
+        .unwrap_or_else(|_| "?".into())
+}
+
+#[tauri::command]
+fn preflight_derived(app: tauri::AppHandle, params: serde_json::Value) -> Result<PreflightResult, String> {
+    Ok(derive_core(&data_base(&app), &params))
+}
+
+/// 启动「生成高度图 / 林地边界」。
+///
+/// 事件名与检测分开（`derived-event` / `derived-log`）：前端两个进度条语义不同，
+/// 混在一个通道里会出现"检测进度条在跳，但你在做别的事"。
+#[tauri::command]
+fn run_build_derived(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Services>,
+    params: serde_json::Value,
+) -> Result<String, String> {
+    {
+        let guard = state.derive.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("已有生成任务在运行，请等它完成".into());
+        }
+    }
+    // 检测在跑时不允许生成：两者都会写 output/，同时跑会互相覆盖中间产物
+    {
+        let g = state.detect.lock().map_err(|e| e.to_string())?;
+        if g.is_some() {
+            return Err("检测正在运行，请等它完成再生（两者都会写 output/）".into());
+        }
+    }
+
+    let backend = resolve_backend(&app).ok_or("找不到后端（打包运行时与 .venv 都不存在）")?;
+
+    let base = bundled_data_root(&app);
+    let abs = |k: &str| -> String {
+        let raw = params.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if raw.is_empty() {
+            return raw;
+        }
+        let pb = Path::new(&raw);
+        if pb.is_absolute() {
+            raw
+        } else {
+            base.join(pb).to_string_lossy().to_string()
+        }
+    };
+
+    let mut args: Vec<String> = Vec::new();
+    if let Backend::Dev { root, .. } = &backend {
+        let script = root.join("scripts").join("build_derived.py");
+        if !script.exists() {
+            return Err(format!("找不到 {}", script.display()));
+        }
+        args.push(script.to_string_lossy().to_string());
+    } else {
+        args.push("--build-derived".into());
+    }
+    args.push("--ortho".into());
+    args.push(abs("input"));
+    args.push("--dsm".into());
+    args.push(abs("dsm"));
+    let seg = abs("segment");
+    if !seg.is_empty() {
+        args.push("--segment".into());
+        args.push(seg);
+    }
+    let ti = abs("tree_info");
+    if !ti.is_empty() {
+        args.push("--tree-info".into());
+        args.push(ti);
+    }
+    args.push("--out-chm".into());
+    args.push(abs("out_chm"));
+    args.push("--out-mask".into());
+    args.push(abs("out_mask"));
+
+    let data_root = bundled_data_root(&app);
+    let mut cmd = build_command(&backend, &args, &data_root);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("启动生成进程失败：{e}（{}）", backend.describe()))?;
+
+    let stdout = child.stdout.take().ok_or("拿不到 stdout")?;
+    let stderr = child.stderr.take().ok_or("拿不到 stderr")?;
+    *state.derive.lock().map_err(|e| e.to_string())? = Some(child);
+
+    let app_out = app.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            let payload = serde_json::from_str::<serde_json::Value>(t)
+                .unwrap_or_else(|_| serde_json::json!({ "event": "raw", "line": t }));
+            let _ = app_out.emit("derived-event", payload);
+        }
+        if let Some(st) = app_out.try_state::<Services>() {
+            if let Ok(mut g) = st.derive.lock() {
+                if let Some(mut c) = g.take() {
+                    let _ = c.wait();
+                }
+            }
+        }
+    });
+
+    let app_err = app.clone();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            let _ = app_err.emit("derived-log", line);
+        }
+    });
+
+    log_line("已启动「生成高度图 / 林地边界」");
+    Ok("started".into())
+}
+
 #[tauri::command]
 fn run_detect(
     app: tauri::AppHandle,
@@ -1272,6 +1583,8 @@ pub fn run() {
             restart_tile_server,
             run_detect,
             preflight_detect,
+            preflight_derived,
+            run_build_derived,
             read_text_file,
             open_path,
             cancel_detect,
@@ -1364,6 +1677,155 @@ mod tests {
 
     fn item<'a>(r: &'a PreflightResult, key: &str) -> &'a PreflightItem {
         r.items.iter().find(|i| i.key == key).expect("缺少预检项")
+    }
+
+    // ---- 「生成高度图 / 林地边界」的预检（derive_core）----
+    //
+    // 这一组测试的价值：生成是**不可逆的覆盖操作**（会盖掉 output/chm.tif），
+    // 而且它比检测更容易"静默失败" —— 缺 DSM 时如果不拦，用户点下去会等一分钟
+    // 然后拿到一句 python 的 KeyError。所以每一项都要在点按钮之前就判掉。
+
+    #[test]
+    fn derive_requires_image() {
+        let base = scratch("dv-noimg");
+        let r = derive_core(&base, &serde_json::json!({ "input": "" }));
+        assert!(!r.ok, "没选影像必须拦住");
+        assert_eq!(item(&r, "input").status, "error");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn derive_requires_dsm() {
+        // 只有影像、没有 dsm.tif —— 这是最容易发生的情形（用户只拷了影像）
+        let base = scratch("dv-nodsm");
+        touch(&base.join("ortho.tif"), 2_000_000);
+        let r = derive_core(&base, &serde_json::json!({ "input": "ortho.tif" }));
+        assert!(!r.ok, "缺 DSM 是硬错误：没有它算不出树高");
+        let it = item(&r, "dsm");
+        assert_eq!(it.status, "error");
+        assert!(
+            it.detail.contains("dsm.tif"),
+            "要说清缺的是哪个文件名：{}",
+            it.detail
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn derive_finds_inputs_next_to_image() {
+        let base = scratch("dv-ok");
+        let dir = base.join("BlockC");
+        touch(&dir.join("ortho.tif"), 2_000_000);
+        touch(&dir.join("dsm.tif"), 300_000);
+        touch(&dir.join("segment.tif"), 100_000);
+        touch(&dir.join("tree_info.json"), 5_000);
+
+        let r = derive_core(
+            &base,
+            &serde_json::json!({ "input": dir.join("ortho.tif").to_string_lossy() }),
+        );
+        assert!(r.ok, "四个输入都在同目录，应该放行：{:?}", r.items.iter().map(|i| (&i.key, &i.status, &i.detail)).collect::<Vec<_>>());
+        for k in ["input", "dsm", "segment", "tree_info", "out_dir"] {
+            assert_eq!(item(&r, k).status, "ok", "{k} 应为 ok");
+        }
+        // resolved 必须给出绝对输出路径 —— 前端不做路径拼接
+        assert!(r.resolved.get("out_chm").is_some(), "要给出 chm 输出路径");
+        assert!(r.resolved.get("out_mask").is_some());
+        let chm = r.resolved["out_chm"].as_str().unwrap();
+        assert!(chm.ends_with("chm.tif"), "实际 {chm}");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn derive_missing_segment_is_warn_not_error() {
+        // 分割图只影响"水面在 CHM 里是否置空"，不该拦住生成
+        let base = scratch("dv-noseg");
+        let dir = base.join("B");
+        touch(&dir.join("ortho.tif"), 2_000_000);
+        touch(&dir.join("dsm.tif"), 300_000);
+        touch(&dir.join("tree_info.json"), 5_000);
+
+        let r = derive_core(
+            &base,
+            &serde_json::json!({ "input": dir.join("ortho.tif").to_string_lossy() }),
+        );
+        assert!(r.ok, "缺分割图不该拦");
+        assert_eq!(item(&r, "segment").status, "warn");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn derive_missing_tree_info_skips_mask_but_allows() {
+        // 树心表缺失 → 只出 CHM。这要能放行，但必须说清"林地边界会被跳过"，
+        // 否则用户会以为掩膜也生成了，检测时才发现没生效。
+        let base = scratch("dv-notree");
+        let dir = base.join("B");
+        touch(&dir.join("ortho.tif"), 2_000_000);
+        touch(&dir.join("dsm.tif"), 300_000);
+
+        let r = derive_core(
+            &base,
+            &serde_json::json!({ "input": dir.join("ortho.tif").to_string_lossy() }),
+        );
+        assert!(r.ok, "缺树心表应放行（只出 CHM）");
+        let it = item(&r, "tree_info");
+        assert_eq!(it.status, "info");
+        assert!(
+            it.detail.contains("只生成高度图") && it.detail.contains("跳过"),
+            "必须说清后果：{}",
+            it.detail
+        );
+        assert!(
+            r.resolved.get("tree_info").is_none(),
+            "没有树心表就不该往 resolved 里塞空值"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn derive_warns_before_overwriting_existing_files() {
+        // 已经算过 CHM 再点一次 —— 会覆盖。不是错误，但用户必须知道。
+        let base = scratch("dv-ow");
+        let dir = base.join("B");
+        touch(&dir.join("ortho.tif"), 2_000_000);
+        touch(&dir.join("dsm.tif"), 300_000);
+        touch(&dir.join("tree_info.json"), 5_000);
+        touch(&base.join("output").join("chm.tif"), 1_000);
+
+        let r = derive_core(
+            &base,
+            &serde_json::json!({ "input": dir.join("ortho.tif").to_string_lossy() }),
+        );
+        assert!(r.ok, "覆盖不是错误");
+        let it = item(&r, "overwrite");
+        assert_eq!(it.status, "warn");
+        assert!(it.detail.contains("chm.tif"), "{}", it.detail);
+        assert!(
+            it.detail.contains("重跑一次检测"),
+            "要提醒：换了高度图后旧检测结果口径变了"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn derive_reports_output_dir_writable() {
+        let base = scratch("dv-wr");
+        let dir = base.join("B");
+        touch(&dir.join("ortho.tif"), 2_000_000);
+        touch(&dir.join("dsm.tif"), 300_000);
+        touch(&dir.join("tree_info.json"), 5_000);
+
+        let r = derive_core(
+            &base,
+            &serde_json::json!({ "input": dir.join("ortho.tif").to_string_lossy() }),
+        );
+        let it = item(&r, "out_dir");
+        assert_eq!(it.status, "ok");
+        assert!(
+            !base.join("output").join(".fgd-derive-probe").exists(),
+            "探针文件必须被删掉，不能留在用户目录里"
+        );
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]
