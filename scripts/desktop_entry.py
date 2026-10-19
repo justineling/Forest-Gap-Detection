@@ -14,6 +14,7 @@ pyproj / gdal` 的数千个动态库会被**复制两遍**，安装包直接翻�
 动态库目录。
 
 ```
+desktop_entry.exe --build-derived [build_derived 的参数...]  # 生成 CHM + 森林掩膜
 desktop_entry.exe --run-tile-server [tile_server 的参数...]
 desktop_entry.exe [sidecar 的参数...]          # 默认走 sidecar
 desktop_entry.exe --self-test                  # 冻结态冒烟自检
@@ -193,6 +194,13 @@ def main(argv: list[str] | None = None) -> int:
         # tile_server.main() 读的是 sys.argv，这里替它摆好
         sys.argv = ["tile_server", *args[1:]]
         return tile_server.main()
+
+    if args and args[0] == "--build-derived":
+        # 生成高度图 / 林地边界。与 sidecar 一样走 NDJSON 事件流，
+        # 只是事件名不同（derived-*）—— 宿主按事件名分派，不靠进程参数区分。
+        import build_derived
+
+        return build_derived.main(args[1:])
 
     # 默认：sidecar（算法跑批）
     import sidecar
