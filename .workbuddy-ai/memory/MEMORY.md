@@ -130,7 +130,7 @@
 技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
 Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-**验收基线**：`npm test`（271 项断言）· `cargo test`（20）·
+**验收基线**：`npm test`（310 项断言）· `cargo test`（25）·
 契约测试 95/95 · `cargo check`。
 **打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
 `%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
@@ -176,7 +176,14 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
     否则面积与 Terra Draw 静默算错；多多边形**取最大**（KML 常含图例框）。
 17. **导出的网格参数必须来自磁盘上的算法结果**：前端 `planting_grid` 缺
     `origin_x_m/origin_y_m`，拿去构造 GridModel 会让放样点**整体平移**。
-18. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
+18. **结果文件路径不能写死文件名**：产物名由 `job` 决定（`{job}-gaps.geojson`），
+    而 job 是契约 → 只能"扫目录 + 名字含 gaps + 按 mtime 取最新"。
+    ⚠️ 打包态 `ROOT` 指向 `py-runtime/desktop_entry/`（没有 output/）→
+    候选目录**必须含 `cwd/output`**（打包时 cwd=数据根）；
+    缓存必须按 `(path, mtime_ns, size)` 失效，否则"检测完看不到新结果"。
+    ⚠️ `/gaps` 返回空时**绝不能 applyRerun([])**（会把现有结果清空）；
+    要区分"算法自报 0 块"（可清空）与"没收到报告"（必须保留）。
+19. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
     标识符；要查 `<link href>` / `<script src>` / `<img src>` / `@import` / `url(`。
 
 **其它要点**
