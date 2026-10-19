@@ -57,7 +57,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <div class="card verdict">
   <p style="margin:0"><b>一句话</b>：把「跑一遍算法、看一个 GeoJSON」变成「双击装包、圈一块地、350 秒出 21 件可直接交付的文件」。
-  本文只讲<b>为什么这么设计</b>；踩坑清单在 <span class="code">desktop/README.md</span>（33 条，每条带错误原文），
+  本文只讲<b>为什么这么设计</b>；踩坑清单在 <span class="code">desktop/README.md</span>（37 条，每条带错误原文），
   操作步骤在 <span class="code">桌面端使用手册.md</span>。</p>
 </div>
 
@@ -99,7 +99,17 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
     <text x="8" y="112" fill="#64748b" font-size="11">可选：② 圈范围不圈就整幅（慢 3 倍）· ④ 复核不改就全信算法</text>
   </g>
 </svg>
-<p class="figcap">五步都能跳过，但每一步跳过都有代价 —— 这就是后面几节要解释的</p>
+<p class="figcap">② ④ 可跳过（跳过有代价），① ③ ⑤ 必做 —— 顶部工具栏与右下角卡片就是按这五步组织的</p>
+
+<div class="card">
+<b>2026-10-19：工具栏按这五步收敛了。</b>
+改之前是 14 个平铺按钮（影像状态 / 载入结果 / 数据 / 撤销 / 重做 / 圈选 / 导入范围 /
+清除 / 框选 / 开始检测 / 参数 / 新增空地 / 估算 / 导出），用户看不出该点哪个。
+现在 header 只有「品牌 + 五步进度条 + 影像灯 + 撤销 / 重做 + ⋯ 更多」，
+高频动作全部搬进地图右下角的「下一步」卡片（任何时刻只有 1 个主动作），
+低频动作（换数据 / 参数 / 补画 / 估算 / 日志）收进「⋯ 更多」。
+状态机在 <span class="code">desktop/src/lib/workflow.ts</span>，有 45 项单测。
+</div>
 </div>
 
 <h2>2. 进程模型：三个进程，各管一段</h2>
@@ -315,7 +325,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 <span class="code">@media print</span> 按 A4 排版，<span class="code">Ctrl+P</span> 直接出 PDF。</p>
 <p>刻意用<b>浅色主题</b>：应用界面是深色，但交给主管签字的东西要省墨、能黑白打印。</p>
 
-<h2>6. 33 条坑，按主题分</h2>
+<h2>6. 37 条坑，按主题分</h2>
 
 <p>完整清单在 <span class="code">desktop/README.md</span>，每条都带错误原文。按主题归类：</p>
 
@@ -357,7 +367,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <footer>
   Forest Gap Detection · 桌面端实现说明（专业版）· 2026-10-18<br>
-  配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（33 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
+  配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（37 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
 </footer>
 
 </div>
