@@ -57,7 +57,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <div class="card verdict">
   <p style="margin:0"><b>一句话</b>：把「跑一遍算法、看一个 GeoJSON」变成「双击装包、圈一块地、350 秒出 21 件可直接交付的文件」。
-  本文只讲<b>为什么这么设计</b>；踩坑清单在 <span class="code">desktop/README.md</span>（37 条，每条带错误原文），
+  本文只讲<b>为什么这么设计</b>；踩坑清单在 <span class="code">desktop/README.md</span>（58 条，每条带错误原文），
   操作步骤在 <span class="code">桌面端使用手册.md</span>。</p>
 </div>
 
@@ -325,7 +325,80 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 <span class="code">@media print</span> 按 A4 排版，<span class="code">Ctrl+P</span> 直接出 PDF。</p>
 <p>刻意用<b>浅色主题</b>：应用界面是深色，但交给主管签字的东西要省墨、能黑白打印。</p>
 
-<h2>6. 37 条坑，按主题分</h2>
+<h2>6. 生成高度图与林地边界：一行算法都不改地接进界面</h2>
+
+<p>
+换园区时 <span class="code">chm.tif</span> 与 <span class="code">forest-mask.geojson</span>
+必须重算 —— 它们是<b>从 DSM 派生的</b>，不是用户准备的源文件。
+这两个文件决定「多高才算树」和「哪片是未开发林」，缺了检测会静默退化成纯 RGB。
+所以界面必须能做，否则换园区就只能出降级结果，而<b>屏幕上不报错</b>。</p>
+
+<h3>6.1 三层各管一段</h3>
+
+<pre>DerivedDialog.tsx（前端）
+  ├─ preflight_derived  → 6 项检查（缺 dsm 直接拦）
+  ├─ run_build_derived  → 起子进程
+  └─ 订阅 derived-event → 进度 / 完成 / 失败
+        │
+        ├─ lib.rs: derive_core()      ← 纯函数，可单测（7 个用例）
+        └─ lib.rs: run_build_derived() ← 进程 + 两条读线程
+              │
+              └─ build_derived.py（NDJSON 事件）
+                    ├─ build_chm.py        （算法，未改）
+                    └─ build_forest_mask.py（算法，未改）</pre>
+
+<h3>6.2 三个设计决定</h3>
+
+<table>
+  <thead><tr><th style="width:26%">决定</th><th>为什么</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>不改算法脚本</b></td>
+      <td>两个脚本加起来几十条 <span class="code">log()</span>。改写它们等于把算法文件变成
+      UI 的一部分（以后动算法就得考虑 UI）。做法是<b>替换模块级引用</b>：
+      <span class="code">BC.log = my_logger</span> —— 脚本不知道自己被包装了。</td>
+    </tr>
+    <tr>
+      <td><b>stdout 设防</b></td>
+      <td>宿主逐行解析 NDJSON，而 GDAL/rasterio 会往 stdout 打版本警告 → 多一行就多一条
+      <span class="code">raw</span> 事件。用一个只放行 JSON 的 <span class="code">sys.stdout</span>
+      守卫，其余转 stderr。实测 21 个事件 / 0 个非 JSON。</td>
+    </tr>
+    <tr>
+      <td><b>不可取消</b></td>
+      <td>检测可以 cancel（半成品无害），但生成中途杀掉会留下<b>半个 CHM</b>，
+      而检测读到它<b>根本不会报错</b>（NaN 区域变少，但仍是有效栅格）。
+      所以运行时把关闭按钮也禁掉 —— 半成品比没有更糟。</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>6.3 进度不造假精度</h3>
+
+<p>CHM 里那个 30 m 窗口的最小值滤波是纯计算、<b>内部没有可插入的进度点</b>。
+所以 <span class="code">ratio</span> 是<b>按实测耗时粗估</b>的（CHM 75% / 掩膜 25%），
+阶段内按日志行数线性推进但封顶 95%。真正让人安心的是
+<span class="code">message</span>（"当前在干什么"），界面上配了最近 4 行算法日志。</p>
+
+<p class="sub" style="color:var(--dim)">实测（本机，WGR17 全量）：<b>42 秒</b>，
+CHM 5891×5585 @ 26 cm/px（P50 树高 6.24 m）、掩膜 2 个多边形。</p>
+
+<h3>6.4 两个互锁</h3>
+
+<ul>
+  <li><b>与检测双向互斥</b>：两者都写 <span class="code">output/</span>，同时跑会互相覆盖中间产物。
+      所以"检测在跑"时不允许生成，反之亦然。</li>
+  <li><b>生成完必须重跑检测</b>：旧结果是用旧的高度图算的，直接导出会得到和新 CHM
+      对不上的数字，而界面上看不出任何异常。完成态文案强制写了这一句。</li>
+</ul>
+
+<div class="card">
+  <p style="margin:0"><b>闭环</b>：检测预检里缺 CHM / 掩膜时，那张卡片上直接给
+  「去生成高度图 / 林地边界」按钮。以前只能提示"结果会退化"——用户知道会算偏，
+  却不知道下一步该做什么。</p>
+</div>
+
+<h2>7. 58 条坑，按主题分</h2>
 
 <p>完整清单在 <span class="code">desktop/README.md</span>，每条都带错误原文。按主题归类：</p>
 
@@ -341,20 +414,21 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
   </tbody>
 </table>
 
-<h2>7. 验收基线</h2>
+<h2>8. 验收基线</h2>
 
 <div class="card verdict-ok">
   <div style="display:flex;gap:2.2rem;flex-wrap:wrap">
-    <div><div class="big">191</div><div class="sub">前端断言</div></div>
-    <div><div class="big">14/14</div><div class="sub">Rust 单测</div></div>
+    <div><div class="big">445</div><div class="sub">前端断言</div></div>
+    <div><div class="big">32/32</div><div class="sub">Rust 单测</div></div>
     <div><div class="big">95/95</div><div class="sub">契约测试</div></div>
     <div><div class="big">350 s</div><div class="sub">全量检测（原 1,048 s）</div></div>
-    <div><div class="big">67.7 MiB</div><div class="sub">安装包</div></div>
+    <div><div class="big">42 s</div><div class="sub">生成高度图 + 掩膜</div></div>
+    <div><div class="big">67.8 MiB</div><div class="sub">安装包</div></div>
     <div><div class="big">21</div><div class="sub">交付文件 / 3,691 点</div></div>
   </div>
 </div>
 
-<h2>8. 还没做的</h2>
+<h2>9. 还没做的</h2>
 <table>
   <thead><tr><th>项</th><th>原因</th></tr></thead>
   <tbody>
@@ -366,8 +440,8 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 </table>
 
 <footer>
-  Forest Gap Detection · 桌面端实现说明（专业版）· 2026-10-18<br>
-  配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（37 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
+  Forest Gap Detection · 桌面端实现说明（专业版）· 2026-10-19<br>
+  配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（58 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
 </footer>
 
 </div>
