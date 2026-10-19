@@ -978,3 +978,74 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     `lib/gapsLoad.ts` 的 `decideGapsLoad()` 把判断抽成纯函数，关键是区分
     **"算法自报 0 块"** 与 **"没收到报告"**：前者允许清空，后者必须保留。
     测试里有一条反证（`applyRerun([])` 真的会清空），证明这道保护不是多余的。
+
+44. **显式 `--gaps` 被"更新的残留文件"顶掉 → 网格串批次，点位全偏**
+
+    **已修（`94f1aab`）**，但后果值得记牢：它不是"选错文件"这么轻。
+
+    **根因** —— `TileServer._pick_gaps()` 原规则是「取 mtime 更新的那个」：
+
+    ```python
+    best = explicit if (explicit and explicit.exists()) else None
+    found = discover_gaps(self.source)            # 扫目录 + 名字含 gaps + 取最新
+    if found and (best is None or _mtime_ns(found) > _mtime_ns(best)):
+        best = found                              # ← 显式指定的被盖掉
+    ```
+
+    **同一个数据目录里只要存在一个比它更新的 `*gaps*.geojson`，
+    `--gaps` 指定的文件就永远读不到。** 而 `output/` 在真实使用中必然累积
+    多轮检测/试验产物（本仓库开发态就有 20 个匹配 `*gaps*.geojson` 的文件，
+    最新的几份是只有 12 / 12 / 8 / 14 块的小样本残留）。
+
+    **★ 真正的危害：网格串批次 → 点位偏，而块数可能完全正确**
+
+    `/export` 里**要素**来自前端 POST，但 **`planting_grid` 取自
+    `current_gaps()`（同一个"当前生效文件"）**。所以一旦发现到另一批文件：
+
+    | | 要素 | 网格（来自另一批） | 结果 |
+    |---|---|---|---|
+    | 正常 | 1,726 | `origin_x_m=158.95` / `pitch=8.45` | **3,691 点** |
+    | 串了批 | 1,726 | `origin_x_m=159.32` / `pitch=8.35` | **3,713 点** |
+
+    要素数一模一样、类别数一模一样、报告看起来完全正常，
+    **但每一株的点位坐标都按错的网格结算了 —— 到场就挖错地方。**
+    这比"块数不对"危险得多，因为用户看不出来。实测 A/B（同一批 1,726 要素、
+    只换网格基准）点数在 **3,656 ~ 3,713** 之间变动、首点坐标同步漂移
+    （`111.20402232, 1.19012672` → `111.20412956, 1.19002759`）。
+
+    **接口全程 `ok: true`，没有任何报错。**
+
+    **修法（已落地）** —— 关键认识：**"用户选文件的时刻"和"文件自身的 mtime"
+    是两件事**，不能直接拿 mtime 比大小。
+
+    ```python
+    # __init__：用户"指定"这一刻只记一次。
+    #   ⚠️ 绝不能记在 _pick_gaps() 里 —— 那个方法每个请求都调，
+    #   时间戳会永远等于"现在"，mtime > now 恒为假，
+    #   等于把"检测完自动刷新"（坑 42）彻底弄回去。
+    self.gaps_explicit_at_ns = int(time.time() * 1e9) if gaps is not None else None
+
+    # _pick_gaps：只有"指定之后新产生"的文件才允许接管
+    if found is not None:
+        if best is None:                                   take = True
+        elif self.gaps_explicit_at_ns is not None:         take = _mtime_ns(found) > self.gaps_explicit_at_ns
+        else:                                              take = _mtime_ns(found) > _mtime_ns(best)
+        if take: best = found
+    ```
+
+    三条边界都对上了：① 检测完写的新文件 mtime > 启动时刻 → **自动刷新仍在**；
+    ② 仓库里的旧残留 mtime < 启动时刻 → **不再抢**；
+    ③ 用户无显式指定时（`gaps_explicit_at_ns is None`）→ 仍然纯按 mtime 取最新。
+    不需要动 Rust（"用户指定"的时机恰好就是 `set_data_paths` 重启服务之时）。
+
+    **回归用例**（`desktop/tests/e2e/regress_gaps_selection.py`，秒级）：
+    同一实例依次读到 **3 / 7 / 11**（原地覆盖 + 出现更新文件都能刷新）；
+    显式文件被 mtime 调旧后仍**胜出**（读到 1,726）；启动后新写的文件能接管；
+    名字不含 `gaps` 的 geojson（掩膜 / A-B 试验）不被误选。
+
+    **临时规避**（排查历史问题时仍有用）：给一个**干净的数据根**再起服务
+    （只放目标那一个文件），或把同目录里更新的文件临时移走。
+
+    > 排查教训：**别用"块数对不对"判断有没有串批次** —— 要素和网格来自
+    > 两个不同来源，块数正确时点位仍可能整体偏移。要直接看
+    > `planting_grid.origin_x_m` / `plant_pitch_m` 是否与预期的批次一致。
