@@ -130,7 +130,7 @@
 技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
 Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-**验收基线**：`npm test`（310 项断言）· `cargo test`（25）·
+**验收基线**：`npm test`（445 项断言）· `cargo test`（25）·
 契约测试 95/95 · `cargo check`。
 **打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
 `%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
@@ -183,7 +183,13 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
     缓存必须按 `(path, mtime_ns, size)` 失效，否则"检测完看不到新结果"。
     ⚠️ `/gaps` 返回空时**绝不能 applyRerun([])**（会把现有结果清空）；
     要区分"算法自报 0 块"（可清空）与"没收到报告"（必须保留）。
-19. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
+19. **选结果文件要区分「用户指定时刻」与「文件 mtime」**：`/export` 的要素来自前端 POST，
+    但 `planting_grid` 来自"当前生效文件" → 串批次时**块数完全正确、点位全偏**
+    （3,691→3,656，首点也漂），用户看不出来。修法是启动时记 `time_ns()`，
+    只有比它新产生的文件才允许接管显式路径（既保住"检测完自动刷新"，又不让历史残留抢占）。
+    ⚠️ `gaps_search_dirs()` 永远含 `ROOT/output`：仓库有 20 个 `*gaps*.geojson` 残留，
+    **拿仓库根当 cwd 验收会看到 12 块而不是 1,726 块** → 验收必须用干净数据根。
+20. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
     标识符；要查 `<link href>` / `<script src>` / `<img src>` / `@import` / `url(`。
 
 **其它要点**
