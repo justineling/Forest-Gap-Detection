@@ -13,6 +13,7 @@ interface Props {
   onChangeData: () => void
   onReloadGaps: () => void
   onOpenSettings: () => void
+  onBuildDerived: () => void
   onAddGap: () => void
   onBoxSelect: () => void
   onEstimate: () => void
@@ -48,6 +49,7 @@ export default function TopToolbar({
   onChangeData,
   onReloadGaps,
   onOpenSettings,
+  onBuildDerived,
   onAddGap,
   onBoxSelect,
   onEstimate,
@@ -132,6 +134,7 @@ export default function TopToolbar({
           onChangeData={onChangeData}
           onReloadGaps={onReloadGaps}
           onOpenSettings={onOpenSettings}
+          onBuildDerived={onBuildDerived}
           onAddGap={onAddGap}
           onBoxSelect={onBoxSelect}
           onEstimate={onEstimate}

@@ -6,6 +6,8 @@ interface Props {
   onChangeData: () => void
   onReloadGaps: () => void
   onOpenSettings: () => void
+  /** 生成高度图 / 林地边界（换园区必做） */
+  onBuildDerived: () => void
   onAddGap: () => void
   onBoxSelect: () => void
   onEstimate: () => void
@@ -30,6 +32,7 @@ export default function MoreMenu({
   onChangeData,
   onReloadGaps,
   onOpenSettings,
+  onBuildDerived,
   onAddGap,
   onBoxSelect,
   onEstimate,
@@ -91,6 +94,11 @@ export default function MoreMenu({
           <div className="mm-group">检测</div>
           <button role="menuitem" onClick={run(onOpenSettings)}>
             检测参数（进程数 / 密度 / 树龄档位）…
+          </button>
+          {/* 放在"检测"组而不是"数据"组：它产出的是检测的**输入**，
+              用户的心智是"我要准备检测用的东西" */}
+          <button role="menuitem" onClick={run(onBuildDerived)}>
+            生成高度图与林地边界…
           </button>
 
           <div className="mm-group">复核</div>

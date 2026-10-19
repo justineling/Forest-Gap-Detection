@@ -309,6 +309,83 @@ export async function onSidecarLog(cb: (line: string) => void): Promise<() => vo
 }
 
 // ============================================================================
+//  「生成高度图 / 林地边界」（等价于命令行跑 build_chm.py + build_forest_mask.py）
+// ---------------------------------------------------------------------------
+//  为什么放进界面：换园区时这两个文件必须重算。命令行对现场用户不可用
+//  （不知道 .venv、不知道 --dsm 该指哪），结果就是"换个园区只能出降级结果，
+//  而且界面不报错" —— 这是最坏的一种失败。
+// ============================================================================
+
+/** 生成派生数据需要的输入（路径可相对，Rust 侧会补成绝对） */
+export interface DerivedParams {
+  input: string
+  dsm?: string
+  segment?: string
+  tree_info?: string
+  out_chm?: string
+  out_mask?: string
+}
+
+/** 与 preflightDetect 同构：items 里有 error 就不能开始 */
+export async function preflightDerived(
+  params: DerivedParams,
+): Promise<PreflightResult> {
+  if (!isTauri()) {
+    return {
+      ok: true,
+      items: [
+        {
+          key: 'browser',
+          label: '浏览器模式',
+          path: '',
+          status: 'info',
+          detail: '浏览器里不能检查本地文件；桌面应用会逐项检查',
+        },
+      ],
+      resolved: params as unknown as Record<string, unknown>,
+    }
+  }
+  return tauriInvoke<PreflightResult>('preflight_derived', { params })
+}
+
+/** 启动生成。返回 "started"，进度靠 onDerivedEvent 收 */
+export async function runBuildDerived(
+  params: DerivedParams,
+): Promise<{ ok: boolean; message: string }> {
+  if (!isTauri()) {
+    return { ok: false, message: '浏览器模式不能生成 —— 请用「启动桌面端.bat」打开桌面应用' }
+  }
+  try {
+    const r = await tauriInvoke<string>('run_build_derived', { params })
+    return { ok: r === 'started', message: r }
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * 订阅生成事件。
+ *
+ * ⚠️ 与检测**分开两个通道**（`derived-event` vs `sidecar-event`）：
+ *    两个进度条语义不同，混在一个通道里会出现"检测进度条在跳，但你在做别的事"。
+ */
+export async function onDerivedEvent(
+  cb: (ev: Record<string, unknown>) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const un = await listen<Record<string, unknown>>('derived-event', (e) => cb(e.payload))
+  return un
+}
+
+export async function onDerivedLog(cb: (line: string) => void): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const un = await listen<string>('derived-log', (e) => cb(e.payload))
+  return un
+}
+
+// ============================================================================
 //  首次使用引导：选影像 / 选结果
 //  ---------------------------------------------------------------------------
 //  为什么需要这一层：打包版没有"仓库根"，用户不可能知道要把 3.5 GB 的影像

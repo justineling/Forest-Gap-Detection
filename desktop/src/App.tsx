@@ -11,6 +11,7 @@ import NextStepCard from './components/NextStepCard'
 import HelpDialog from './components/HelpDialog'
 import { HEADER_HELP } from './lib/helpContent'
 import PreflightDialog from './components/PreflightDialog'
+import DerivedDialog from './components/DerivedDialog'
 import ExportDialog from './components/ExportDialog'
 import { parseKmlOrGeoJsonRoi } from './lib/roiImport'
 import { useAppStore } from './store/useAppStore'
@@ -63,6 +64,8 @@ export default function App() {
   const [starting, setStarting] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  /** 生成高度图 / 林地边界 */
+  const [showDerived, setShowDerived] = useState(false)
   /** 递增即让右面板切到「复核」标签（步进器点第 4 步时用） */
   const [reviewPeek, setReviewPeek] = useState(0)
   /** 浏览器模式下 `?help=1` 直接预览帮助弹窗（截图 / 回归用，不进打包逻辑） */
@@ -298,6 +301,8 @@ export default function App() {
           } as never,
         })
       }
+      // 浏览器模式下 `?derived=1` 预览「生成高度图」对话框（截图 / 回归用）
+      if (!isTauri() && qs.has('derived')) setShowDerived(true)
       // 浏览器模式下 `?help=1` 预览帮助弹窗（截图 / 回归用）
       if (!isTauri() && qs.has('help')) setDemoHelp(true)
       // 浏览器模式下 `?gapsError=1` 预览"结果文件没找到"的卡片态（截图 / 回归用）
@@ -675,6 +680,7 @@ export default function App() {
             onChangeData={() => setWizard(appStatus ?? ({} as AppStatus))}
             onReloadGaps={() => void loadGaps()}
             onOpenSettings={() => setShowSettings(true)}
+            onBuildDerived={() => setShowDerived(true)}
             onAddGap={() => setDrawIntent('add_gap')}
             onBoxSelect={() => setDrawIntent('box_select')}
             onEstimate={runEstimate}
@@ -739,6 +745,16 @@ export default function App() {
         </ErrorBoundary>
       )}
 
+      {/* 生成高度图 / 林地边界 */}
+      {showDerived && (
+        <ErrorBoundary area="生成派生数据">
+          <DerivedDialog
+            imagePath={meta?.source ?? ''}
+            onClose={() => setShowDerived(false)}
+          />
+        </ErrorBoundary>
+      )}
+
       {/* 检测前预检：只在有问题时出现 */}
       {preflight && (
         <PreflightDialog
@@ -748,6 +764,10 @@ export default function App() {
           onOpenData={() => {
             setPreflight(null)
             setWizard(appStatus ?? ({} as AppStatus))
+          }}
+          onBuildDerived={() => {
+            setPreflight(null)
+            setShowDerived(true)
           }}
           onProceed={() => {
             const withRoi = detectParams.useRoi && !!roi
