@@ -58,6 +58,8 @@ export default function App() {
    * 1,762 个要素躺在磁盘上，界面却说"没有空地"。
    */
   const [gapsError, setGapsError] = useState<string | null>(null)
+  /** 「结果按旧输入算的」提示（后端比对 inputs_snapshot 得出，状态栏常驻） */
+  const [staleWarnings, setStaleWarnings] = useState<string[]>([])
   /** 非 null 时显示预检结果对话框 */
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
   /** 正在预检 / 启动（按钮显示"检查中…"） */
@@ -151,6 +153,14 @@ export default function App() {
           return
         }
         setGapsError(null)
+        // 过期提示：结果是用旧的高度图/分割图算的。
+        // 只 pushLog 不够 —— 用户不会盯着日志。所以同时存进 store，由状态栏常驻显示。
+        if (fc.stale_warnings?.length) {
+          setStaleWarnings(fc.stale_warnings)
+          pushLog(`⚠️ ${fc.stale_warnings.join('；')}`)
+        } else {
+          setStaleWarnings([])
+        }
         if (opts?.rerun) {
           applyRerun(feats, 'keep_manual')
           setLoadingGaps(false)
@@ -728,7 +738,7 @@ export default function App() {
         </ErrorBoundary>
       </main>
       <ErrorBoundary area="状态栏">
-        <StatusBar />
+        <StatusBar staleWarnings={staleWarnings} />
       </ErrorBoundary>
 
       {demoHelp && <HelpDialog doc={HEADER_HELP} onClose={() => setDemoHelp(false)} />}

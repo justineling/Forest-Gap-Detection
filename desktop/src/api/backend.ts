@@ -69,6 +69,8 @@ interface RawResult {
   summary?: Record<string, unknown>
   /** 后端读不到结果文件时给的人类说明（`features` 为空时才有意义） */
   error?: string
+  /** 「结果按旧输入算的」提示（后端比对 inputs_snapshot 得出） */
+  stale_warnings?: string[]
 }
 
 /**
@@ -89,14 +91,19 @@ interface RawResult {
 export function normalizeCollection(raw: RawResult | null | undefined): GapCollection {
   const grid = raw?.planting_grid
   const error = typeof raw?.error === 'string' && raw.error ? raw.error : undefined
+  // 过期提示也要原样带出去 —— 它和 error 一样属于"数字可能不对"的信号，
+  // 丢了用户就完全看不到（这正是 error 曾经被丢掉的同一类问题）
+  const stale = Array.isArray(raw?.stale_warnings) && raw.stale_warnings.length > 0
+    ? (raw.stale_warnings as string[])
+    : undefined
   if (raw?.features?.length) {
-    return { type: 'FeatureCollection', features: raw.features, planting_grid: grid, error }
+    return { type: 'FeatureCollection', features: raw.features, planting_grid: grid, error, stale_warnings: stale }
   }
   const features: GapCollection['features'] = []
   for (const b of raw?.blocks ?? []) {
     for (const g of b.gaps ?? []) features.push(g)
   }
-  return { type: 'FeatureCollection', features, planting_grid: grid, error }
+  return { type: 'FeatureCollection', features, planting_grid: grid, error, stale_warnings: stale }
 }
 
 /** 读取最近一次检测结果（真实数据，来自 output/*.geojson） */

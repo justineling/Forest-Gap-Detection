@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useAppStore } from '../store/useAppStore'
 
-export default function StatusBar() {
+export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: string[] }) {
   const logs = useAppStore((s) => s.logs)
   const backendOnline = useAppStore((s) => s.backendOnline)
   const manualAdded = useAppStore((s) => s.manualAdded)
@@ -18,6 +18,16 @@ export default function StatusBar() {
 
   return (
     <footer className="statusbar">
+      {/* 过期提示放最前面：它比"影像已就绪"重要得多 —— 后者只是状态，
+          前者意味着"你现在看到的数字可能不对"。用整条橙带而不是一个小图标，
+          是因为这条信息会被忽略就等于没有。 */}
+      {staleWarnings.length > 0 && (
+        <div className="sb-stale" title={staleWarnings.join('\n')}>
+          <b>⚠️ 结果可能已过期</b>
+          <span>{staleWarnings[0]}</span>
+          {staleWarnings.length > 1 && <span className="dim">（另有 {staleWarnings.length - 1} 项）</span>}
+        </div>
+      )}
       <div className="sb-left">
         <span className={backendOnline ? 'dot ok' : 'dot bad'} />
         <span className="dim">

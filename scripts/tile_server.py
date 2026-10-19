@@ -138,6 +138,62 @@ def _file_sig(p: Path) -> tuple[str, int, int] | None:
     return (str(p), st.st_mtime_ns, st.st_size)
 
 
+def _stale_warnings(obj: dict) -> list[str]:
+    """检查「这份结果是不是用旧的高度图 / 分割图算的」。
+
+    ## 为什么需要
+
+    换园区时的正常流程是：生成高度图（40 秒）→ 重跑检测（6 分钟）→ 导出。
+    但用户很容易漏掉第二步 —— 生成完直接去导出了。
+
+    这时报告里的株数是**按旧 CHM 算的**，而界面上：
+    · 数字自洽（块数、面积、株数都对应同一份旧结果）
+    · 报告完整（没有缺字段、没有空值）
+    · 没有任何报错
+
+    只有到现场才发现坑挖错了地方。这类"看起来正常"的错是最贵的。
+
+    ## 判据
+
+    结果里存了 `inputs_snapshot`（每个输入文件的 mtime + size）。
+    如果磁盘上当前文件的 mtime **比结果里记的新**，说明换过了。
+
+    只报不拦 —— 用户可能是故意的（比如只想看旧结果）。
+    """
+    snap = obj.get("inputs_snapshot")
+    if not isinstance(snap, dict):
+        # 老结果没有这份快照。**不能**当成"过期"（会产生假警报），
+        # 但也说不了"没问题" —— 所以静默跳过。
+        return []
+
+    names = {
+        "chm": "高度图（chm.tif）",
+        "segment": "语义分割（segment.tif）",
+        "forest_mask": "林地边界（forest-mask）",
+        "image": "正射影像",
+    }
+    out: list[str] = []
+    for key, label in names.items():
+        rec = snap.get(key)
+        if not isinstance(rec, dict):
+            continue
+        p = Path(str(rec.get("path") or ""))
+        if not p.exists():
+            continue
+        old_mtime = int(rec.get("mtime") or 0)
+        try:
+            now_mtime = int(p.stat().st_mtime)
+        except OSError:
+            continue
+        # 留 2 秒容差：文件系统时间戳粒度 + 复制时的 mtime 抖动
+        if now_mtime - old_mtime > 2:
+            out.append(
+                f"{label} 在本次检测之后更新过 —— 当前结果是按旧版本算的，"
+                f"建议重新运行检测"
+            )
+    return out
+
+
 def _mtime_ns(p: Path) -> int:
     """文件 mtime（纳秒）；读不到当 0（= 最旧），不抛错。"""
     try:
@@ -436,7 +492,12 @@ class TileServer:
                 grid = obj.get("planting_grid")
                 if isinstance(grid, dict) and "anchor_lon" not in grid:
                     obj["planting_grid"] = _enrich_grid_anchor(obj, grid)
-                    raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+                # 「结果是否已过期」：拿结果里记的 inputs_snapshot 对比磁盘现状。
+                # 前端据此在状态栏挂一条警示 —— 详见 _stale_warnings 的注释。
+                stale = _stale_warnings(obj)
+                if stale:
+                    obj["stale_warnings"] = stale
+                raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
             except Exception as e:  # 结果格式异常时不要拖垮端点，原样返回
                 print(f"  ⚠️ planting_grid 锚点补算失败（原样返回）：{e}", file=sys.stderr)
             self._gaps_cache = raw
