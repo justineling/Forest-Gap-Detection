@@ -2148,3 +2148,104 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ============================================================================
+   复核清单：模式切换（复核 / 验证集）+ 键盘流提示
+   ============================================================================ */
+.rv-mode {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.rv-mode-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rv-mode-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.rv-mode-btn.active {
+  background: rgba(61, 220, 151, 0.13);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.rv-mode-n {
+  font-size: 10.5px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 键盘提示：让用户知道有快捷键，而不是去猜 */
+.rv-kbd {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rv-kbd-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.rv-kbd-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.rv-kbd kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  min-width: 17px;
+  text-align: center;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #232e33;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.rv-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.rv-flash {
+  font-size: 11.5px;
+  color: var(--accent);
+  margin-left: auto;
+}
+
+/* 验证集列表：已标的块淡化 + 显示真值标签 */
+.rv-item.done .rv-cls {
+  color: #6f7f88;
+}
+.rv-gt {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #232e33;
+  color: #6f7f88;
+  white-space: nowrap;
+}
+.rv-gt.set {
+  background: rgba(61, 220, 151, 0.16);
+  color: var(--accent);
+}

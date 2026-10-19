@@ -18,6 +18,7 @@ import { centroid, polygonAreaM2 } from '../lib/geometry'
 import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeEdits'
 import { CHM_PRESETS, type ChmPreset } from '../lib/chm'
 import type { ReviewKind } from '../lib/selection'
+import type { GtLabel, GtRecord, GtSample } from '../lib/validation'
 
 const MAX_LOGS = 300
 
@@ -65,6 +66,55 @@ function saveOutputDir(p: string): void {
     else localStorage.removeItem(OUTPUT_DIR_KEY)
   } catch {
     /* 隐私模式：只在本次会话有效 */
+  }
+}
+
+// —— 验证集标注持久化 ——
+//
+// 为什么必须持久化：标 150 块要十几分钟。中途关软件、切换园区、
+// 甚至只是刷新一下浏览器，进度就没了 —— 那用户根本不肯开始标。
+// 按 scope（影像名）隔离：换园区就是另一套题，不能混。
+const VALIDATION_KEY = (scope: string) => `fgd.validation.${scope || 'default'}`
+
+interface ValidationBlob {
+  samples: GtSample[]
+  records: Record<string, GtRecord>
+  seed: number
+}
+
+function loadValidation(scope: string): ValidationBlob | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(VALIDATION_KEY(scope))
+    if (!raw) return null
+    const o = JSON.parse(raw) as Partial<ValidationBlob>
+    if (!Array.isArray(o.samples) || typeof o.records !== 'object' || !o.records) return null
+    return {
+      samples: o.samples as GtSample[],
+      records: o.records as Record<string, GtRecord>,
+      seed: typeof o.seed === 'number' ? o.seed : 42,
+    }
+  } catch {
+    // 存的东西坏了：当成没有（重下一套题总比白屏好）
+    return null
+  }
+}
+
+function saveValidation(scope: string, blob: ValidationBlob): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(VALIDATION_KEY(scope), JSON.stringify(blob))
+  } catch {
+    /* 隐私模式 / 配额满：只在本次会话有效 */
+  }
+}
+
+function clearValidation(scope: string): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.removeItem(VALIDATION_KEY(scope))
+  } catch {
+    /* 忽略 */
   }
 }
 
@@ -168,6 +218,18 @@ export interface AppState {
   workflow: WorkflowFlags
   /** 复核清单的筛选条件（切标签不丢） */
   reviewFilter: ReviewFilter
+  /**
+   * 验证集标注状态。
+   *
+   * `scope` 是隔离键（影像文件名）：换园区 = 另一套 150 块，不能混。
+   * `samples` 只在首次进入「验证集」模式时生成（固定 seed，可复现）。
+   */
+  validation: {
+    scope: string
+    samples: GtSample[]
+    records: Record<string, GtRecord>
+    seed: number
+  }
 
   // —— 数据 ——
   gaps: GapFeature[]
@@ -235,6 +297,14 @@ export interface AppState {
   markWorkflow: (patch: Partial<WorkflowFlags>) => void
   /** 改复核筛选条件（一次传齐，避免中间态出现"预设和自定义同时生效"） */
   setReviewFilter: (patch: Partial<ReviewFilter>) => void
+  /** 载入/生成验证集（已有本地进度则复用，不重抽） */
+  initValidation: (scope: string, samples: GtSample[], seed: number) => void
+  /** 标一块的真值（1/2/3/4） */
+  setGt: (gapId: string, gt: GtLabel) => void
+  /** 认同算法当前判定（Space） */
+  confirmGt: (gapId: string) => void
+  /** 清空本 scope 的标注进度（重来一套） */
+  resetValidation: () => void
   setGaps: (features: GapFeature[], plantingGrid?: PlantingGrid | null) => void
   toggleClass: (cls: GapClass) => void
   setGroupVisible: (group: PriorityGroup, visible: boolean) => void
@@ -368,12 +438,61 @@ export const useAppStore = create<AppState>()((set, get) => ({
   outputDir: loadOutputDir(),
   workflow: { ...WORKFLOW_INIT },
   reviewFilter: { ...REVIEW_FILTER_INIT },
+  validation: { scope: '', samples: [], records: {}, seed: 42 },
 
   markWorkflow: (patch) =>
     set((s) => ({ workflow: { ...s.workflow, ...patch } })),
 
   setReviewFilter: (patch) =>
     set((s) => ({ reviewFilter: { ...s.reviewFilter, ...patch } })),
+
+  initValidation: (scope, samples, seed) =>
+    set(() => {
+      // 换 scope 时先看本地有没有进度 —— 有就复用（"上次标到第 80 块"要能接着来）
+      const saved = loadValidation(scope)
+      if (saved && saved.samples.length === samples.length) {
+        // 长度相同也未必是同一套题（换了 seed 或换了结果文件），
+        // 所以用 gap_id 集合比对；不一致就重抽，否则记录会挂在错的块上
+        const a = new Set(saved.samples.map((x) => x.gap_id))
+        const same = samples.every((x) => a.has(x.gap_id))
+        if (same) {
+          return { validation: { scope, samples: saved.samples, records: saved.records, seed: saved.seed } }
+        }
+      }
+      const blob: ValidationBlob = { samples, records: {}, seed }
+      saveValidation(scope, blob)
+      return { validation: { scope, samples, records: {}, seed } }
+    }),
+
+  setGt: (gapId, gt) =>
+    set((s) => {
+      const v = s.validation
+      if (!v.scope) return {}
+      const records = {
+        ...v.records,
+        [gapId]: { gap_id: gapId, gt, confirmed: false, updated_at: Date.now() },
+      }
+      saveValidation(v.scope, { samples: v.samples, records, seed: v.seed })
+      return { validation: { ...v, records } }
+    }),
+
+  confirmGt: (gapId) =>
+    set((s) => {
+      const v = s.validation
+      if (!v.scope) return {}
+      const records = {
+        ...v.records,
+        [gapId]: { gap_id: gapId, gt: null, confirmed: true, updated_at: Date.now() },
+      }
+      saveValidation(v.scope, { samples: v.samples, records, seed: v.seed })
+      return { validation: { ...v, records } }
+    }),
+
+  resetValidation: () =>
+    set((s) => {
+      if (s.validation.scope) clearValidation(s.validation.scope)
+      return { validation: { ...s.validation, records: {} } }
+    }),
 
   setBackend: ({ online, meta, error }) =>
     set((s) => ({
@@ -406,6 +525,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       // 换数据后重置筛选：上一批设的"≥1000"可能让新结果一条都不剩，
       // 用户会以为检测没出东西
       reviewFilter: { ...REVIEW_FILTER_INIT },
+      // 验证集也要清空内存里的（磁盘进度按 scope 保留，回到同一园区还能续标）
+      validation: { scope: '', samples: [], records: {}, seed: 42 },
       logs: appendLog(
         s.logs,
         `载入 ${features.length} 个多边形` +
