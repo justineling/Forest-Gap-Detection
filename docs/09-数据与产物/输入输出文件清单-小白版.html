@@ -103,32 +103,53 @@
 <p>就是无人机拍的那张大图（<code>.tif</code>），4 GB 左右。没有它什么也做不了。</p>
 <p>在软件第一次打开时选一次，以后它会记住。</p>
 
-<h3>② 三个配料 <span class="rec">强烈建议</span></h3>
+<h3>② 两个配料 <span class="rec">强烈建议</span></h3>
 
-<p>这三个不是必须，但<b>少了会算错</b>，而且错得「看不出来」——界面照常出结果，只是数字偏了。</p>
+<p>这两个也不是必须，但<b>少了会算错</b>，而且错得「看不出来」—— 界面照常出结果，只是数字偏了。</p>
 
 <table>
   <thead><tr><th style="width:30%">配料</th><th>用大白话说</th><th style="width:30%">少了会怎样</th></tr></thead>
   <tbody>
-    <tr>
-      <td><b>高度图</b><br><code>chm.tif</code></td>
-      <td>每个位置「地面往上有多高」。软件靠它判断「这棵到底是不是树」。</td>
-      <td>水塘只能认出 <b>2 块</b>（本该 21 块）<br>天然林一块都没剔掉</td>
-    </tr>
     <tr>
       <td><b>识别图</b><br><code>segment.tif</code></td>
       <td>大疆软件已经帮你标好的「哪里是水、哪里是树」。</td>
       <td>水塘只能认出 <b>8%</b>（本该 98%）</td>
     </tr>
     <tr>
-      <td><b>林地边界</b><br><code>forest-mask*.geojson</code></td>
-      <td>哪一片是「还没开发的林子」，不算你的种植区。</td>
-      <td>天然林被当成空地<br><b>多出 221 个不该挖的坑</b></td>
+      <td><b>高程图</b><br><code>dsm.tif</code></td>
+      <td>每个位置「地面往上有多高」。软件靠它算树有多高，再判断「这棵到底是不是树」。</td>
+      <td>水塘只能认出 <b>2 块</b>（本该 21 块）<br>天然林一块都没剔掉</td>
     </tr>
   </tbody>
 </table>
 
-<h3>③ 可选：圈个范围 <span style="color:#8b9aa3;font-weight:700">可选</span></h3>
+<h3>③ 另外两样，它自己会算 <span class="ok">不用准备</span></h3>
+
+<p>以前这里写着「还要准备高度图和林地边界」—— 那是错的，已经更正。</p>
+
+<table>
+  <thead><tr><th style="width:30%">它自己算的</th><th>怎么算出来的</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>高度图</b><br><code>chm.tif</code></td>
+      <td>拿高程图减去「地面有多高」，得到每棵树的高度。</td>
+    </tr>
+    <tr>
+      <td><b>林地边界</b><br><code>forest-mask.geojson</code></td>
+      <td>看哪一片树太稀（不像种植园），就划成「非种植区」，不让它算进补种。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="card warn">
+  <h4>⚠️ 但这两步现在还只能命令行跑</h4>
+  <p style="margin:0">
+  界面里<b>还没有「生成高度图 / 林地边界」的按钮</b>。换园区时需要跑一次命令（各 1~4 分钟），
+  或者找技术人员帮你跑。生成完放进数据目录，之后的检测就自动用上。
+  </p>
+</div>
+
+<h3>④ 可选：圈个范围 <span style="color:#8b9aa3;font-weight:700">可选</span></h3>
 <p>
 有明确的作业区块时，可以画个框或导入 KML。<b>不圈也行</b>，只是慢一倍：
 不圈约 6 分钟，圈了约 3 分钟。
@@ -140,6 +161,32 @@
   最省事的办法：<b>和航拍图放在同一个文件夹里</b>，软件会自己去找。<br>
   或者放进这个目录：<code>%LOCALAPPDATA%\fgd\data\output\</code><br>
   <span style="color:#8b9aa3">（把这个路径复制到文件管理器地址栏回车就能打开）</span>
+  </p>
+</div>
+
+<h3>这个文件夹里还有什么</h3>
+
+<p>大疆导出的整个文件夹里，软件真正会用的只有 <b>4 个</b>：影像、识别图、高程图、树心表。
+其余都是它的伴生文件或日志。</p>
+
+<table>
+  <thead><tr><th style="width:44%">文件</th><th style="width:16%">体积</th><th>要不要管</th></tr></thead>
+  <tbody>
+    <tr><td><code>WGR17-002.tif</code></td><td>4.7 GB</td><td class="ok">✅ 就是航拍图</td></tr>
+    <tr><td><code>segment.tif</code></td><td>2.0 MB</td><td class="ok">✅ 识别图</td></tr>
+    <tr><td><code>dsm.tif</code></td><td>890 MB</td><td class="ok">✅ 高程图</td></tr>
+    <tr><td><code>tree_info.json</code></td><td>1.3 MB</td><td class="ok">✅ 树心表（算林地边界用）</td></tr>
+    <tr><td><code>gsddsm.tif</code></td><td>8.9 MB</td><td class="rec">⚠️ 压缩版高程，精度不够</td></tr>
+    <tr><td><code>WGR17.tif.ovr</code></td><td>1.08 GB</td><td class="opt">❌ 旧文件名的缩略图，对不上，可忽略</td></tr>
+    <tr><td><code>.tfw</code> / <code>.prj</code> / <code>.aux.xml</code></td><td>小</td><td class="opt">⚠️ 坐标信息，别删</td></tr>
+    <tr><td><code>task.json</code> / <code>SDK_Log.txt</code> / <code>2dPipeline_done</code></td><td>小</td><td class="opt">❌ 大疆的日志，没用</td></tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <h4>这个文件夹里没有 geojson</h4>
+  <p style="margin:0">
+  那些「空地结果」是软件跑完检测**自己写出来**的，不是航拍自带的。所以第一次用一定得先检测一遍。
   </p>
 </div>
 
