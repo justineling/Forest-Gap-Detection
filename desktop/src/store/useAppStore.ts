@@ -17,6 +17,7 @@ import { estimate, DEFAULT_GRID } from '../lib/estimate'
 import { centroid, polygonAreaM2 } from '../lib/geometry'
 import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeEdits'
 import { CHM_PRESETS, type ChmPreset } from '../lib/chm'
+import type { ReviewKind } from '../lib/selection'
 
 const MAX_LOGS = 300
 
@@ -110,6 +111,22 @@ const IDLE_DETECT: DetectRun = {
   finished: null,
 }
 
+/**
+ * 复核清单的筛选条件。
+ *
+ * 为什么放 store 而不是组件内 state：右栏切到「属性」标签时 ReviewList 会被卸载，
+ * 组件内 state 直接丢失 —— 用户筛好「≥500 + 待复核」去改了一块，回来条件全没了。
+ */
+export interface ReviewFilter {
+  kind: ReviewKind
+  /** 生效中的最小面积（0 = 不限） */
+  minArea: number
+  /** 自定义输入框的原始文本（空串 = 用上面的预设档位） */
+  customArea: string
+}
+
+const REVIEW_FILTER_INIT: ReviewFilter = { kind: 'all', minArea: 0, customArea: '' }
+
 export interface WorkflowFlags {
   /** 载入过结果（即使随后被用户删光） */
   loaded: boolean
@@ -149,6 +166,8 @@ export interface AppState {
    * 界面该说"这是上次的结果，可以直接复核"，而不是"检测已完成"。
    */
   workflow: WorkflowFlags
+  /** 复核清单的筛选条件（切标签不丢） */
+  reviewFilter: ReviewFilter
 
   // —— 数据 ——
   gaps: GapFeature[]
@@ -214,6 +233,8 @@ export interface AppState {
   setBackend: (p: { online: boolean; meta?: RasterMeta; error?: string }) => void
   /** 标记流程进度（detected / reviewed / exported） */
   markWorkflow: (patch: Partial<WorkflowFlags>) => void
+  /** 改复核筛选条件（一次传齐，避免中间态出现"预设和自定义同时生效"） */
+  setReviewFilter: (patch: Partial<ReviewFilter>) => void
   setGaps: (features: GapFeature[], plantingGrid?: PlantingGrid | null) => void
   toggleClass: (cls: GapClass) => void
   setGroupVisible: (group: PriorityGroup, visible: boolean) => void
@@ -346,9 +367,13 @@ export const useAppStore = create<AppState>()((set, get) => ({
   detect: { ...IDLE_DETECT },
   outputDir: loadOutputDir(),
   workflow: { ...WORKFLOW_INIT },
+  reviewFilter: { ...REVIEW_FILTER_INIT },
 
   markWorkflow: (patch) =>
     set((s) => ({ workflow: { ...s.workflow, ...patch } })),
+
+  setReviewFilter: (patch) =>
+    set((s) => ({ reviewFilter: { ...s.reviewFilter, ...patch } })),
 
   setBackend: ({ online, meta, error }) =>
     set((s) => ({
@@ -378,6 +403,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
       //（它是第 3 步算完成的依据；detected 必须留 false，
       // 否则首次载入磁盘结果时界面会谎称"刚跑完检测"）。
       workflow: { ...WORKFLOW_INIT, loaded: features.length > 0 },
+      // 换数据后重置筛选：上一批设的"≥1000"可能让新结果一条都不剩，
+      // 用户会以为检测没出东西
+      reviewFilter: { ...REVIEW_FILTER_INIT },
       logs: appendLog(
         s.logs,
         `载入 ${features.length} 个多边形` +

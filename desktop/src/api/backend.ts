@@ -363,14 +363,31 @@ export type PickKind = 'image' | 'gaps'
  * 打开系统文件选择框。
  * 浏览器模式返回 null（前端会提示"请在桌面应用里操作"）。
  */
-export async function pickFile(kind: PickKind): Promise<string | null> {
+export async function pickFile(
+  kind: PickKind,
+  opts?: {
+    /**
+     * 对话框的起始目录。
+     *
+     * 为什么需要：用户选「检测结果」时，结果文件**一定**在数据根的 `output/` 下
+     * （检测程序就写在那儿）。默认从"上次用过的目录"打开的话，用户经常落在
+     * 影像所在的 `drone data/`，还得手动往上翻两级再进 output —— 纯属添堵。
+     */
+    defaultPath?: string
+  },
+): Promise<string | null> {
   if (!isTauri()) return null
   const { open } = await import('@tauri-apps/plugin-dialog')
   const filters =
     kind === 'image'
       ? [{ name: '正射影像 (GeoTIFF)', extensions: ['tif', 'tiff'] }]
       : [{ name: '检测结果 (GeoJSON)', extensions: ['geojson', 'json'] }]
-  const picked = await open({ multiple: false, directory: false, filters })
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters,
+    ...(opts?.defaultPath ? { defaultPath: opts.defaultPath } : {}),
+  })
   if (typeof picked === 'string') return picked
   // 某些平台返回数组
   if (Array.isArray(picked) && typeof picked[0] === 'string') return picked[0]

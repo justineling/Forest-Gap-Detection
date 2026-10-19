@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { CLASS_STYLES } from '../lib/classes'
 import {
@@ -33,8 +32,32 @@ export default function ReviewList() {
   const focusGap = useAppStore((s) => s.focusGap)
   const ensureVisible = useAppStore((s) => s.ensureVisible)
   const selectedIds = useAppStore((s) => s.selectedIds)
-  const [kind, setKind] = useState<ReviewKind>('all')
-  const [minArea, setMinArea] = useState(0)
+  // 筛选条件放 store：切到「属性」标签时本组件会被卸载，组件内 state 会丢
+  const { kind, minArea, customArea } = useAppStore((s) => s.reviewFilter)
+  const setReviewFilter = useAppStore((s) => s.setReviewFilter)
+  /** 自定义框有内容时，预设档位不高亮（否则会同时亮两个，用户不知道哪个生效） */
+  const usingCustom = customArea.trim() !== ''
+
+  /**
+   * 自定义最小面积。
+   *
+   * 防呆策略：**非法输入只留在框里，不改生效值**。
+   * 如果非法就重置成 0，用户输 "5" 想输 "500" 时中间那一瞬间会把列表刷成全量，
+   * 视觉上像"筛选失效了"。保留旧值让他继续输完更自然。
+   */
+  const onCustomArea = (raw: string) => {
+    const t = raw.trim()
+    if (t === '') {
+      setReviewFilter({ customArea: '', minArea: 0 })
+      return
+    }
+    const n = Number(t)
+    if (!Number.isFinite(n) || n < 0) {
+      setReviewFilter({ customArea: raw })
+      return
+    }
+    setReviewFilter({ customArea: raw, minArea: n })
+  }
 
   const counts = reviewCounts(gaps)
   const list = filterReviewGaps(gaps, { kind, minArea })
@@ -45,7 +68,9 @@ export default function ReviewList() {
     return (
       <div className="empty">
         <p>还没有检测结果。</p>
-        <p className="dim">点「② 开始检测」跑一遍，或「载入检测结果」读已有文件。</p>
+        <p className="dim">
+          点地图右下角卡片的「开始检测」跑一遍，或「⋯ 更多 → 重新载入检测结果」读已有文件。
+        </p>
       </div>
     )
   }
@@ -57,7 +82,7 @@ export default function ReviewList() {
           <button
             key={k}
             className={kind === k ? 'chip active' : 'chip'}
-            onClick={() => setKind(k)}
+            onClick={() => setReviewFilter({ kind: k })}
             title={
               k === 'uncertain'
                 ? '证据不足、需要人工确认的块 —— 优先清这些'
@@ -80,14 +105,28 @@ export default function ReviewList() {
           {AREAS.map((a) => (
             <button
               key={a.v}
-              className={minArea === a.v ? 'seg-btn active' : 'seg-btn'}
-              onClick={() => setMinArea(a.v)}
+              className={!usingCustom && minArea === a.v ? 'seg-btn active' : 'seg-btn'}
+              onClick={() => setReviewFilter({ minArea: a.v, customArea: '' })}
+              title={a.v === 0 ? '不按面积过滤' : `只显示 ≥ ${a.v} m² 的块`}
             >
               {a.label}
             </button>
           ))}
         </div>
-        <span className="dim mono">降序</span>
+        {/* 自定义面积：档位是"常见值"，但地块差异大，必须允许任意值 */}
+        <input
+          type="number"
+          min={0}
+          step={50}
+          inputMode="numeric"
+          className={usingCustom ? 'rv-area-input active' : 'rv-area-input'}
+          placeholder="自定义"
+          value={customArea}
+          onChange={(e) => onCustomArea(e.target.value)}
+          title="输入任意最小面积（m²），输入即生效"
+          aria-label="自定义最小面积"
+        />
+        <span className="dim mono">m²</span>
       </div>
 
       {list.length === 0 ? (
