@@ -69,6 +69,11 @@ jobs:
       - name: 安装 Python 运行依赖（--help 需要 import 顶层模块）
         run: pip install numpy rasterio scipy shapely pyproj pyshp
 
+      # 文档红线：单文件自包含 / 无 Markdown 残留 / 标签平衡。
+      # 不加这层的话，"在 HTML 里写 **加粗**"这种错会一直漏（我犯了三次）。
+      - name: 文档合规检查
+        run: python scripts/check_docs.py
+
       - name: CLI --help 冒烟
         run: |
           for f in scripts/process_image.py scripts/sidecar.py scripts/tile_server.py \
