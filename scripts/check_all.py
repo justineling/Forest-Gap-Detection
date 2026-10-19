@@ -164,14 +164,19 @@ def main() -> int:
     ok, dt = run(env_cmd, ROOT / "desktop" / "src-tauri", "cargo test（32 项）")
     rec("cargo test", ok, dt)
 
-    # ---- 6. 文档合规（HTML 三条红线）----
-    print("\n[6] 文档合规")
+    # ---- 6. 过期判定（纯逻辑，秒级）----
+    print("\n[6] 结果过期判定")
+    ok, dt = run([str(PY), "scripts/test_stale.py"], ROOT, "test_stale（13 项）")
+    rec("stale", ok, dt)
+
+    # ---- 7. 文档合规（HTML 三条红线）----
+    print("\n[7] 文档合规")
     ok, dt = run([str(PY), "scripts/check_docs.py"], ROOT, "check_docs（6 个 HTML）")
     rec("docs", ok, dt)
 
     # ---- 7. 契约测试 ----
     if not args.fast:
-        print("\n[7] 契约测试")
+        print("\n[8] 契约测试")
         ok, dt = run([str(PY), "scripts/test_sidecar_contract.py"], ROOT,
                      "test_sidecar_contract（95 项）")
         rec("contract", ok, dt)

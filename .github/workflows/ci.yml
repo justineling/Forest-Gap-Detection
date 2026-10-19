@@ -74,6 +74,9 @@ jobs:
       - name: 文档合规检查
         run: python scripts/check_docs.py
 
+      - name: 结果过期判定（13 项）
+        run: python scripts/test_stale.py
+
       - name: CLI --help 冒烟
         run: |
           for f in scripts/process_image.py scripts/sidecar.py scripts/tile_server.py \
