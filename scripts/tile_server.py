@@ -180,6 +180,22 @@ class TileServer:
         # 每次 `/gaps` 请求都会再确认一次"它还是不是最新的"，见 _pick_gaps。
         self.gaps_explicit = gaps
         self.gaps_path = gaps
+        # 用户"指定这一刻"的时间戳（服务启动 ≈ 用户刚选了文件，因为
+        # `set_data_paths` 会重启服务）。
+        #
+        # ⚠️ 为什么需要它：以前只比"文件 mtime 谁大"。但**用户选文件的时间**
+        #    和**文件自身的时间**是两回事 —— 用户主动去回看一个旧批次时，
+        #    目录里更新的试验文件会把他选的那份静默顶掉。
+        #
+        #    危害不只是"块数变了"：`/export` 的 `planting_grid` 取自这里
+        #    （要素来自前端 POST，网格来自本文件），所以串批次时**块数完全正确、
+        #    但放样点位的网格是另一批的** —— 实测 3,691 → 3,713 点，首点坐标也漂。
+        #    交付物看着正常、坑挖错地方，且用户看不出来。这是交付级错误。
+        #
+        #    规则：只有**比"指定时刻"更新**的文件才允许接管。
+        #    · 检测完写的新结果（mtime 更新）→ 接管 ✅（自动刷新不能被弄坏）
+        #    · 仓库里历史试验残留（mtime 更旧）→ 不再抢 ✅
+        self.gaps_explicit_at_ns: int | None = int(time.time() * 1e9) if gaps is not None else None
         self.cache: OrderedDict[tuple[int, int, int], bytes] = OrderedDict()
         self.cache_size = cache_size
         self.lock = threading.Lock()
@@ -344,8 +360,19 @@ class TileServer:
             if explicit is not None and explicit.exists():
                 best = explicit
             found = discover_gaps(self.source)
-            if found is not None and (best is None or _mtime_ns(found) > _mtime_ns(best)):
-                best = found
+            # 谁有资格接管显式指定？
+            #   · 当前还没有任何候选（best is None）→ 用找到的
+            #   · 用户指定过 → 只接受"比指定时刻更新"的文件（= 指定之后新产生的）
+            #   · 用户没指定（自动发现模式）→ 按 mtime 取最新
+            if found is not None:
+                if best is None:
+                    take = True
+                elif self.gaps_explicit_at_ns is not None:
+                    take = _mtime_ns(found) > self.gaps_explicit_at_ns
+                else:
+                    take = _mtime_ns(found) > _mtime_ns(best)
+                if take:
+                    best = found
             if best != self.gaps_path:
                 self.gaps_path = best
                 # 换了文件 → 三份缓存全部作废。否则会拿旧文件的字节配新路径，
