@@ -71,6 +71,14 @@ export interface GapCollection {
   features: GapFeature[]
   /** 算法侧的种植网格模型（`/gaps` 会补上 WGS84 锚点，见 TileServer.gaps_json） */
   planting_grid?: PlantingGrid
+  /**
+   * 后端"读不到结果文件"的说明（`/gaps` 返回空集合时才会带）。
+   *
+   * ⚠️ 这个字段以前被 `normalizeCollection` 丢掉了，于是"文件没找到"和
+   * "检测结果确实是 0 块"在界面上长得一模一样 —— 用户只看到"没有空地"。
+   * 必须透传到 UI，让它能说清"是没找到文件"还是"真的没有空地"。
+   */
+  error?: string
 }
 
 /**

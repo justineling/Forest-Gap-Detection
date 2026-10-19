@@ -64,6 +64,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background
 .t-p2{background:var(--p2bg);color:var(--p2);border:1px solid rgba(59,130,246,.35)}
 .t-fx{background:var(--fixedbg);color:var(--fixed);border:1px solid rgba(16,185,129,.35)}
 .t-tauri{background:var(--tauribg);color:#d8b4fe;border:1px solid rgba(168,85,247,.4)}
+.t-open{background:rgba(148,163,184,.14);color:#cbd5e1;border:1px solid rgba(148,163,184,.42)}
 .dtitle{font-size:1.08rem;font-weight:700;color:#fff}
 .pill{background:#0f172a;border:1px solid var(--line);padding:.26rem .7rem;border-radius:8px;
   font-size:.8rem;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--accent)}
@@ -167,11 +168,11 @@ h2.sec{font-size:1.15rem;margin:2.2rem 0 .9rem;padding-bottom:.4rem;border-botto
 
 <div class="controls">
   <div class="tabs">
-    <button class="fbtn active" data-f="all">全部记录 (11)</button>
+    <button class="fbtn active" data-f="all">全部记录 (12)</button>
     <button class="fbtn" data-f="p0">🔴 P0 核心算法债 (2)</button>
     <button class="fbtn" data-f="p1">🟠 P1 泛化与精度债 (3)</button>
-    <button class="fbtn" data-f="p2">🔵 P2 语义与工程债 (2)</button>
-    <button class="fbtn" data-f="tauri">🟣 桌面端可化解 (5)</button>
+    <button class="fbtn" data-f="p2">🔵 P2 语义与工程债 (3)</button>
+    <button class="fbtn" data-f="tauri">🟣 桌面端可化解 (6)</button>
     <button class="fbtn" data-f="fixed">🟢 Stage 14 已修复 (4)</button>
   </div>
   <input type="text" class="search" id="q" placeholder="搜索关键字（CHM / 水体 / 幼树 / 相位 / 掩膜 …）" />
@@ -597,6 +598,83 @@ h2.sec{font-size:1.15rem;margin:2.2rem 0 .9rem;padding-bottom:.4rem;border-botto
           <strong>没传 elevation / elev_params</strong> → 桌面端一直在跑纯 RGB 版本；
           <code>class_totals</code> 只初始化 4 类 → road/water/office 计数被静默丢弃。均已修，
           契约测试保持 <strong>95/95</strong>。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- D8 -->
+  <div class="dcard" data-c="p2 tauri">
+    <div class="dhead">
+      <div class="dtitle-wrap">
+        <span class="tag t-p2">P2 · 工程与协同债</span>
+        <span class="tag t-tauri">桌面端可绕过</span>
+        <span class="tag t-fx">✅ 已修（94f1aab）</span>
+        <span class="dtitle">D8　显式 <code>--gaps</code> 被「更新的残留文件」顶掉 → <strong>网格串批次、点位全偏</strong></span>
+      </div>
+      <span class="pill">要素数相同也可能点位全错：3,691 → 3,713 点（块数不变）</span>
+    </div>
+    <div class="dbody">
+      <div class="ib">
+        <h4>🔍 根因与现象</h4>
+        <p><code>TileServer._pick_gaps()</code> 原规则是「<strong>取 mtime 更新的那个</strong>」：</p>
+        <p><code>best = --gaps 指定的文件（若存在）</code><br />
+          <code>found = 扫目录 + 名字含 gaps + 取最新</code><br />
+          <code>if found 且 mtime(found) &gt; mtime(best): best = found</code>　← 显式指定的被盖掉</p>
+        <p>后果：<strong>同目录里只要有一个比它更新的 <code>*gaps*.geojson</code>，
+          <code>--gaps</code> 指向的文件就永远读不到</strong>。而数据目录在真实使用中必然
+          累积多轮检测产物 —— 本仓库开发态就有 <strong>20 个</strong>匹配
+          <code>*gaps*.geojson</code> 的文件，最新的几份是只有 12 / 12 / 8 / 14 块的小样本残留。
+          而且<strong>不报任何错</strong>。</p>
+        <p>2026-10-19 冻结态校验实测：自动发现命中了一份 <strong>639 要素 / 6 类</strong>的
+          试验残留（具体文件名以脚本输出为准），导出得 <strong>19 文件 / 919 点</strong>；
+          正确结果应是 <strong>21 文件 / 3,691 点</strong>（<code>wgr17-final-gaps.geojson</code>，
+          1,726 要素 / 8 类）。</p>
+      </div>
+      <div class="ib">
+        <h4>★ 真正的危害：网格串批次（比块数不对严重得多）</h4>
+        <p><code>/export</code> 里<strong>要素</strong>来自前端 POST，但
+          <strong><code>planting_grid</code> 取自 <code>current_gaps()</code>（同一个"当前生效文件"）</strong>。
+          一旦发现到另一批文件：</p>
+        <table>
+          <thead><tr><th></th><th>要素</th><th>网格（来自另一批）</th><th>结果</th></tr></thead>
+          <tbody>
+            <tr><td>正常</td><td>1,726</td>
+              <td><code>origin_x=158.95</code> / <code>pitch=8.45</code></td><td><strong>3,691 点</strong></td></tr>
+            <tr><td>串了批</td><td>1,726</td>
+              <td><code>origin_x=159.32</code> / <code>pitch=8.35</code></td><td><strong>3,713 点</strong></td></tr>
+          </tbody>
+        </table>
+        <p>要素数一模一样、类别数一模一样、报告看起来完全正常，
+          <strong>但每一株的点位坐标都按错的网格结算了 —— 到场就挖错地方。</strong>
+          用户看不出来，这是它最危险的地方。</p>
+      </div>
+      <div class="ib tauri">
+        <h4>🛠️ 修法：区分「用户指定的时刻」与「文件的 mtime」</h4>
+        <p>关键认识：<strong>这两件事不一样</strong>，不能直接拿 mtime 比大小。
+          在 <code>__init__</code> 记一次"用户指定时刻"，之后只允许<strong>比它更新</strong>的文件接管。</p>
+        <p><code>self.gaps_explicit_at_ns = int(time.time()*1e9) if gaps is not None else None</code></p>
+        <p><code>if best is None: take = True</code><br />
+          <code>elif gaps_explicit_at_ns is not None: take = mtime(found) &gt; gaps_explicit_at_ns</code><br />
+          <code>else: take = mtime(found) &gt; mtime(best)</code></p>
+        <p>⚠️ 时间戳<strong>绝不能记在 <code>_pick_gaps()</code> 里</strong> —— 它每个请求都调，
+          那样"启动时刻"永远等于"现在"，<code>mtime &gt; now</code> 恒假 →
+          等于把「检测完自动刷新」（坑 42）彻底弄回去。</p>
+        <p><strong>不需要动 Rust</strong>：用户指定的时机恰好就是
+          <code>set_data_paths</code> 重启服务之时。</p>
+      </div>
+      <div class="ib src">
+        <h4>📌 验证证据</h4>
+        <p><strong>选择逻辑</strong>（<code>regress_gaps_selection.py</code>，秒级，全绿）：
+          同一实例依次读到 <strong>3 / 7 / 11</strong>（原地覆盖与出现更新文件都能刷新）；
+          显式文件 mtime 调旧后仍<strong>胜出</strong>（读到 1,726）；
+          启动后新写的文件能接管；名字不含 <code>gaps</code> 的 geojson 不被误选。</p>
+        <p><strong>端到端</strong>（<code>e2e_export_bundle.py</code>）：1,726 要素 / 8 类 /
+          21 文件 / <strong>3,691 点</strong> / 报告含 3,691；
+          换样本后 <code>origin_x_m</code> 跟着变成 159.3191（用户看到哪份就按哪份放样）。</p>
+        <p><strong>机制说明</strong>（<code>export_grid_ab.py</code>）：同一批 1,726 要素
+          只换网格 → 点数在 <strong>3,656 ~ 3,713</strong> 变动、首点坐标同步漂移
+          （<code>111.20402232, 1.19012672</code> → <code>111.20412956, 1.19002759</code>）。</p>
+        <p>契约测试保持 <strong>95/95</strong>。</p>
       </div>
     </div>
   </div>

@@ -2,24 +2,50 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { fetchPlantingPoints } from '../api/backend'
 import ReviewList from './ReviewList'
+import HelpDialog from './HelpDialog'
+import { RIGHT_HELP } from '../lib/helpContent'
 import { ALL_CLASSES, CLASS_STYLES } from '../lib/classes'
 import type { GapClass } from '../types'
 
-export default function RightPanel() {
+interface Props {
+  /**
+   * 递增即切到「复核」标签。
+   *
+   * 为什么用 nonce 而不是 boolean：用户可能连续点两次第 4 步，
+   * boolean 第二次不会触发 effect（值没变）。
+   */
+  peekReview?: number
+}
+
+export default function RightPanel({ peekReview = 0 }: Props) {
   const gaps = useAppStore((s) => s.gaps)
   const selectedId = useAppStore((s) => s.selectedId)
   const deleteGap = useAppStore((s) => s.deleteGap)
   const setGapClass = useAppStore((s) => s.setGapClass)
   const estimateResult = useAppStore((s) => s.estimateResult)
   const selectedIds = useAppStore((s) => s.selectedIds)
+  const [help, setHelp] = useState(false)
   // 默认停在「复核」：打开应用时右面板若显示"请点选多边形"就是一块死面板，
   // 而复核清单是进来就有用的东西。
   const [tab, setTab] = useState<'props' | 'review'>('review')
+  /** 有选中项才显示「属性」标签 —— 没选中时它是一块空面板，不如不出现 */
+  const hasSelection = selectedIds.length > 0
 
-  // 一旦选中要素，自动切回属性 —— 这是用户点它的意图
+  // 一旦选中要素，自动切到属性 —— 这是用户点它的意图
   useEffect(() => {
-    if (selectedIds.length > 0) setTab('props')
-  }, [selectedIds])
+    if (hasSelection) setTab('props')
+  }, [hasSelection])
+
+  // 选中被清空（点空白 / 删除 / Esc）→ 属性标签已经不存在了，必须切回复核，
+  // 否则会停在一个渲染不出来的空标签上（白面板）
+  useEffect(() => {
+    if (!hasSelection) setTab('review')
+  }, [hasSelection])
+
+  // 步进器点「复核」→ 切到复核清单（跳过 hasSelection 的自动切属性）
+  useEffect(() => {
+    if (peekReview > 0) setTab('review')
+  }, [peekReview])
 
   const feat = gaps.find((f) => f.properties.gap_id === selectedId)
   const est = estimateResult?.per_gap.find((r) => r.gap_id === selectedId)
@@ -27,16 +53,31 @@ export default function RightPanel() {
   return (
     <aside className="panel right">
       <div className="panel-head tabs">
-        <button className={tab === 'props' ? 'tab active' : 'tab'} onClick={() => setTab('props')}>
-          属性
-        </button>
+        {/* 顺序：复核在左（进来就用）、属性在右（选中才出现） */}
         <button className={tab === 'review' ? 'tab active' : 'tab'} onClick={() => setTab('review')}>
           复核
           <span className="tab-n">{gaps.length}</span>
         </button>
+        {hasSelection && (
+          <button
+            className={tab === 'props' ? 'tab active' : 'tab'}
+            onClick={() => setTab('props')}
+          >
+            属性
+          </button>
+        )}
         {tab === 'props' && feat && (
           <span className="mono dim tab-id">{feat.properties.gap_id}</span>
         )}
+        <button
+          type="button"
+          className="ph-help"
+          onClick={() => setHelp(true)}
+          title="复核与属性怎么用？"
+          aria-label="复核与属性说明"
+        >
+          ?
+        </button>
       </div>
 
       {tab === 'review' && <ReviewList />}
@@ -178,6 +219,8 @@ export default function RightPanel() {
           <PointExport clearance={estimateResult.grid.clearance_m} />
         </div>
       )}
+
+      {help && <HelpDialog doc={RIGHT_HELP} onClose={() => setHelp(false)} />}
     </aside>
   )
 }

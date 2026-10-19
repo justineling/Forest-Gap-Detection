@@ -67,6 +67,8 @@ interface RawResult {
   blocks?: Array<{ block_id?: string; block_name?: string; gaps?: GapCollection['features'] }>
   planting_grid?: GapCollection['planting_grid']
   summary?: Record<string, unknown>
+  /** 后端读不到结果文件时给的人类说明（`features` 为空时才有意义） */
+  error?: string
 }
 
 /**
@@ -78,17 +80,23 @@ interface RawResult {
  * 界面看起来"后端连上了、地图也有影像"，但一个多边形都不显示，
  * 也不会报错。内置样例 `public/sample-gaps.geojson` 是扁平结构，
  * 所以离线演示时反而正常，更容易掩盖这个 bug。
+ *
+ * ⚠️ **第二个坑（本函数存在的第二个理由）**：`/gaps` 读不到文件时返回的是
+ * `{features: [], error: "未找到检测结果文件…"}`。如果这里只取 features，
+ * "没找到文件"就退化成了"检测结果是 0 块" —— 用户看到"没有空地"，
+ * 完全不知道检测其实成功了、只是文件在别处。所以 `error` 必须原样透传。
  */
 export function normalizeCollection(raw: RawResult | null | undefined): GapCollection {
   const grid = raw?.planting_grid
+  const error = typeof raw?.error === 'string' && raw.error ? raw.error : undefined
   if (raw?.features?.length) {
-    return { type: 'FeatureCollection', features: raw.features, planting_grid: grid }
+    return { type: 'FeatureCollection', features: raw.features, planting_grid: grid, error }
   }
   const features: GapCollection['features'] = []
   for (const b of raw?.blocks ?? []) {
     for (const g of b.gaps ?? []) features.push(g)
   }
-  return { type: 'FeatureCollection', features, planting_grid: grid }
+  return { type: 'FeatureCollection', features, planting_grid: grid, error }
 }
 
 /** 读取最近一次检测结果（真实数据，来自 output/*.geojson） */
@@ -301,6 +309,83 @@ export async function onSidecarLog(cb: (line: string) => void): Promise<() => vo
 }
 
 // ============================================================================
+//  「生成高度图 / 林地边界」（等价于命令行跑 build_chm.py + build_forest_mask.py）
+// ---------------------------------------------------------------------------
+//  为什么放进界面：换园区时这两个文件必须重算。命令行对现场用户不可用
+//  （不知道 .venv、不知道 --dsm 该指哪），结果就是"换个园区只能出降级结果，
+//  而且界面不报错" —— 这是最坏的一种失败。
+// ============================================================================
+
+/** 生成派生数据需要的输入（路径可相对，Rust 侧会补成绝对） */
+export interface DerivedParams {
+  input: string
+  dsm?: string
+  segment?: string
+  tree_info?: string
+  out_chm?: string
+  out_mask?: string
+}
+
+/** 与 preflightDetect 同构：items 里有 error 就不能开始 */
+export async function preflightDerived(
+  params: DerivedParams,
+): Promise<PreflightResult> {
+  if (!isTauri()) {
+    return {
+      ok: true,
+      items: [
+        {
+          key: 'browser',
+          label: '浏览器模式',
+          path: '',
+          status: 'info',
+          detail: '浏览器里不能检查本地文件；桌面应用会逐项检查',
+        },
+      ],
+      resolved: params as unknown as Record<string, unknown>,
+    }
+  }
+  return tauriInvoke<PreflightResult>('preflight_derived', { params })
+}
+
+/** 启动生成。返回 "started"，进度靠 onDerivedEvent 收 */
+export async function runBuildDerived(
+  params: DerivedParams,
+): Promise<{ ok: boolean; message: string }> {
+  if (!isTauri()) {
+    return { ok: false, message: '浏览器模式不能生成 —— 请用「启动桌面端.bat」打开桌面应用' }
+  }
+  try {
+    const r = await tauriInvoke<string>('run_build_derived', { params })
+    return { ok: r === 'started', message: r }
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * 订阅生成事件。
+ *
+ * ⚠️ 与检测**分开两个通道**（`derived-event` vs `sidecar-event`）：
+ *    两个进度条语义不同，混在一个通道里会出现"检测进度条在跳，但你在做别的事"。
+ */
+export async function onDerivedEvent(
+  cb: (ev: Record<string, unknown>) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const un = await listen<Record<string, unknown>>('derived-event', (e) => cb(e.payload))
+  return un
+}
+
+export async function onDerivedLog(cb: (line: string) => void): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const un = await listen<string>('derived-log', (e) => cb(e.payload))
+  return un
+}
+
+// ============================================================================
 //  首次使用引导：选影像 / 选结果
 //  ---------------------------------------------------------------------------
 //  为什么需要这一层：打包版没有"仓库根"，用户不可能知道要把 3.5 GB 的影像
@@ -355,14 +440,31 @@ export type PickKind = 'image' | 'gaps'
  * 打开系统文件选择框。
  * 浏览器模式返回 null（前端会提示"请在桌面应用里操作"）。
  */
-export async function pickFile(kind: PickKind): Promise<string | null> {
+export async function pickFile(
+  kind: PickKind,
+  opts?: {
+    /**
+     * 对话框的起始目录。
+     *
+     * 为什么需要：用户选「检测结果」时，结果文件**一定**在数据根的 `output/` 下
+     * （检测程序就写在那儿）。默认从"上次用过的目录"打开的话，用户经常落在
+     * 影像所在的 `drone data/`，还得手动往上翻两级再进 output —— 纯属添堵。
+     */
+    defaultPath?: string
+  },
+): Promise<string | null> {
   if (!isTauri()) return null
   const { open } = await import('@tauri-apps/plugin-dialog')
   const filters =
     kind === 'image'
       ? [{ name: '正射影像 (GeoTIFF)', extensions: ['tif', 'tiff'] }]
       : [{ name: '检测结果 (GeoJSON)', extensions: ['geojson', 'json'] }]
-  const picked = await open({ multiple: false, directory: false, filters })
+  const picked = await open({
+    multiple: false,
+    directory: false,
+    filters,
+    ...(opts?.defaultPath ? { defaultPath: opts.defaultPath } : {}),
+  })
   if (typeof picked === 'string') return picked
   // 某些平台返回数组
   if (Array.isArray(picked) && typeof picked[0] === 'string') return picked[0]

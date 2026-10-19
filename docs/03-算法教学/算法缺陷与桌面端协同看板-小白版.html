@@ -52,10 +52,12 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 <div class="card verdict">
   <h3>先说结论</h3>
   <p>算法现在<strong>没有会算错总面积的毛病</strong>了，上一轮修掉的 4 个都是"会算错"的级别。
-    现在剩下 7 个毛病，按严重程度分三档。</p>
-  <p><strong>最要紧的一句话</strong>：这 7 个里有 <strong>5 个</strong>，
+    现在剩下 8 个毛病，按严重程度分三档。</p>
+  <p><strong>最要紧的一句话</strong>：这 8 个里有 <strong>5 个</strong>，
     等桌面软件做好之后<strong>就自动不算问题了</strong>——因为到时你自己在地图上圈一圈，
-    圈外的东西根本不会被算进去，算错的地方你点一下删掉就行。</p>
+    圈外的东西根本不会被算进去，算错的地方你点一下删掉就行。
+    （第 8 个是这轮打包前才发现的"选错文件"毛病 ——
+    <strong>它比较危险（会让点位整体偏）但已经修好了</strong>，详见毛病 8。）</p>
   <p>所以先做桌面软件、把算法放一放，是省钱省时间的做法。</p>
 </div>
 
@@ -64,10 +66,10 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
   <p>把算法想成一个<strong>刚学会看航拍图的临时工</strong>。他已经能干这些活：</p>
   <p>✅ 认出哪是树、哪是空地 · ✅ 按每棵树 8.35 米的行列规律去核对 ·
     ✅ 认出水塘、道路、房子这些不能种树的地方 · ✅ 报出"确定要补种"的面积</p>
-  <p>但他还有几件事<strong>分不清</strong>，这就是下面 7 个毛病。</p>
+  <p>但他还有几件事<strong>分不清</strong>，这就是下面 8 个毛病。</p>
 </div>
 
-<h2>二、7 个毛病，大白话讲</h2>
+<h2>二、8 个毛病，大白话讲</h2>
 
 <div class="card verdict-bad">
   <h3><span class="tag t-bad">严重</span>毛病 1：分不清"高草"和"刚种的小树苗"</h3>
@@ -171,6 +173,28 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
     只算圈内的块，时间跟着降。</p>
 </div>
 
+<div class="card verdict-ok">
+  <h3><span class="tag t-ok">已修好</span>毛病 8：你明明选好了结果文件，软件却自己换成了另一个</h3>
+  <p><strong>打个比方</strong>：你去档案柜拿"3 月 5 日那份报告"，管理员却说
+    "抽屉里还有一份 3 月 8 日的，我拿那份给你"——<strong>你要的那份，永远拿不到</strong>。</p>
+  <p><strong>为什么这个比"块数不对"严重得多</strong>：算补种点位要用到两样东西 ——
+    <strong>哪些地要补</strong>（来自你界面上看到的结果）和
+    <strong>树是怎么一排排种的</strong>（行距、起点，来自数据文件夹里的那份文件）。
+    如果这两样来自<strong>不同的两批数据</strong>，就会出现这种局面：</p>
+  <p style="text-align:center"><strong>块数完全正确（1,726 块），点位却从 3,691 个变成 3,713 个 —— 到场全挖错位置。</strong></p>
+  <p>报告看上去毫无异常，<strong>你根本发现不了</strong>。这才是最危险的地方。</p>
+  <p><strong>实测证据</strong>：把同一批 1,726 块地、只换"树是怎么种的"这套参数，
+    点位数就在 <strong>3,656 ~ 3,713</strong> 之间变，第一个点的坐标也跟着偏。
+    另外我们还验过：数据文件夹里只要有一份比它更新的结果（哪怕只有 12 块地的测试残留），
+    你指定那份就永远读不到 —— 实测直接变成 <strong>19 个文件 / 919 个点位</strong>，
+    而正确是 <strong>21 个文件 / 3,691 个点位</strong>。整个过程<strong>不报任何错</strong>。</p>
+  <p><strong>已经修好了</strong>：改成"<strong>以你选文件的那一刻为准</strong>"。
+    你自己挑的那份会一直生效；只有<strong>在你选完之后新跑出来的</strong>结果才会自动接上
+    （所以"检测跑完不用重启软件就能看到新结果"这个功能保住了）。
+    测试已经验过三条：连续换三次文件都能正确刷新（3 → 7 → 11 块）、
+    你指定的那份不会被更新的残留顶掉、名字里没有 "gaps" 的试验文件也不会被误选。</p>
+</div>
+
 <h2>三、已经修好的 4 个（上一轮）</h2>
 <div class="card verdict-ok">
   <table>
@@ -191,7 +215,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 <h2>四、接下来该怎么做（一句话版）</h2>
 <div class="card verdict-purple">
   <p><strong>现在：</strong>算法封版，去做桌面软件。你圈的那一块才跑，
-    算错的地方你手动删掉 —— 上面 7 个毛病里 5 个就此化解。</p>
+    算错的地方你手动删掉 —— 上面 8 个毛病里 5 个就此化解。</p>
   <p><strong>以后（按这个顺序修最划算）：</strong></p>
   <p>1️⃣ 让软件支持"只算我圈的范围"（顺带解决毛病 5，还能更快）</p>
   <p>2️⃣ 算出"每个坑该种几棵、点在哪"，给出能拿到地里放样的坐标</p>

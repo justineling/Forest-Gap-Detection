@@ -1,9 +1,13 @@
+import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
+import HelpDialog from './HelpDialog'
+import { LEFT_HELP } from '../lib/helpContent'
 import { ALL_CLASSES, CLASS_STYLES, GROUP_META, GROUP_ORDER } from '../lib/classes'
 import { CLEARANCE_PRESETS } from '../lib/estimate'
 import type { GapClass, PriorityGroup } from '../types'
 
 export default function LeftPanel() {
+  const [help, setHelp] = useState(false)
   const gaps = useAppStore((s) => s.gaps)
   const visibleClasses = useAppStore((s) => s.visibleClasses)
   const toggleClass = useAppStore((s) => s.toggleClass)
@@ -37,6 +41,15 @@ export default function LeftPanel() {
       <div className="panel-head">
         <h3>图层与类别</h3>
         <span className="dim">{gaps.length} 个多边形</span>
+        <button
+          type="button"
+          className="ph-help"
+          onClick={() => setHelp(true)}
+          title="这一栏是干什么的？每个类别是什么意思？"
+          aria-label="图层与类别说明"
+        >
+          ?
+        </button>
       </div>
 
       <div className="card kpi-card">
@@ -132,6 +145,8 @@ export default function LeftPanel() {
           取消选中
         </button>
       </div>
+
+      {help && <HelpDialog doc={LEFT_HELP} onClose={() => setHelp(false)} />}
     </aside>
   )
 }

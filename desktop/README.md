@@ -261,6 +261,54 @@ POST /export { gaps(编辑后), outdir, clearance_m, planting_grid, audit, image
 > 焦点在输入框（`INPUT` / `TEXTAREA` / `SELECT` / contenteditable）时，
 > 以上快捷键**全部让位** —— 否则在搜索框按 Ctrl+Z 会把多边形撤销掉。
 
+### 结果文件发现：不写死文件名（2026-10-19）
+
+**曾经的问题**：用户跑完检测，界面显示"没有空地"，但产物里躺着 1,762 块。
+
+三方路径互不相认：
+
+| 环节 | 它认为结果在哪 |
+|---|---|
+| sidecar 写 | `output/{job}-gaps.geojson`，job=`wgr17-desktop` |
+| Rust `resolve_gaps` | 只认 `wgr17-final-gaps.geojson` / `wgr17-elev-gaps.geojson` |
+| tile_server `GAPS_CANDIDATES` | 同样写死，且基于 `ROOT=Path(__file__).parent.parent`；打包态 ROOT 指向 `py-runtime/desktop_entry/`，那里没有 output/ |
+
+现在两边都改成 **"扫目录里名字含 gaps 的 .geojson，按 mtime 取最新"**：
+
+- Rust：`scan_gaps(dir)` → `resolve_gaps_in(data_base)`，看 `output/` 与数据根本身
+- tile_server：`discover_gaps(source)` 按优先级去重 ——
+  ① 影像同目录 ② 影像目录/output ③ ROOT/output（开发态）④ **cwd/output（打包态）**
+
+**懒发现**：`gaps_json()` / `current_gaps()` 每次请求都重新确认"当前文件是否仍是最新"，
+缓存按 `(path, mtime_ns, size)` 失效 —— 检测完**不用重启服务**也能看到新结果。
+
+### 顶部工具栏：五步工作流（2026-10-19）
+
+**改之前**：14 个平铺按钮 —— 影像状态 / 载入结果 / 数据 / 撤销 / 重做 /
+圈选 / 导入范围 / 清除 / 框选 / 开始检测 / 参数 / 新增空地 / 估算 / 导出。
+每个单独看都合理，堆在一起就是"我不知道先点哪个"。
+
+**改之后**：`品牌 + 五步进度条 + 4 个图标`。
+
+| 原来 | 现在 |
+|---|---|
+| ① 圈选 / 导入范围 / 清除 | 第 2 步的次按钮（手绘范围 / 导入 KML） |
+| ② 开始检测 / ⚙ 参数 | 第 3 步主按钮；参数进「更多」 |
+| 框选多选 / 新增空地 | 第 4 步次按钮；补画进「更多」 |
+| 估算 / 导出 | 第 5 步；估算进「更多」 |
+| 数据 / 载入结果 | 第 1 步；重载进「更多」 |
+| 撤销 / 重做 | **留在 header**（随时要用，藏起来会让人不敢改） |
+
+三个核心文件：
+
+- `lib/workflow.ts` —— 状态机纯函数：`computeSteps()` 算五步状态，
+  `nextAction()` 给"此刻唯一的下一步"。**可单测**（按钮顺序错乱是商用软件里
+  最难被人发现的一类 bug）。
+- `components/StepRail.tsx` —— 顶部进度条。done 可点（回看），active 高亮，
+  todo 禁用。**不做成 5 个按钮**：否则用户会以为随时能点，点了没反应。
+- `components/NextStepCard.tsx` —— 右下角卡片。始终只有 1 个主动作 +
+  最多 2 个次动作；走完自动换内容；可折叠成胶囊；有选中项时上移让开批量栏。
+
 ### CHM 高度阈值：三档林龄预设（2026-10-18）
 
 缺陷台账 P1-3 说 CHM 阈值「对树龄与 DSM 平滑度高度敏感」——`5.2 / 1.2 m`
@@ -877,3 +925,141 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
       用户拖滑块时会看到"数值变了但结果没变"的困惑。
     · **区间反转是静默的**：core=3.0 / veto=4.0 时，树高 3.5 m 同时满足
       「≥ core」和「< veto」，结果取决于代码里两个 if 的先后 —— 必须报错，不能算。
+
+35. **"可选步骤"和"不阻塞"是两件事，别合成一个字段**
+
+    ② 确定范围：可选，**且不阻塞** —— 跑整幅很常见，它参与 active 计算的话
+    用户不圈选就被永远卡在第 2 步。
+    ④ 复核结果：可选，**但阻塞** —— 它是最该被引导的一步（1,726 块混着误报），
+    跳过的方式是点主按钮「复核完成，去导出」，而不是让界面悄悄越过。
+
+    第一版把两者合成一个 `optional` 字段，结果"有结果时第 4 步永远不亮"，
+    用户会以为不需要复核。
+
+36. **流程会倒退 —— 三个具体的倒退点**
+
+    · **删光要素**：`gaps.length === 0` 会让第 3 步变回未完成，界面要求"再跑一次"，
+      用户以为数据丢了。区分 `hasGaps`（当前有要素）与 `hasResult`（载入过结果）。
+    · **从菜单直接导出**：`reviewed` 仍是 false → 界面继续提示"去复核"。
+      `isStepDone('review')` 必须纳入 `exported`。
+    · **换数据**：`setGaps` 要重置 `manualAdded/Deleted/Edited`，否则上一轮的
+      "删了 5 块"记在新交付上，状态栏数字对不上。
+
+37. **"下一步"卡片的文案不能出现技术术语**
+
+    测试里有一条硬断言：正文不得包含 `sidecar` / `W1004` / `CHM` / `geojson` /
+    `参数指纹` / `HTTP`。用户要知道的是"少了这个文件，水塘会被当成空地"，
+    不是"W1004 冠层数据缺失"。
+
+38. **结果文件的路径不能写死文件名 —— 它由 `job` 决定，而 `job` 是契约的一部分**
+
+    `job='wgr17-desktop'` → 产物叫 `wgr17-desktop-gaps.geojson`。
+    Rust 与 tile_server 却各自写死了 `wgr17-final-gaps` / `wgr17-elev-gaps`，
+    于是"检测成功、界面全空"。
+
+    正确做法：**扫目录 + 名字含 `gaps` + 按 mtime 取最新**。
+    注意三个细节：① 必须判 `is_file()`（`gaps-archive/` 这种目录名也含 gaps）；
+    ② `forest-mask-*.geojson` 名字里没有 gaps，天然被排除；
+    ③ 打包态的 `ROOT` 指向 `py-runtime/desktop_entry/`，**候选目录必须包含 `cwd/output`**
+    （打包时 cwd 是数据根）。
+
+39. **结果文件的缓存必须按 mtime 失效，否则"检测完看不到新结果"**
+
+    旧实现只在首次读盘后缓存 `_gaps_cache`。用户检测完、文件已更新，
+    但服务还返回旧内容（或空）—— 只能重启软件。
+    现在按 `(path, mtime_ns, size)` 判断，且每次请求都重新确认"当前文件是否最新"。
+
+40. **空响应绝不能覆盖已有数据**
+
+    `loadGaps({rerun:true})` 走 `applyRerun(feats)`。若 `/gaps` 返回空
+    （文件正在写 / 路径不对 / 损坏），`applyRerun([])` 会把用户 1,762 块**清空** ——
+    比"看不到结果"更糟。
+
+    `lib/gapsLoad.ts` 的 `decideGapsLoad()` 把判断抽成纯函数，关键是区分
+    **"算法自报 0 块"** 与 **"没收到报告"**：前者允许清空，后者必须保留。
+    测试里有一条反证（`applyRerun([])` 真的会清空），证明这道保护不是多余的。
+
+41. **显式 `--gaps` 被"更新的残留文件"顶掉 → 网格串批次，点位全偏**
+
+    **已修（`94f1aab`）**，但后果值得记牢：它不是"选错文件"这么轻。
+
+    **根因** —— `TileServer._pick_gaps()` 原规则是「取 mtime 更新的那个」：
+
+    ```python
+    best = explicit if (explicit and explicit.exists()) else None
+    found = discover_gaps(self.source)            # 扫目录 + 名字含 gaps + 取最新
+    if found and (best is None or _mtime_ns(found) > _mtime_ns(best)):
+        best = found                              # ← 显式指定的被盖掉
+    ```
+
+    **同一个数据目录里只要存在一个比它更新的 `*gaps*.geojson`，
+    `--gaps` 指定的文件就永远读不到。** 而 `output/` 在真实使用中必然累积
+    多轮检测/试验产物（本仓库开发态就有 20 个匹配 `*gaps*.geojson` 的文件，
+    最新的几份是只有 12 / 12 / 8 / 14 块的小样本残留）。
+
+    **★ 真正的危害：网格串批次 → 点位偏，而块数可能完全正确**
+
+    `/export` 里**要素**来自前端 POST，但 **`planting_grid` 取自
+    `current_gaps()`（同一个"当前生效文件"）**。所以一旦发现到另一批文件：
+
+    | | 要素 | 网格（来自另一批） | 结果 |
+    |---|---|---|---|
+    | 正常 | 1,726 | `origin_x_m=158.95` / `pitch=8.45` | **3,691 点** |
+    | 串了批 | 1,726 | `origin_x_m=159.32` / `pitch=8.35` | **3,713 点** |
+
+    要素数一模一样、类别数一模一样、报告看起来完全正常，
+    **但每一株的点位坐标都按错的网格结算了 —— 到场就挖错地方。**
+    这比"块数不对"危险得多，因为用户看不出来。实测 A/B（同一批 1,726 要素、
+    只换网格基准）点数在 **3,656 ~ 3,713** 之间变动、首点坐标同步漂移
+    （`111.20402232, 1.19012672` → `111.20412956, 1.19002759`）。
+
+    **接口全程 `ok: true`，没有任何报错。**
+
+    **修法（已落地）** —— 关键认识：**"用户选文件的时刻"和"文件自身的 mtime"
+    是两件事**，不能直接拿 mtime 比大小。
+
+    ```python
+    # __init__：用户"指定"这一刻只记一次。
+    #   ⚠️ 绝不能记在 _pick_gaps() 里 —— 那个方法每个请求都调，
+    #   时间戳会永远等于"现在"，mtime > now 恒为假，
+    #   等于把"检测完自动刷新"（坑 42）彻底弄回去。
+    self.gaps_explicit_at_ns = int(time.time() * 1e9) if gaps is not None else None
+
+    # _pick_gaps：只有"指定之后新产生"的文件才允许接管
+    if found is not None:
+        if best is None:                                   take = True
+        elif self.gaps_explicit_at_ns is not None:         take = _mtime_ns(found) > self.gaps_explicit_at_ns
+        else:                                              take = _mtime_ns(found) > _mtime_ns(best)
+        if take: best = found
+    ```
+
+    三条边界都对上了：① 检测完写的新文件 mtime > 启动时刻 → **自动刷新仍在**；
+    ② 仓库里的旧残留 mtime < 启动时刻 → **不再抢**；
+    ③ 用户无显式指定时（`gaps_explicit_at_ns is None`）→ 仍然纯按 mtime 取最新。
+    不需要动 Rust（"用户指定"的时机恰好就是 `set_data_paths` 重启服务之时）。
+
+    **回归用例**（`desktop/tests/e2e/regress_gaps_selection.py`，秒级）：
+    同一实例依次读到 **3 / 7 / 11**（原地覆盖 + 出现更新文件都能刷新）；
+    显式文件被 mtime 调旧后仍**胜出**（读到 1,726）；启动后新写的文件能接管；
+    名字不含 `gaps` 的 geojson（掩膜 / A-B 试验）不被误选。
+
+    **临时规避**（排查历史问题时仍有用）：给一个**干净的数据根**再起服务
+    （只放目标那一个文件），或把同目录里更新的文件临时移走。
+
+    > 排查教训：**别用"块数对不对"判断有没有串批次** —— 要素和网格来自
+    > 两个不同来源，块数正确时点位仍可能整体偏移。要直接看
+    > `planting_grid.origin_x_m` / `plant_pitch_m` 是否与预期的批次一致。
+
+42. **"生成派生数据"这类写文件的长任务：子进程不能直接 print，也不能允许中途取消**
+
+    `scripts/build_derived.py` 包装 `build_chm.py` / `build_forest_mask.py` 时踩到三点：
+
+    · **不能改算法脚本**。两个脚本加起来几十条 `log()`，改写它们等于把算法文件
+      变成 UI 的一部分（以后动算法就得考虑 UI）。正确做法是**替换模块级引用**：
+      `BC.log = my_logger` —— 脚本不知道自己被包装了，一行算法代码没动。
+    · **stdout 必须设防**。宿主逐行解析 NDJSON，而 GDAL/rasterio 会往 stdout 打
+      版本警告 → 多一行就多一条 `raw` 事件。用一个只放行 JSON 的 `sys.stdout` 守卫，
+      其余转 stderr。实测 21 个事件 / 0 个非 JSON。
+    · **这类任务不能允许取消**。检测可以 cancel（半成品无害），但生成中途杀掉会留下
+      **半个 CHM**，而检测读到它**根本不会报错**（NaN 区域变少但仍是有效栅格）。
+      所以运行时把关闭按钮也禁掉 —— 半成品比没有更糟。

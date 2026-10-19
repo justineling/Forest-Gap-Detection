@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import MapCanvas, { type DrawIntent } from './components/MapCanvas'
 import ErrorBoundary from './components/ErrorBoundary'
 import TopToolbar from './components/TopToolbar'
@@ -7,7 +7,11 @@ import RightPanel from './components/RightPanel'
 import StatusBar from './components/StatusBar'
 import DetectBar from './components/DetectBar'
 import DetectSettings from './components/DetectSettings'
+import NextStepCard from './components/NextStepCard'
+import HelpDialog from './components/HelpDialog'
+import { HEADER_HELP } from './lib/helpContent'
 import PreflightDialog from './components/PreflightDialog'
+import DerivedDialog from './components/DerivedDialog'
 import ExportDialog from './components/ExportDialog'
 import { parseKmlOrGeoJsonRoi } from './lib/roiImport'
 import { useAppStore } from './store/useAppStore'
@@ -18,6 +22,7 @@ import {
   isTauri,
   onSidecarEvent,
   onSidecarLog,
+  openPath,
   pickRoiFile,
   preflightDetect,
   probeBackend,
@@ -25,23 +30,46 @@ import {
   runDetect,
   type AppStatus,
 } from './api/backend'
+import { toInput, type ActionKind, type StepKey } from './lib/workflow'
+import { decideGapsLoad } from './lib/gapsLoad'
 import type { DetectProgress, GapCollection, PreflightResult } from './types'
 
 export default function App() {
   const [drawIntent, setDrawIntent] = useState<DrawIntent>('none')
-  const [loadingGaps, setLoadingGaps] = useState(false)
-  // 导出状态由 ExportDialog 自己管（它是唯一发起方）
-  const exporting = false
+  /**
+   * 绘制结束的回调。
+   *
+   * ⚠️ 必须 `useCallback` 稳定引用：它被传给 MapCanvas 的绘制 effect 当依赖，
+   *    内联箭头函数会让 App 每次重渲染都重挂 contextmenu / finish 监听。
+   *    QA 实测 add=2 / rem=1 —— 净 1 没泄漏，但属于噪音，且以后很容易演变成泄漏。
+   */
+  const onDrawDone = useCallback(() => setDrawIntent('none'), [])
+  // 只用到 setter —— 载入中的提示改由「下一步」卡片承担，按钮上不再显示"载入中…"
+  const [, setLoadingGaps] = useState(false)
   /** 当前应用状态（后端形态 / 影像路径 / 是否要引导） */
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null)
   /** 非 null 时显示首次使用引导 */
   const [wizard, setWizard] = useState<AppStatus | null>(null)
+  /**
+   * 载入结果时后端明确说"读不到文件"（`/gaps` 返回空集合 + error）。
+   *
+   * ⚠️ 必须与"检测结果确实是 0 块"区分开：前者是数据链路问题（文件在别的目录 /
+   * 服务指向旧路径），后者是真的没有空地。混在一起就是实测那个 bug ——
+   * 1,762 个要素躺在磁盘上，界面却说"没有空地"。
+   */
+  const [gapsError, setGapsError] = useState<string | null>(null)
   /** 非 null 时显示预检结果对话框 */
   const [preflight, setPreflight] = useState<PreflightResult | null>(null)
   /** 正在预检 / 启动（按钮显示"检查中…"） */
   const [starting, setStarting] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showExport, setShowExport] = useState(false)
+  /** 生成高度图 / 林地边界 */
+  const [showDerived, setShowDerived] = useState(false)
+  /** 递增即让右面板切到「复核」标签（步进器点第 4 步时用） */
+  const [reviewPeek, setReviewPeek] = useState(0)
+  /** 浏览器模式下 `?help=1` 直接预览帮助弹窗（截图 / 回归用，不进打包逻辑） */
+  const [demoHelp, setDemoHelp] = useState(false)
 
   const setBackend = useAppStore((s) => s.setBackend)
   const setGaps = useAppStore((s) => s.setGaps)
@@ -52,6 +80,16 @@ export default function App() {
   const setRoi = useAppStore((s) => s.setRoi)
   const detectParams = useAppStore((s) => s.detectParams)
   const detect = useAppStore((s) => s.detect)
+  // 工作流（五步向导）需要的东西
+  const backendOnline = useAppStore((s) => s.backendOnline)
+  const gaps = useAppStore((s) => s.gaps)
+  const wfFlags = useAppStore((s) => s.workflow)
+  const markWorkflow = useAppStore((s) => s.markWorkflow)
+  const outputDir = useAppStore((s) => s.outputDir)
+  const runEstimate = useAppStore((s) => s.runEstimate)
+  const manualAdded = useAppStore((s) => s.manualAdded)
+  const manualDeleted = useAppStore((s) => s.manualDeleted)
+  const manualEdited = useAppStore((s) => s.manualEdited)
   const detectBegin = useAppStore((s) => s.detectBegin)
   const detectProgress = useAppStore((s) => s.detectProgress)
   const detectFinish = useAppStore((s) => s.detectFinish)
@@ -61,6 +99,11 @@ export default function App() {
    *
    * `rerun=true` 时走「合并人工编辑」而不是直接替换 —— 重跑后 gap_id 全部重编，
    * 直接替换会让用户上一轮删掉的误报复活、改判的类别被算法覆盖回去。
+   *
+   * ⚠️ **空响应绝不覆盖已有结果**。`applyRerun([])` 会把当前结果全丢掉
+   *    （合并以新结果为主体，只重放人工操作），实测会造成"检测跑完，结果没了"。
+   *    判定逻辑单独抽在 `lib/gapsLoad.ts`（可被 npm test 覆盖），这里只负责
+   *    按判定结果打日志 / 报错。
    */
   const loadGaps = useCallback(
     async (opts?: { rerun?: boolean }) => {
@@ -68,6 +111,46 @@ export default function App() {
       try {
         const fc = await fetchGaps()
         const feats = fc.features ?? []
+        const st = useAppStore.getState()
+        const existing = st.gaps.length
+        // sidecar 的 result 事件自报的空地块数；没有这个事件就是 null
+        //（不能当 0 —— "算法说没找到"和"没收到报告"是两回事）
+        const reported = st.detect.finished?.gaps ?? null
+
+        const decision = decideGapsLoad({
+          incoming: feats.length,
+          existing,
+          reported,
+          error: fc.error,
+        })
+        if (decision.action === 'keep') {
+          setGapsError(decision.detail)
+          const parts = [
+            decision.reason === 'missing_file'
+              ? `⚠️ ${decision.detail}`
+              : `⚠️ 读到的结果文件是空的（可能还在写盘，或文件已损坏）：${decision.detail}`,
+          ]
+          if (existing > 0) parts.push(`现有 ${existing.toLocaleString()} 块结果已保留`)
+          parts.push(
+            decision.reason === 'missing_file'
+              ? '结果可能写在别的目录 —— 请点右上角「⋯ 更多 → 更换影像或结果文件」指一下，或重新检测'
+              : '请稍后点「重新载入结果」重试，或重新检测',
+          )
+          pushLog(parts.join('。'))
+          // 刚跑完检测的话，顶部横幅还写着"结果已载入"—— 与"没读到"同时出现
+          // 会让人以为界面在乱报。改掉它（保留 ok：检测确实成功了，
+          // 失败的是"读取结果"这一步）。
+          if (opts?.rerun && st.detect.finished) {
+            detectFinish({
+              ...st.detect.finished,
+              message:
+                `检测已完成，但没读到结果：${decision.detail}` +
+                (existing > 0 ? '（现有结果已保留）' : ''),
+            })
+          }
+          return
+        }
+        setGapsError(null)
         if (opts?.rerun) {
           applyRerun(feats, 'keep_manual')
           setLoadingGaps(false)
@@ -76,7 +159,19 @@ export default function App() {
         // 把算法网格一起带上 —— 前端估算的格点相位才能与 Python 侧逐株一致
         setGaps(feats, fc.planting_grid ?? null)
       } catch (e) {
-        // 后端不在线时退回内置样例，保证界面可独立演示
+        // 后端不在线时退回内置样例，保证界面可独立演示。
+        // ⚠️ 但**已经有真实结果时不能拿样例覆盖它** —— 那是另一种数据丢失
+        //    （而且是拿演示数据换掉用户跑出来的结果，更糟）。
+        setGapsError(null)
+        const existing = useAppStore.getState().gaps.length
+        if (existing > 0) {
+          pushLog(
+            `⚠️ 后端不可用（${e instanceof Error ? e.message : e}）；` +
+              `现有 ${existing.toLocaleString()} 块结果已保留（未载入内置样例）。` +
+              '请检查影像服务是否在运行，或点「重新载入结果」重试。',
+          )
+          return
+        }
         try {
           const res = await fetch('/sample-gaps.geojson')
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -90,7 +185,7 @@ export default function App() {
         setLoadingGaps(false)
       }
     },
-    [setGaps, pushLog, applyRerun],
+    [setGaps, pushLog, applyRerun, detectFinish],
   )
 
   /** 探测瓦片服务并载入结果（向导完成后也会调它） */
@@ -104,7 +199,7 @@ export default function App() {
       )
     } else {
       pushLog(
-        '影像服务未连接。若是第一次使用，请点右上角「数据」选择正射影像；' +
+        '影像服务未连接。若是第一次使用，请点右上角「⋯ 更多 → 更换影像或结果文件」；' +
           '已选过则稍等几秒（首次要建索引），仍不行请查看日志文件。',
       )
     }
@@ -178,6 +273,42 @@ export default function App() {
         return
       }
       await probeAndLoad()
+      // 浏览器模式下 `?mock=ready` 伪造"影像已就绪"，用来预览复核 / 导出阶段的界面
+      // （Headless 里连不上真正的瓦片服务；只影响截图与回归，不进打包逻辑）
+      if (!isTauri() && qs.get('mock') === 'ready') {
+        // ⚠️ 字段必须**完整**：这是给截图 / 回归用的假 meta，少一个字段就会真崩。
+        //    `bounds_wgs84` 少了 → MapCanvas 的 `const [w,s,e,n] = meta.bounds_wgs84`
+        //    解构 undefined → 抛 "undefined is not iterable" → 整个地图被 ErrorBoundary 顶掉。
+        //    而这个崩溃**不会让截图失败**（页面其余部分照常），于是"截图看起来正常"
+        //    变成了一种假象 —— 实测就是这样漏了一轮。
+        //    教训：mock 的字段要与 `RasterMeta` 类型逐项对齐，不能只填"看起来够用"的。
+        setBackend({
+          online: true,
+          meta: {
+            ok: true,
+            source: 'WGR17-002.tif',
+            width: 47130,
+            height: 44686,
+            crs: 'EPSG:4326',
+            res_m: 0.033,
+            // WGR17-002 的实测 WGS84 外包框（rasterio transform_bounds 算的，不是估的）
+            bounds_wgs84: [111.1969, 1.1771, 111.2109, 1.1904],
+            center: [111.2039, 1.1838],
+            zoom: 15,
+            valid_ratio: 0.57,
+            tile_url: '',
+            has_overviews: true,
+          } as never,
+        })
+      }
+      // 浏览器模式下 `?derived=1` 预览「生成高度图」对话框（截图 / 回归用）
+      if (!isTauri() && qs.has('derived')) setShowDerived(true)
+      // 浏览器模式下 `?help=1` 预览帮助弹窗（截图 / 回归用）
+      if (!isTauri() && qs.has('help')) setDemoHelp(true)
+      // 浏览器模式下 `?gapsError=1` 预览"结果文件没找到"的卡片态（截图 / 回归用）
+      if (!isTauri() && qs.has('gapsError')) {
+        setGapsError('未找到检测结果文件（已查找：D:/fgd/data/output）')
+      }
       // 浏览器模式下 `?settings=1` 打开检测参数面板（截图 / 回归用）
       if (!isTauri() && qs.has('settings')) setShowSettings(true)
       // 浏览器模式下 `?p2=export` 直接打开导出对话框（截图 / 回归用）
@@ -236,6 +367,7 @@ export default function App() {
             `${fmt(n)} 块空地 · ${fmt(Math.round(area))} m² · 用时 ` +
             `${Math.floor(el / 60)} 分 ${Math.round(el % 60)} 秒 · 结果已载入`,
         })
+        markWorkflow({ detected: true })
         pushLog('检测完成，正在重新载入结果（合并人工编辑）…')
         void loadGaps({ rerun: true })
       } else if (t === 'error') {
@@ -274,7 +406,7 @@ export default function App() {
       unEvent?.()
       unLog?.()
     }
-  }, [loadGaps, pushLog, detectBegin, detectProgress, detectFinish])
+  }, [loadGaps, pushLog, detectBegin, detectProgress, detectFinish, markWorkflow])
 
   /**
    * 拼检测参数。
@@ -438,6 +570,103 @@ export default function App() {
     }
   }, [setRoi, pushLog])
 
+  /** 五步流程的输入（纯函数算状态，UI 只负责渲染） */
+  const workflowInput = useMemo(
+    () =>
+      toInput({
+        backendOnline,
+        gaps,
+        // 「载入过结果」比「当前有要素」更稳定：用户把误报删光后流程不该倒退
+        hasResult: wfFlags.loaded,
+        roi,
+        detectRunning: detect.running,
+        detected: wfFlags.detected,
+        reviewed: wfFlags.reviewed,
+        exported: wfFlags.exported,
+        manualAdded,
+        manualDeleted,
+        manualEdited,
+      }),
+    [backendOnline, gaps, roi, detect.running, wfFlags, manualAdded, manualDeleted, manualEdited],
+  )
+
+  /**
+   * 「下一步」卡片的动作分发。
+   *
+   * 刻意做成一个 switch 而不是十来个回调 prop：卡片永远只可能给这 8 种动作，
+   * 集中在一处才好保证"每个动作都有对应的实现"（漏一个就是死按钮）。
+   */
+  const onWorkflowAction = useCallback(
+    (kind: ActionKind) => {
+      switch (kind) {
+        case 'openData':
+          setWizard(appStatus ?? ({} as AppStatus))
+          break
+        case 'drawRoi':
+          setDrawIntent('roi')
+          break
+        case 'pickRoi':
+          void onImportRoi()
+          break
+        case 'detect':
+          void onDetect()
+          break
+        case 'boxSelect':
+          setDrawIntent('box_select')
+          break
+        case 'goExport':
+          // 「复核完成」= 记一笔 + 直接打开导出对话框，不要求再点一次
+          markWorkflow({ reviewed: true })
+          setShowExport(true)
+          break
+        case 'export':
+          setShowExport(true)
+          break
+        case 'openOutput':
+          if (outputDir) {
+            openPath(outputDir).catch((e) =>
+              pushLog(`打开目录失败：${e instanceof Error ? e.message : String(e)}`),
+            )
+          } else {
+            setShowExport(true)
+          }
+          break
+      }
+    },
+    [appStatus, onDetect, onImportRoi, markWorkflow, outputDir, pushLog],
+  )
+
+  /**
+   * 点步进器上已完成的步骤 = 回看 / 重做这一步。
+   *
+   * 注意这里是"回到该步骤对应的界面"，不是"把数据回滚"——
+   * 回滚数据是撤销（Ctrl+Z）的职责，两者混在一起会很危险。
+   */
+  const onJumpStep = useCallback(
+    (key: StepKey) => {
+      switch (key) {
+        case 'data':
+          setWizard(appStatus ?? ({} as AppStatus))
+          break
+        case 'range':
+          setDrawIntent('roi')
+          break
+        case 'detect':
+          setShowSettings(true)
+          break
+        case 'review':
+          setReviewPeek((n) => n + 1)
+          break
+        case 'export':
+          setShowExport(true)
+          break
+      }
+    },
+    [appStatus],
+  )
+
+
+
   return (
     <div className="app">
       {/* 每个区域各自兜底：地图挂了，工具栏 / 图层面板 / 状态栏仍可用 */}
@@ -446,18 +675,22 @@ export default function App() {
       <div className="tb-wrap">
         <ErrorBoundary area="工具栏">
           <TopToolbar
-            drawIntent={drawIntent}
-            setDrawIntent={setDrawIntent}
-            onLoadGaps={loadGaps}
-            onOpenData={() => setWizard(appStatus ?? ({} as AppStatus))}
-            onExport={() => setShowExport(true)}
-            loadingGaps={loadingGaps}
-            exporting={exporting}
-            detecting={detect.running}
-            starting={starting}
-            onDetect={onDetect}
-            onOpenDetectSettings={() => setShowSettings((v) => !v)}
-            onImportRoi={onImportRoi}
+            workflow={workflowInput}
+            onJumpStep={onJumpStep}
+            onChangeData={() => setWizard(appStatus ?? ({} as AppStatus))}
+            onReloadGaps={() => void loadGaps()}
+            onOpenSettings={() => setShowSettings(true)}
+            onBuildDerived={() => setShowDerived(true)}
+            onAddGap={() => setDrawIntent('add_gap')}
+            onBoxSelect={() => setDrawIntent('box_select')}
+            onEstimate={runEstimate}
+            onOpenLog={() => {
+              // 日志目录：开发态在仓库根，打包态在 %LOCALAPPDATA%\fgd\logs
+              // 这里只打开"最可能存在的那个"—— 让 Rust 侧判存在性
+              void openPath(outputDir || '.').catch(() =>
+                pushLog('打开日志目录失败，可在「更多 → 更换影像」里查看当前数据目录'),
+              )
+            }}
           />
         </ErrorBoundary>
 
@@ -476,24 +709,49 @@ export default function App() {
         <ErrorBoundary area="图层面板">
           <LeftPanel />
         </ErrorBoundary>
-        <ErrorBoundary area="地图">
-          <MapCanvas drawIntent={drawIntent} onDrawDone={() => setDrawIntent('none')} />
-        </ErrorBoundary>
+        <div className="map-cell">
+          <ErrorBoundary area="地图">
+            <MapCanvas drawIntent={drawIntent} onDrawDone={onDrawDone} />
+          </ErrorBoundary>
+          {/* 「下一步」卡片浮在地图右下角：只给一个主动作，走完自动换内容 */}
+          <ErrorBoundary area="下一步提示">
+            <NextStepCard
+              input={workflowInput}
+              outputDir={outputDir || null}
+              onAction={onWorkflowAction}
+              loadError={gapsError}
+            />
+          </ErrorBoundary>
+        </div>
         <ErrorBoundary area="属性面板">
-          <RightPanel />
+          <RightPanel peekReview={reviewPeek} />
         </ErrorBoundary>
       </main>
       <ErrorBoundary area="状态栏">
         <StatusBar />
       </ErrorBoundary>
 
+      {demoHelp && <HelpDialog doc={HEADER_HELP} onClose={() => setDemoHelp(false)} />}
+
       {/* 首次使用引导：盖在最上层，选好影像后自动消失 */}
-      {wizard && <WelcomeWizard status={wizard} onDone={onWizardDone} />}
+      {wizard && (
+        <WelcomeWizard status={wizard} onDone={onWizardDone} onCancel={() => setWizard(null)} />
+      )}
 
       {/* 导出交付包 */}
       {showExport && (
         <ErrorBoundary area="导出">
           <ExportDialog onClose={() => setShowExport(false)} />
+        </ErrorBoundary>
+      )}
+
+      {/* 生成高度图 / 林地边界 */}
+      {showDerived && (
+        <ErrorBoundary area="生成派生数据">
+          <DerivedDialog
+            imagePath={meta?.source ?? ''}
+            onClose={() => setShowDerived(false)}
+          />
         </ErrorBoundary>
       )}
 
@@ -506,6 +764,10 @@ export default function App() {
           onOpenData={() => {
             setPreflight(null)
             setWizard(appStatus ?? ({} as AppStatus))
+          }}
+          onBuildDerived={() => {
+            setPreflight(null)
+            setShowDerived(true)
           }}
           onProceed={() => {
             const withRoi = detectParams.useRoi && !!roi

@@ -59,11 +59,91 @@ SOURCE_CANDIDATES = [
     Path(r"D:/WGR/WGR17.tif"),
     Path(r"D:/WGR/WGR17-002.tif"),
 ]
-GAPS_CANDIDATES = [
-    ROOT / "output" / "wgr17-final-gaps.geojson",
-    ROOT / "output" / "wgr17-elev-gaps.geojson",
-    ROOT / "output" / "wgr17-full-gaps.geojson",
-]
+
+
+# --------------------------------------------------------------------------
+# 检测结果发现
+# --------------------------------------------------------------------------
+# ⚠️ 为什么不能写死文件名（`wgr17-final-gaps.geojson` 这类）：
+#   产物名由前端传的 `job` 决定（当前是 `wgr17-desktop-gaps.geojson`），
+#   换一个 job 名、换一台机器、或者打包态（ROOT 指向 py-runtime/desktop_entry，
+#   那里根本没有 output/）就永远对不上 —— 实测症状是"检测成功了 1,762 个要素
+#   在磁盘上，界面却报没有空地"。所以改成按名字特征 + mtime 发现。
+def gaps_search_dirs(source: Path | None) -> list[Path]:
+    """找结果文件的候选目录，**按优先级**去重（同目录只算一次）。
+
+    ① 影像同目录（用户把一套数据放一起时命中）
+    ② 影像目录下的 `output/`（本项目约定）
+    ③ 仓库根 `output/`（开发态）
+    ④ 进程工作目录下的 `output/`（打包态 cwd 是数据根，这里才有产物）
+    """
+    cands: list[Path] = []
+    if source is not None:
+        src = Path(source)
+        cands.append(src.parent)
+        cands.append(src.parent / "output")
+    cands.append(ROOT / "output")
+    cands.append(Path.cwd() / "output")
+
+    out: list[Path] = []
+    seen: set[str] = set()
+    for d in cands:
+        try:
+            key = str(d.resolve())
+        except OSError:
+            key = str(d)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(d)
+    return out
+
+
+def discover_gaps(source: Path | None) -> Path | None:
+    """在候选目录里找**最新的** `*gaps*.geojson`（按 mtime）。
+
+    为什么用"名字含 gaps"而不是后缀通配：`output/` 里同时躺着
+    `forest-mask-*.geojson`（森林掩膜）、`ab-w1.geojson`（A/B 试验）等
+    一堆 geojson，拿错一个会把掩膜当成空地展示 —— 比报错糟糕得多。
+    """
+    best: tuple[int, Path] | None = None
+    for d in gaps_search_dirs(source):
+        try:
+            if not d.is_dir():
+                continue
+            entries = list(d.iterdir())
+        except OSError:
+            continue
+        for p in entries:
+            name = p.name.lower()
+            if "gaps" not in name or not name.endswith(".geojson"):
+                continue
+            try:
+                if not p.is_file():
+                    continue
+                mtime_ns = p.stat().st_mtime_ns
+            except OSError:
+                continue
+            if best is None or mtime_ns > best[0]:
+                best = (mtime_ns, p)
+    return best[1] if best else None
+
+
+def _file_sig(p: Path) -> tuple[str, int, int] | None:
+    """缓存签名 `(绝对路径, mtime_ns, size)`；文件不在时返回 None。"""
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    return (str(p), st.st_mtime_ns, st.st_size)
+
+
+def _mtime_ns(p: Path) -> int:
+    """文件 mtime（纳秒）；读不到当 0（= 最旧），不抛错。"""
+    try:
+        return p.stat().st_mtime_ns
+    except OSError:
+        return 0
 
 
 # --------------------------------------------------------------------------
@@ -96,15 +176,40 @@ def lonlat_to_mercator(lon: float, lat: float) -> tuple[float, float]:
 class TileServer:
     def __init__(self, source: Path, gaps: Path | None, cache_size: int = 512):
         self.source = source
+        # 用户/宿主显式指定的结果文件（`--gaps`）。**不是**最终生效值：
+        # 每次 `/gaps` 请求都会再确认一次"它还是不是最新的"，见 _pick_gaps。
+        self.gaps_explicit = gaps
         self.gaps_path = gaps
+        # 用户"指定这一刻"的时间戳（服务启动 ≈ 用户刚选了文件，因为
+        # `set_data_paths` 会重启服务）。
+        #
+        # ⚠️ 为什么需要它：以前只比"文件 mtime 谁大"。但**用户选文件的时间**
+        #    和**文件自身的时间**是两回事 —— 用户主动去回看一个旧批次时，
+        #    目录里更新的试验文件会把他选的那份静默顶掉。
+        #
+        #    危害不只是"块数变了"：`/export` 的 `planting_grid` 取自这里
+        #    （要素来自前端 POST，网格来自本文件），所以串批次时**块数完全正确、
+        #    但放样点位的网格是另一批的** —— 实测 3,691 → 3,713 点，首点坐标也漂。
+        #    交付物看着正常、坑挖错地方，且用户看不出来。这是交付级错误。
+        #
+        #    规则：只有**比"指定时刻"更新**的文件才允许接管。
+        #    · 检测完写的新结果（mtime 更新）→ 接管 ✅（自动刷新不能被弄坏）
+        #    · 仓库里历史试验残留（mtime 更旧）→ 不再抢 ✅
+        self.gaps_explicit_at_ns: int | None = int(time.time() * 1e9) if gaps is not None else None
         self.cache: OrderedDict[tuple[int, int, int], bytes] = OrderedDict()
         self.cache_size = cache_size
         self.lock = threading.Lock()
         self._ds = None
         self._meta: dict | None = None
         self._gaps_cache: bytes | None = None
+        # 缓存签名 (path, mtime_ns, size)：文件被重写但路径没变时也要失效
+        self._gaps_sig: tuple[str, int, int] | None = None
         self._gaps_obj: dict | None = None
+        self._gaps_obj_sig: tuple[str, int, int] | None = None
         self._pp_cache: dict[float, bytes] = {}
+        # 结果文件是**每次请求**都要校验的（懒发现），而 /gaps 与
+        # /planting-points 可能并发进来 —— 用一把独立的锁，不占瓦片缓存的锁
+        self._gaps_lock = threading.RLock()
 
     # ---- 数据集（每个线程各自持有一个只读句柄，避免 GDAL 句柄跨线程问题）----
     def dataset(self):
@@ -239,6 +344,57 @@ class TileServer:
         return buf.getvalue()
 
     # ---- 检测结果 ----
+    def _pick_gaps(self) -> Path | None:
+        """确认"此刻该用哪个结果文件"，必要时重新发现一次。
+
+        为什么要**每次请求**都确认（而不是启动时发现一次就固定）：
+        检测跑完**不会重启瓦片服务**（Rust 只在启动 / 换影像时拉服务）。
+        如果只在启动时发现一次，用户跑完 6 分钟的检测回来，看到的还是上一轮
+        结果，或者永远"未找到" —— 只能重启整个应用，这显然不可接受。
+
+        选择规则：显式指定的 `--gaps`（存在时）与自动发现的最新文件，取 mtime 更新的那个。
+        """
+        with self._gaps_lock:
+            best: Path | None = None
+            explicit = self.gaps_explicit
+            if explicit is not None and explicit.exists():
+                best = explicit
+            found = discover_gaps(self.source)
+            # 谁有资格接管显式指定？
+            #   · 当前还没有任何候选（best is None）→ 用找到的
+            #   · 用户指定过 → 只接受"比指定时刻更新"的文件（= 指定之后新产生的）
+            #   · 用户没指定（自动发现模式）→ 按 mtime 取最新
+            if found is not None:
+                if best is None:
+                    take = True
+                elif self.gaps_explicit_at_ns is not None:
+                    take = _mtime_ns(found) > self.gaps_explicit_at_ns
+                else:
+                    take = _mtime_ns(found) > _mtime_ns(best)
+                if take:
+                    best = found
+            if best != self.gaps_path:
+                self.gaps_path = best
+                # 换了文件 → 三份缓存全部作废。否则会拿旧文件的字节配新路径，
+                # 放样点位也会按上一轮的空地算（数字对不上，且极难发现）
+                self._gaps_cache = None
+                self._gaps_sig = None
+                self._gaps_obj = None
+                self._gaps_obj_sig = None
+                self._pp_cache.clear()
+                where = str(best) if best else "（未找到 *gaps*.geojson）"
+                print(f"  检测结果：{where}", file=sys.stderr)
+                sys.stderr.flush()
+            return best
+
+    def current_gaps(self) -> Path | None:
+        """当前生效的结果文件路径（顺带做一次懒发现）。
+
+        给 `/export` 这类"只想拿路径、不想读 14 MB 内容"的端点用 —— 它们也必须
+        看到最新的文件，否则导出的报告会按上一轮的空地算株数。
+        """
+        return self._pick_gaps()
+
     def gaps_json(self) -> bytes:
         """返回检测结果 GeoJSON，并**动态补上网格锚点**（不改磁盘文件）。
 
@@ -250,32 +406,52 @@ class TileServer:
         原因就是前端自己拿「首个顶点均值」当原点，相位是任意的）。
 
         只在内存里 enrich，不写回文件 —— 重跑算法不必为此付费。
+        缓存按 `(路径, mtime_ns, size)` 失效：同一路径被重写也要重读。
         """
-        if not (self.gaps_path and self.gaps_path.exists()):
-            return json.dumps(
-                {"type": "FeatureCollection", "features": [], "error": "未找到检测结果文件"}
-            ).encode("utf-8")
-        if self._gaps_cache is not None:
-            return self._gaps_cache
-        raw = self.gaps_path.read_bytes()
-        try:
-            obj = json.loads(raw)
-            grid = obj.get("planting_grid")
-            if isinstance(grid, dict) and "anchor_lon" not in grid:
-                obj["planting_grid"] = _enrich_grid_anchor(obj, grid)
-                raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        except Exception as e:  # 结果格式异常时不要拖垮端点，原样返回
-            print(f"  ⚠️ planting_grid 锚点补算失败（原样返回）：{e}", file=sys.stderr)
-        self._gaps_cache = raw
-        return raw
+        path = self._pick_gaps()
+        with self._gaps_lock:
+            if path is None:
+                looked = "、".join(str(d) for d in gaps_search_dirs(self.source))
+                return json.dumps(
+                    {
+                        "type": "FeatureCollection",
+                        "features": [],
+                        # 前端会把这句原样显示给用户，所以要说清"找过哪里"——
+                        # 只写"未找到"的话，用户根本不知道该把文件放哪
+                        "error": f"未找到检测结果文件（已查找：{looked}）",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            sig = _file_sig(path)
+            if self._gaps_cache is not None and sig is not None and self._gaps_sig == sig:
+                return self._gaps_cache
+            if self._gaps_sig != sig:
+                # 同一路径被重写：解析结果与放样点位都得重算
+                self._gaps_obj = None
+                self._gaps_obj_sig = None
+                self._pp_cache.clear()
+            raw = path.read_bytes()
+            try:
+                obj = json.loads(raw)
+                grid = obj.get("planting_grid")
+                if isinstance(grid, dict) and "anchor_lon" not in grid:
+                    obj["planting_grid"] = _enrich_grid_anchor(obj, grid)
+                    raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            except Exception as e:  # 结果格式异常时不要拖垮端点，原样返回
+                print(f"  ⚠️ planting_grid 锚点补算失败（原样返回）：{e}", file=sys.stderr)
+            self._gaps_cache = raw
+            self._gaps_sig = sig
+            return raw
 
     # ---- 补种点位（权威结算在 Python，前端只展示/导出）----
     def _gaps_data(self) -> dict:
         """解析后的结果对象（含补算好的 planting_grid）。"""
-        if self._gaps_obj is None:
-            self.gaps_json()  # 触发解析 + 锚点补算
-            self._gaps_obj = json.loads(self._gaps_cache or b"{}")
-        return self._gaps_obj
+        self.gaps_json()  # 触发懒发现 + 缓存校验 + 锚点补算
+        with self._gaps_lock:
+            if self._gaps_obj is None or self._gaps_obj_sig != self._gaps_sig:
+                self._gaps_obj = json.loads(self._gaps_cache or b"{}")
+                self._gaps_obj_sig = self._gaps_sig
+            return self._gaps_obj
 
     def planting_points_json(self, clearance_m: float = 0.5) -> bytes:
         """按退让距离生成补种点位（GeoJSON FeatureCollection）。
@@ -288,13 +464,16 @@ class TileServer:
         结果按退让距离缓存（同一档位重复请求不再重算）。
         """
         key = round(float(clearance_m), 3)
+        # ⚠️ 先取数据再查缓存：`_gaps_data()` 会顺带做"结果文件是否已更新"的
+        #    校验，文件变了会把 _pp_cache 清空。反过来先查缓存的话，检测刚跑完
+        #    时会返回上一轮的点位（数字对不上，且没有任何报错）。
+        obj = self._gaps_data()
         if key in self._pp_cache:
             return self._pp_cache[key]
 
         import planting_points as PP
         from grid_prior import GridModel
 
-        obj = self._gaps_data()
         grid = obj.get("planting_grid")
         if not isinstance(grid, dict):
             payload = {"type": "FeatureCollection", "features": [],
@@ -878,7 +1057,9 @@ class Handler(BaseHTTPRequestHandler):
             if not outdir.is_absolute():
                 outdir = ROOT / outdir
             base_obj = None
-            gp = self.tile_server.gaps_path
+            # 用 current_gaps() 而不是 gaps_path：导出必须按**最新**的结果算，
+            # 否则用户刚重跑完就导出，报告里的株数还是上一轮的
+            gp = self.tile_server.current_gaps()
             if gp and Path(gp).exists():
                 try:
                     base_obj = json.loads(Path(gp).read_text(encoding="utf-8"))
@@ -960,9 +1141,9 @@ def main() -> int:
                       "（z=13 约 104 s、z=15 约 35 s）。", file=sys.stderr)
                 print("     加 --build-overviews 即可（默认不会修改源文件）", file=sys.stderr)
 
-    gaps = Path(args.gaps) if args.gaps else next(
-        (p for p in GAPS_CANDIDATES if p.exists()), None
-    )
+    # 结果文件：`--gaps` 显式给了就用它（但仍然会被"更新出现的文件"顶掉，
+    # 见 TileServer._pick_gaps）；否则启动时先发现一次，之后每次 /gaps 再校验。
+    gaps = Path(args.gaps) if args.gaps else discover_gaps(source)
 
     ts = TileServer(Path(source), gaps, cache_size=args.cache)
     m = ts.meta()
@@ -979,6 +1160,8 @@ def main() -> int:
         print("              ⚠️ 无金字塔时低缩放级瓦片很慢（z=15 约 35 s、z=13 约 104 s）。", file=sys.stderr)
         print("                 建议先跑一次：--build-overviews（一次性，约 1 GB 边车文件）", file=sys.stderr)
     print(f"  检测结果  : {gaps if gaps else '（未找到，/gaps 将返回空集合）'}", file=sys.stderr)
+    print("              每次 /gaps 都会重新确认是否出现了更新的结果文件"
+          "（检测完不必重启服务）", file=sys.stderr)
     print(f"  监听      : http://{args.host}:{args.port}", file=sys.stderr)
     print(f"  端点      : /meta  /tiles/{{z}}/{{x}}/{{y}}.png  /gaps  "
           f"/planting-points?clearance=0.5  /export", file=sys.stderr)

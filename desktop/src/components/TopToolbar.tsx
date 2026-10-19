@@ -1,198 +1,148 @@
+import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { isTauri, probeBackend } from '../api/backend'
-import type { DrawIntent } from './MapCanvas'
+import { probeBackend } from '../api/backend'
+import StepRail from './StepRail'
+import MoreMenu from './MoreMenu'
+import HelpDialog from './HelpDialog'
+import { HEADER_HELP } from '../lib/helpContent'
+import type { StepKey, WorkflowInput } from '../lib/workflow'
 
 interface Props {
-  drawIntent: DrawIntent
-  setDrawIntent: (v: DrawIntent) => void
-  onLoadGaps: () => void
-  /** 打开「选择数据」引导（换影像 / 换结果文件） */
-  onOpenData: () => void
-  onExport: () => void
-  loadingGaps: boolean
-  exporting: boolean
-  /** sidecar 正在跑 */
-  detecting: boolean
-  /** 正在预检 / 启动（比 detecting 更早） */
-  starting: boolean
-  onDetect: () => void
-  onOpenDetectSettings: () => void
-  /** 从 KML / GeoJSON 导入 Target Block 范围 */
-  onImportRoi: () => void
+  workflow: WorkflowInput
+  onJumpStep: (key: StepKey) => void
+  onChangeData: () => void
+  onReloadGaps: () => void
+  onOpenSettings: () => void
+  onBuildDerived: () => void
+  onAddGap: () => void
+  onBoxSelect: () => void
+  onEstimate: () => void
+  onOpenLog: () => void
 }
 
 /**
- * 顶部工具栏。
+ * 顶部工具栏（简化版）。
  *
- * ⚠️ 检测参数**不在这里拼**：以前把 `chm_path` / `workers` 硬编码在按钮里，
- * 用户换了别的目录的影像就会静默退化（W1004 只进日志）。现在统一由
- * App.tsx 的 `buildDetectParams()` 从 store 里取，并且先过 `preflight_detect`。
+ * ## 改了什么
+ *
+ * 原来是 **14 个平铺按钮**：影像状态 / 载入结果 / 数据 / 撤销 / 重做 /
+ * 圈选 / 导入范围 / 清除 / 框选 / 开始检测 / 参数 / 新增空地 / 估算 / 导出。
+ * 每个单独看都合理，堆在一起就是"我不知道先点哪个"——用户会怀疑软件不成熟。
+ *
+ * 现在只剩三块：
+ *
+ *   ① 品牌（一行，缩到最小）
+ *   ② **五步流程条** —— 唯一告诉用户"我在哪、还剩几步"的东西
+ *   ③ 四个图标：影像状态灯 / 撤销 / 重做 / 更多
+ *
+ * 高频动作（选影像、检测、复核、导出）全部搬到「下一步」卡片里，
+ * 低频动作（换数据、参数、补画、估算、日志）收进「⋯ 更多」。
+ *
+ * ## 为什么撤销/重做留在这里
+ *
+ * 它是**随时可能用到**的（改错一块就想撤），不是流程的一步。
+ * 藏进菜单会让用户不敢下手改 —— 这是 P1 花大力气做的功能，不能藏。
  */
 export default function TopToolbar({
-  drawIntent,
-  setDrawIntent,
-  onLoadGaps,
-  onOpenData,
-  onExport,
-  loadingGaps,
-  exporting,
-  detecting,
-  starting,
-  onDetect,
-  onOpenDetectSettings,
-  onImportRoi,
+  workflow,
+  onJumpStep,
+  onChangeData,
+  onReloadGaps,
+  onOpenSettings,
+  onBuildDerived,
+  onAddGap,
+  onBoxSelect,
+  onEstimate,
+  onOpenLog,
 }: Props) {
+  const [help, setHelp] = useState(false)
   const backendOnline = useAppStore((s) => s.backendOnline)
-  const meta = useAppStore((s) => s.meta)
-  const roi = useAppStore((s) => s.roi)
-  const gaps = useAppStore((s) => s.gaps)
-  const setRoi = useAppStore((s) => s.setRoi)
   const setBackend = useAppStore((s) => s.setBackend)
   const pushLog = useAppStore((s) => s.pushLog)
-  const runEstimate = useAppStore((s) => s.runEstimate)
   const past = useAppStore((s) => s.past)
   const future = useAppStore((s) => s.future)
   const undo = useAppStore((s) => s.undo)
   const redo = useAppStore((s) => s.redo)
 
   const reconnect = async () => {
-    pushLog('正在探测后端瓦片服务…')
+    pushLog('正在探测影像服务…')
     const st = await probeBackend()
     setBackend(st)
     pushLog(
       st.online
         ? `影像服务已就绪：${st.meta?.source ?? ''}`
-        : '影像服务还没连上。第一次使用请点「数据」选择正射影像；已选过则稍等几秒。',
+        : '影像服务还没连上。请点「⋯ 更多 → 更换影像或结果文件」重新选择；已选过则稍等几秒（首次要建索引）。',
     )
   }
 
   return (
     <header className="toolbar">
-      <div className="tb-brand">
-        <b>Forest Gap Detection</b>
-        <span className="dim">油棕园空地智能检测 · 桌面端</span>
+      <div className="tb-brand" title="Forest Gap Detection · 油棕园空地智能检测">
+        <b>FGD</b>
+        <span className="dim">油棕园空地检测</span>
       </div>
 
-      <div className="tb-group">
+      <StepRail input={workflow} onJump={onJumpStep} />
+
+      <div className="tb-right">
         <button
-          className="btn"
+          type="button"
+          className="btn icon"
           onClick={reconnect}
           title={
             backendOnline
-              ? '影像服务已就绪，点此重新检测'
-              : '点此重新检测；若仍未连接，请点「数据」选择影像'
+              ? '影像服务已就绪，点此重新检测连接'
+              : '影像未连接 —— 点此重试；仍未连上请用「⋯ 更多 → 更换影像」'
           }
+          aria-label={backendOnline ? '影像已就绪' : '影像未连接'}
         >
           <span className={backendOnline ? 'dot ok' : 'dot bad'} />
-          {backendOnline ? '影像已就绪' : '影像未连接'}
         </button>
-        <button className="btn" onClick={onLoadGaps} disabled={loadingGaps}>
-          {loadingGaps ? '载入中…' : '载入检测结果'}
-        </button>
-        <button className="btn" onClick={onOpenData} title="更换正射影像或检测结果文件">
-          数据
-        </button>
-      </div>
 
-      <div className="tb-group">
         <button
-          className="btn tiny"
+          type="button"
+          className="btn icon"
           onClick={undo}
           disabled={past.length === 0}
-          title="撤销上一步（Ctrl+Z）—— 批量操作算一步"
+          title={`撤销（Ctrl+Z）—— 可撤 ${past.length} 步；批量操作算一步`}
         >
-          ↶ {past.length}
+          ↶<span className="icon-n">{past.length || ''}</span>
         </button>
         <button
-          className="btn tiny"
+          type="button"
+          className="btn icon"
           onClick={redo}
           disabled={future.length === 0}
-          title="重做（Ctrl+Y / Ctrl+Shift+Z）"
+          title={`重做（Ctrl+Y / Ctrl+Shift+Z）—— 可重做 ${future.length} 步`}
         >
-          ↷ {future.length}
+          ↷<span className="icon-n">{future.length || ''}</span>
         </button>
+
+        <button
+          type="button"
+          className="btn icon"
+          onClick={() => setHelp(true)}
+          title="这个软件怎么用？（五步流程 / 图标含义 / 快捷键）"
+          aria-label="使用说明"
+        >
+          ?
+        </button>
+
+        <MoreMenu
+          gapCount={workflow.gapCount}
+          hasImage={workflow.hasImage}
+          onChangeData={onChangeData}
+          onReloadGaps={onReloadGaps}
+          onOpenSettings={onOpenSettings}
+          onBuildDerived={onBuildDerived}
+          onAddGap={onAddGap}
+          onBoxSelect={onBoxSelect}
+          onEstimate={onEstimate}
+          onOpenLog={onOpenLog}
+        />
       </div>
 
-      <div className="tb-group">
-        <button
-          className={drawIntent === 'roi' ? 'btn primary' : 'btn'}
-          onClick={() => setDrawIntent(drawIntent === 'roi' ? 'none' : 'roi')}
-          title="圈出只检测的目标区块；圈外的天然林/邻园会被直接排除"
-        >
-          {drawIntent === 'roi' ? '圈选中…（Esc 取消）' : '① 圈选 Target Block'}
-        </button>
-        <button
-          className="btn"
-          onClick={onImportRoi}
-          title="从 KML / GeoJSON 导入范围（导入后地图会自动缩放到该区块）"
-        >
-          导入范围
-        </button>
-        {roi && (
-          <button className="btn tiny" onClick={() => setRoi(null)} title="清除圈选">
-            清除
-          </button>
-        )}
-        <button
-          className={drawIntent === 'box_select' ? 'btn primary' : 'btn'}
-          onClick={() => setDrawIntent(drawIntent === 'box_select' ? 'none' : 'box_select')}
-          title="拖一个矩形批量选中框内的空地 —— 只命中当前勾选可见的类别，隐藏的道路/水体不会被选中"
-        >
-          {drawIntent === 'box_select' ? '框选中…（Esc 退出）' : '▭ 框选多选'}
-        </button>
-      </div>
-
-      <div className="tb-group">
-        <button
-          className="btn primary"
-          onClick={onDetect}
-          disabled={detecting || starting}
-          title={
-            isTauri()
-              ? '先检查文件是否齐全，再调 Python 跑检测（圈选过则只跑圈内）'
-              : '浏览器模式不能启动检测，请用「启动桌面端.bat」打开桌面应用'
-          }
-        >
-          {starting ? '检查中…' : detecting ? '检测中…' : '② 开始检测'}
-        </button>
-        <button
-          className="btn tiny"
-          onClick={onOpenDetectSettings}
-          title="检测参数：并行进程数 / 目标密度 / 是否只跑圈内"
-        >
-          ⚙
-        </button>
-        <button
-          className={drawIntent === 'add_gap' ? 'btn primary' : 'btn'}
-          onClick={() => setDrawIntent(drawIntent === 'add_gap' ? 'none' : 'add_gap')}
-          title="在漏检处手工补画一块空地"
-        >
-          ➕ 新增空地
-        </button>
-      </div>
-
-      <div className="tb-group">
-        <button className="btn" onClick={runEstimate} disabled={gaps.length === 0}>
-          ⚡ 估算可种植数量
-        </button>
-        <button className="btn" onClick={onExport} disabled={gaps.length === 0 || exporting}>
-          {exporting ? '导出中…' : '导出交付包'}
-        </button>
-      </div>
-
-      <div className="tb-meta">
-        {meta ? (
-          <>
-            <span className="mono">{meta.crs}</span>
-            <span className="mono">
-              {meta.width.toLocaleString()}×{meta.height.toLocaleString()} px
-            </span>
-            <span className="mono">{meta.res_m.toFixed(2)} m/px</span>
-          </>
-        ) : (
-          <span className="dim">未连接影像</span>
-        )}
-      </div>
+      {help && <HelpDialog doc={HEADER_HELP} onClose={() => setHelp(false)} />}
     </header>
   )
 }

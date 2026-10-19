@@ -499,6 +499,30 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     }
   }, [drawIntent, mapReady])
 
+  // ---------- 11b. 右键取消当前绘制 ----------
+  //
+  // 用户原话：「手动补画空地时，使用右键可以取消当前正在执行的新的划线操作」。
+  // 纯鼠标用户画到一半发现点错了，以前只能去按 Esc 或回车 —— 手要离开鼠标。
+  //
+  // ⚠️ 不能用 `draw.clear()`：那会连**已完成的图形**一起清掉。
+  //    切到 `static` 模式会触发当前 mode 的 cleanUp()，只丢弃"还没闭合的那一笔"。
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady || drawIntent === 'none') return
+
+    const onCtx = (e: MouseEvent) => {
+      // 绘制模式下右键的唯一语义就是取消；不拦的话会弹出浏览器右键菜单
+      e.preventDefault()
+      drawRef.current?.setMode('static')
+      // 框选是自定义 DOM 矩形（不走 Terra Draw），要单独收掉
+      if (boxRef.current) boxRef.current.style.display = 'none'
+      onDrawDone()
+    }
+    const canvas = map.getCanvas()
+    canvas.addEventListener('contextmenu', onCtx)
+    return () => canvas.removeEventListener('contextmenu', onCtx)
+  }, [drawIntent, mapReady, onDrawDone])
+
   // ---------- 12. 复核清单点击 → 飞过去 ----------
   useEffect(() => {
     const map = mapRef.current
@@ -545,7 +569,7 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
             : drawIntent === 'add_gap'
               ? '正在新增空地：依次点击顶点，双击 / 回车闭合'
               : '框选模式：拖一个矩形选中空地（只命中当前勾选可见的类别）'}
-          <span className="dim">Esc 退出</span>
+          <span className="dim">右键 / Esc 取消</span>
         </div>
       )}
 

@@ -38,40 +38,25 @@
 
 ---
 
-## ★ 2026-10-16 晚（家里电脑）算法评审结论
+## ★ 2026-10-16 算法评审：可复用的定标方法
 
-完整清单见 `docs/03-算法教学/算法缺陷与改进清单.md`（含实测数字与优先级）。
-以下只记**长期有效的关键结论**：
+> 方位角合成缺陷、水体漏检机制、三档报数的**修复**见下一节（10-17 四项修复）；
+> 这里只留方法与被反复引用的实测数字。
 
-### 确证的代码级缺陷：网格方位角「角度别名」合成
-- 各瓦片估出的方位角落在 `3°/61°/1°/90°/179°` 等**别名分支**上（等边三角形格点
-  有 60° 旋转对称），`global_consensus` 直接取中位数 → 得到谁都不对的方位
-  （10-15 公司机 0.7° 正确；10-16 本机 21.2° 错约 20°）。
-- **定标方法（可复用）**：`tree_info` 树心在 300 m 窗口做「方位 0.5° × 相位 8×8」细扫，
-  指标 = 树心落在格点 3 m 内比例（随机基准 45.8%）→ 实测 **59.0°、对齐率 79~97%**。
-  ⚠️ 全幅细扫不可行（1,500 m 上 0.2° 就漂移 5 m）；脚本 `tmp/analyze/probe_phase_local.py`。
-- 后果：**类别归属抖动**（林间空隙 +19 块 / +9.5%），但**总面积与要素数逐位可复现**。
-- 修法：合成前按 mod 60° 折叠再取中位数。
+### 定标方法（可复用，评估任何"网格对齐"改动时用）
+`tree_info` 树心在 **300 m 窗口**做「方位 0.5° × 相位 8×8」细扫，指标 = 树心落在
+格点 **3 m 内**的比例（随机基准 **45.8%**）→ 实测最优 **59.0°、对齐率 79~97%**。
+⚠️ 全幅细扫不可行（1,500 m 跨度上 0.2° 就漂移 5 m）。脚本 `tmp/analyze/probe_phase_local.py`。
 
-### 其它实测要点
-- **水体漏检 92%** 的机制：`build_chm` 把水面置 NaN → `canopy &= isfinite(chm)`
-  → 水面必然非树冠；RGB 蓝度只覆盖 DJI 水体的 7.9%（绿色浑浊水塘不满足 `B≥G>R`）。
+### 被反复引用的量级
 - 「非树」判定 **51%（214,827 m²）完全靠语义分割**；CHM 阈值 ±1 m ≈ ±3.0 万 m²（仅 5 点标定）。
-- 亮白判据缝隙 2,925 m² / 107 块（水塘旁泵房）；非树区 **29% 是绿色植被**（「低矮植被」未实现）。
 - 独立验证：空地距树心 2 m 内仅 **2.0%**（基准 14.5%）；`CHM≥12 m` 区粗糙度 0.604 ≈ 健康油棕
   → 高 CHM 是"伪影叠在真树上"。
-- ⚠️ **残树口径（2026-10-17 重测，优先用这版）**：树心 **558 个**落在空地内（占 15,190 的 **3.7%**）；
-  空地距树心 ≤2 m 面积 **2.1%**。旧说法"274 个多边形 / 228,838 m²"是按多边形计数的严口径，
-  **不要对外用**。探针：`probe_gaps_truth2.py`。
-
-### 本机（家里电脑）环境
-- 原始数据在 `drone data/`：**正射实际文件名 `WGR17-002.tif`**（不是 WGR17.tif）
-  + dsm.tif / segment.tif / tree_info.json。
-- `output/` 已在本机重建（全量 1,041.6 秒）：`wgr17-elev-gaps.geojson`、
-  `forest-mask-50m-exg60.geojson`、`wgr17-final-gaps.geojson`、`arcgis/`（8 类）。
-- 分析脚本在 `.workbuddy-ai/tmp/analyze/probe_*.py`（tmp 不入库）。
-
----
+- 非树区 **29% 是绿色植被**（「低矮植被」未实现）；亮白判据缝隙 2,925 m² / 107 块（水塘旁泵房）。
+- 跨航带曝光差异极大：ExG 中位 37~116（差 3 倍）→ 所有阈值必须对曝光鲁棒。
+- 纹理 std 分档：株位空缺 8~15 / 连片空地 22~26 / 油棕 39~47 / 草地 46.3（草地与油棕重叠）。
+- 草地 vs 油棕光谱：草地 ExG 159 / S 0.64 vs 油棕 ExG 64~102 / S 0.37~0.53
+  ——「立体的绿」被内部阴影打折，**ExG 过高反而不是树**。
 
 ## ★ 2026-10-17 四项修复（家里电脑）
 
@@ -145,7 +130,7 @@
 技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
 Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-**验收基线**：`npm test`（191 项断言）· `cargo test`（14）·
+**验收基线**：`npm test`（445 项断言）· `cargo test`（32）·
 契约测试 95/95 · `cargo check`。
 **打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
 `%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
@@ -182,11 +167,37 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
     不用 `queryRenderedFeatures`（随缩放变 / 测不到 / 不分类别）；
     进框选模式要 disable `dragPan` + `boxZoom`（Shift+拖拽默认是拉框放大）。
 14. **快捷键要先判断焦点**：INPUT/TEXTAREA/SELECT/contenteditable 里一律让位。
-15. **KML 的 `<coordinates>` 是三维的**（`lon,lat,alt`）→ 必须只取前两维，
+15. **UI 是五步工作流**（`lib/workflow.ts` 状态机 + `StepRail` + `NextStepCard` +
+    `MoreMenu`）：header 只留 品牌 / 进度条 / 影像灯 / ↶ ↷ / ⋯，高频动作全在右下角卡片。
+    ⚠️ 三处语义必须分开：**「可选」≠「不阻塞」**（② 范围不阻塞、④ 复核阻塞但可一键跳过）、
+    **「当前有要素」≠「载入过结果」**（`hasGaps` vs `hasResult`，删光后流程会倒退）、
+    **`reviewed` 要纳入 `exported`**（从菜单直接导出后不该再提示去复核）。
+16. **KML 的 `<coordinates>` 是三维的**（`lon,lat,alt`）→ 必须只取前两维，
     否则面积与 Terra Draw 静默算错；多多边形**取最大**（KML 常含图例框）。
-16. **导出的网格参数必须来自磁盘上的算法结果**：前端 `planting_grid` 缺
+17. **导出的网格参数必须来自磁盘上的算法结果**：前端 `planting_grid` 缺
     `origin_x_m/origin_y_m`，拿去构造 GridModel 会让放样点**整体平移**。
-17. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
+18. **结果文件路径不能写死文件名**：产物名由 `job` 决定（`{job}-gaps.geojson`），
+    而 job 是契约 → 只能"扫目录 + 名字含 gaps + 按 mtime 取最新"。
+    ⚠️ 打包态 `ROOT` 指向 `py-runtime/desktop_entry/`（没有 output/）→
+    候选目录**必须含 `cwd/output`**（打包时 cwd=数据根）；
+    缓存必须按 `(path, mtime_ns, size)` 失效，否则"检测完看不到新结果"。
+    ⚠️ `/gaps` 返回空时**绝不能 applyRerun([])**（会把现有结果清空）；
+    要区分"算法自报 0 块"（可清空）与"没收到报告"（必须保留）。
+19. **选结果文件要区分「用户指定时刻」与「文件 mtime」**：`/export` 的要素来自前端 POST，
+    但 `planting_grid` 来自"当前生效文件" → 串批次时**块数完全正确、点位全偏**
+    （3,691→3,656，首点也漂），用户看不出来。修法是启动时记 `time_ns()`，
+    只有比它新产生的文件才允许接管显式路径（既保住"检测完自动刷新"，又不让历史残留抢占）。
+    ⚠️ `gaps_search_dirs()` 永远含 `ROOT/output`：仓库有 20 个 `*gaps*.geojson` 残留，
+    **拿仓库根当 cwd 验收会看到 12 块而不是 1,726 块** → 验收必须用干净数据根。
+20. **界面可直接生成 CHM/掩膜**（`build_derived.py` + `--build-derived` +
+    `derive_core`/`run_build_derived` + `DerivedDialog`）：换园区必做，约 42 秒。
+    ① **薄包装不改算法**：替换模块级 `log()` 把 print 变 NDJSON 事件
+    ② `_StdoutGuard` 把非 JSON 输出转 stderr（GDAL 会往 stdout 打警告）
+    ③ `tree_info.json` 是 build_forest_mask 的**必需**输入（无回退）→ 缺了只出 CHM
+    ④ 生成**不可取消**（半个 CHM 比没有更糟，检测读到不报错）；
+    与检测**双向互锁**（都写 output/）
+    ⑤ 生成完必须重跑检测，否则新 CHM + 旧结果口径不一致
+21. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
     标识符；要查 `<link href>` / `<script src>` / `<img src>` / `@import` / `url(`。
 
 **其它要点**

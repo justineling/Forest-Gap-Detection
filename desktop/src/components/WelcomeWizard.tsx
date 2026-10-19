@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { isTauri, pickFile, setDataPaths, waitBackend, type AppStatus } from '../api/backend'
 
 /**
@@ -16,9 +16,21 @@ import { isTauri, pickFile, setDataPaths, waitBackend, type AppStatus } from '..
 export default function WelcomeWizard({
   status,
   onDone,
+  onCancel,
 }: {
   status: AppStatus
   onDone: () => void
+  /**
+   * 关掉引导（不保存任何改动）。
+   *
+   * 为什么必须有：用户可能只是**误点**了 header 的「选择影像」——
+   * 他本来就有影像、也没打算换。以前这个弹窗没有出口，只能硬着头皮重选一遍，
+   * 或者关掉整个软件。这是最典型的"把人关在屋里"的交互。
+   *
+   * ⚠️ 取消**不能动已有配置**：本组件只在 `start()` 里调 `setDataPaths`，
+   * 所以直接关掉天然安全 —— 千万别在 onCancel 里顺手写配置。
+   */
+  onCancel?: () => void
 }) {
   const [image, setImage] = useState<string | null>(status.image)
   const [gaps, setGaps] = useState<string | null>(status.gaps)
@@ -28,6 +40,22 @@ export default function WelcomeWizard({
 
   const tauri = isTauri()
 
+  // Esc 关闭。
+  // ⚠️ 用 capture 阶段并 stopPropagation：App 里有个全局 Esc（退出绘制 / 清选中），
+  //    不拦住的话按 Esc 会既关弹窗又把地图上的选中清掉。
+  //    正在"启动中"时不允许关 —— 后台正在重启瓦片服务，中途关掉会留下半启动状态。
+  useEffect(() => {
+    if (!onCancel) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || busy) return
+      e.stopPropagation()
+      e.preventDefault()
+      onCancel()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onCancel, busy])
+
   const choose = async (kind: 'image' | 'gaps') => {
     setErr(null)
     if (!tauri) {
@@ -35,7 +63,16 @@ export default function WelcomeWizard({
       return
     }
     try {
-      const p = await pickFile(kind)
+      // 选「检测结果」时直接从数据根的 output/ 打开 —— 结果文件就在那儿。
+      // 选影像不指定：用户自己的照片可能在任何盘，沿用系统记忆的目录更顺手。
+      //
+      // ⚠️ `data_root` 在 `appStatus` 还是 null 时会是 undefined
+      //    （App 用 `appStatus ?? {}` 兜底），直接 `.replace` 会抛 TypeError，
+      //    被 catch 成"打开文件选择框失败：Cannot read properties of undefined"。
+      //    拿不到就不指定目录，退化成系统记忆 —— 比报错好。
+      const root = typeof status.data_root === 'string' ? status.data_root.trim() : ''
+      const defaultPath = kind === 'gaps' && root ? `${root.replace(/[\\/]+$/, '')}/output` : undefined
+      const p = await pickFile(kind, { defaultPath })
       if (!p) return
       if (kind === 'image') setImage(p)
       else setGaps(p)
@@ -78,9 +115,27 @@ export default function WelcomeWizard({
   }
 
   return (
-    <div className="wizard-mask">
+    <div
+      className="wizard-mask"
+      onMouseDown={(e) => {
+        // 只认"点在遮罩上"：点卡片内部时 target 不是遮罩本身
+        if (e.target === e.currentTarget && onCancel && !busy) onCancel()
+      }}
+    >
       <div className="wizard">
         <div className="wizard-head">
+          {onCancel && (
+            <button
+              type="button"
+              className="wizard-close"
+              onClick={onCancel}
+              disabled={busy}
+              title={busy ? '正在启动，稍候…' : '关闭（Esc）—— 不会改动任何设置'}
+              aria-label="关闭"
+            >
+              ×
+            </button>
+          )}
           <h1>开始使用</h1>
           <p className="dim">油棕园空地智能检测 · 先告诉软件你的数据在哪</p>
         </div>
@@ -139,10 +194,15 @@ export default function WelcomeWizard({
           <div className="dim wizard-hint">
             数据目录：<span className="mono">{status.data_root}</span>
             <br />
-            以后想换数据，点右上角「数据」随时改。
+            以后想换数据，点右上角「⋯ 更多 → 更换影像或结果文件」随时改。
           </div>
           <div className="wizard-actions">
             {busy && <span className="dim">{stage}</span>}
+            {onCancel && (
+              <button className="btn" onClick={onCancel} disabled={busy}>
+                取消
+              </button>
+            )}
             <button className="btn primary big" onClick={start} disabled={!image || busy}>
               {busy ? '正在启动…' : '开始使用 →'}
             </button>

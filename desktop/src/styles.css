@@ -551,6 +551,8 @@ kbd {
 }
 
 .wizard {
+  /* × 按钮用 absolute 定位，必须给锚点 */
+  position: relative;
   width: min(700px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
@@ -1367,4 +1369,758 @@ kbd {
   color: #f5cd7a;
   font-size: 11.5px;
   line-height: 1.65;
+}
+
+/* ============================================================================
+   五步工作流（v2 UI）
+   ----------------------------------------------------------------------------
+   设计目标：让用户任何时候都能回答三个问题
+     ① 我在第几步？ ② 还剩几步？ ③ 现在该干什么？
+   对应三块：步进器（header 中部）+ 下一步卡片（地图右下）+ 更多菜单（低频）
+   ============================================================================ */
+
+/* ---------- 工具栏：从 14 个按钮收敛成「品牌 + 步骤 + 4 个图标」 ---------- */
+.toolbar {
+  gap: 12px;
+  padding: 0 12px;
+  min-height: 52px;
+  /* 不再 flex-wrap：步进器自己会横向滚动，比换行更可预测 */
+  flex-wrap: nowrap;
+}
+
+.tb-brand {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+  height: 30px;
+}
+.tb-brand b {
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+.tb-brand .dim {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.tb-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* 图标按钮：正方形、无文字，靠 title 与 aria-label 兜住可发现性 */
+.btn.icon {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+.btn.icon.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn.icon .dot {
+  margin: 0;
+}
+.icon-n {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 步进器 ---------- */
+.step-rail {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 0 4px;
+}
+.step-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.sr-item-wrap {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.sr-line {
+  width: 18px;
+  height: 1px;
+  background: var(--line);
+  margin: 0 4px;
+  flex: 0 0 18px;
+}
+.sr-line.done {
+  background: rgba(61, 220, 151, 0.45);
+}
+
+.sr-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  font-family: inherit;
+  cursor: default;
+  white-space: nowrap;
+}
+.sr-item.done {
+  cursor: pointer;
+  color: var(--text);
+}
+.sr-item.done:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+.sr-item.active {
+  color: var(--text);
+  background: rgba(61, 220, 151, 0.1);
+  border-color: rgba(61, 220, 151, 0.4);
+}
+
+.sr-no {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  flex: 0 0 19px;
+  background: #232e33;
+  color: #7c8b94;
+}
+.sr-item.done .sr-no {
+  background: var(--accent);
+  color: #06231a;
+}
+.sr-item.active .sr-no {
+  background: rgba(61, 220, 151, 0.18);
+  color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(61, 220, 151, 0.18);
+}
+
+.sr-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.25;
+}
+.sr-label {
+  font-size: 12.5px;
+}
+.sr-sub {
+  font-size: 10px;
+  color: #6f7f88;
+  font-variant-numeric: tabular-nums;
+}
+.sr-item.active .sr-sub {
+  color: var(--accent);
+}
+
+/* 窄窗口：只留序号 + 当前步骤名，其余缩成圆点 */
+@media (max-width: 1180px) {
+  .sr-text {
+    display: none;
+  }
+  .sr-item.active .sr-text {
+    display: flex;
+  }
+  .tb-brand .dim {
+    display: none;
+  }
+}
+
+/* ---------- 更多菜单 ---------- */
+.more-wrap {
+  position: relative;
+}
+
+.more-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 950;
+  width: 268px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.6);
+}
+
+.mm-group {
+  padding: 8px 10px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  color: #6f7f88;
+}
+
+.more-menu > button {
+  width: 100%;
+  display: block;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.more-menu > button:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+.more-menu > button:disabled {
+  color: #5c6b73;
+  cursor: not-allowed;
+}
+
+.mm-sep {
+  height: 1px;
+  margin: 6px 8px;
+  background: var(--line);
+}
+
+.mm-help {
+  padding: 0 4px 2px;
+}
+.mm-help summary {
+  cursor: pointer;
+  padding: 7px 6px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+.mm-help summary:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.mm-help dl {
+  margin: 4px 6px 8px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 10px;
+  font-size: 11px;
+  align-items: baseline;
+}
+.mm-help dt {
+  color: var(--text);
+  white-space: nowrap;
+}
+.mm-help dd {
+  margin: 0;
+  color: var(--dim);
+}
+.mm-help kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #232e33;
+  border: 1px solid var(--line);
+}
+
+/* ---------- 地图单元格（卡片定位的锚）---------- */
+.map-cell {
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+.map-cell > .map-wrap {
+  flex: 1;
+}
+
+/* ---------- 「下一步」卡片 ---------- */
+.next-card {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 12;
+  width: 330px;
+  max-width: calc(100% - 28px);
+  padding: 12px 14px 13px;
+  background: rgba(22, 28, 32, 0.97);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 11px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+.next-card.done {
+  border-left-color: var(--accent);
+  background: rgba(24, 42, 35, 0.97);
+}
+/* 结果文件没找到：数据链路异常，用警示色，别和"流程走完了"混在一起 */
+.next-card.warn,
+.next-pill.warn {
+  border-left-color: var(--warn);
+}
+.next-card.warn {
+  background: rgba(42, 34, 18, 0.97);
+}
+.nc-warn {
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.nc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.nc-step {
+  font-size: 11.5px;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nc-check {
+  color: var(--accent);
+  font-size: 13px;
+}
+.nc-opt {
+  font-style: normal;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #2b353a;
+  color: #8b9aa3;
+}
+
+.nc-min {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.nc-min:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.nc-body {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.nc-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.nc-actions .btn.primary {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+
+/* 折叠后的胶囊 */
+.next-pill {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  background: rgba(22, 28, 32, 0.97);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.next-pill:hover {
+  border-color: var(--accent);
+}
+.next-pill.done {
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+.np-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.15);
+}
+.np-more {
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+/* 有选中项时卡片上移，给底部批量操作栏让位（窄地图下两者会重叠） */
+.next-card.raised,
+.next-pill.raised {
+  bottom: 72px;
+}
+
+/* 菜单底部的说明性文字（不是可点项） */
+.mm-note {
+  margin: 2px 10px 6px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: #6f7f88;
+  word-break: break-all;
+}
+.mm-note code {
+  font-family: inherit;
+  color: var(--dim);
+}
+
+/* 窄窗口：卡片收窄，别把地图压得看不见 */
+@media (max-width: 1280px) {
+  .next-card {
+    width: 288px;
+    right: 10px;
+    bottom: 10px;
+    padding: 10px 12px 11px;
+  }
+  .next-pill {
+    right: 10px;
+    bottom: 10px;
+  }
+  .next-card.raised,
+  .next-pill.raised {
+    bottom: 68px;
+  }
+}
+
+/* 复核清单：自定义最小面积输入框 */
+.rv-area-input {
+  width: 74px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 3px 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rv-area-input::placeholder {
+  color: #6f7f88;
+  text-align: center;
+}
+.rv-area-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.rv-area-input.active {
+  border-color: var(--accent);
+  background: rgba(61, 220, 151, 0.08);
+}
+/* 数字输入框的上下箭头在窄框里很挤，去掉 */
+.rv-area-input::-webkit-outer-spin-button,
+.rv-area-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.rv-area-input {
+  -moz-appearance: textfield;
+}
+
+/* 引导弹窗的关闭按钮 */
+.wizard-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.wizard-close:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+.wizard-close:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ============================================================================
+   帮助弹窗（左栏 / 右栏 / header 三处复用）
+   ----------------------------------------------------------------------------
+   刻意不做成"首次自动弹"：用户第一次打开时已经有引导卡片，
+   再弹三个说明会把人劝退。帮助应该是"想不起来时能查"。
+   ============================================================================ */
+.ph-help {
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: 19px;
+  height: 19px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.ph-help:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(61, 220, 151, 0.1);
+}
+
+.help-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 10, 12, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.help-dialog {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.7);
+}
+
+.help-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 20px 22px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.help-head h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  padding: 0;
+  border: none;
+}
+.help-intro {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--dim);
+  max-width: 58ch;
+}
+.help-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+.help-close:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.help-body {
+  padding: 6px 22px 8px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.help-sec {
+  margin: 16px 0 4px;
+}
+.help-sec h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+}
+
+.help-item {
+  display: grid;
+  grid-template-columns: 148px 1fr;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(38, 49, 55, 0.7);
+}
+.help-item:first-of-type {
+  border-top: none;
+}
+.help-item dt {
+  font-size: 12.5px;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.6;
+}
+.help-item dd {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: #c3d0d8;
+}
+
+.help-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 22px 16px;
+  border-top: 1px solid var(--line);
+}
+.help-foot .dim {
+  font-size: 11.5px;
+  margin-right: auto;
+}
+.help-foot kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #232e33;
+  border: 1px solid var(--line);
+}
+
+@media (max-width: 640px) {
+  .help-item {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
+/* ============================================================================
+   生成高度图 / 林地边界（DerivedDialog）
+   ============================================================================ */
+.derived-dialog {
+  width: min(660px, 100%);
+}
+
+.dev-progress,
+.dv-progress {
+  padding: 4px 0 2px;
+}
+
+.dv-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.dv-head b {
+  color: var(--accent);
+}
+
+.dv-msg {
+  margin-top: 9px;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* 最近几行日志：进度比例是粗估的，"它在干什么"才是让人安心的东西 */
+.dv-tail {
+  margin-top: 8px;
+  padding: 8px 10px;
+  max-height: 92px;
+  overflow: auto;
+  background: #0b1114;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.75;
+  color: #8b9aa3;
+}
+
+.dv-note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.dv-done {
+  padding: 2px 0;
+}
+.dv-done > b {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--accent);
+  font-size: 14px;
+}
+.dv-done .kv {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+.dv-done .kv span:first-child {
+  color: var(--dim);
+}
+.dv-done .kv .mono {
+  word-break: break-all;
+  font-size: 11.5px;
 }

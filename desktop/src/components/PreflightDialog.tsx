@@ -6,6 +6,14 @@ interface Props {
   onCancel: () => void
   onProceed: () => void
   onOpenData: () => void
+  /**
+   * 缺 CHM / 掩膜时引导去「生成」。
+   *
+   * 为什么要有这个按钮：以前缺 CHM 只能提示"结果会退化"，
+   * 用户没有下一步动作 —— 知道会算偏，却不知道怎么办。
+   * 这两个文件界面现在能生成了，所以这里应该直接给出口。
+   */
+  onBuildDerived?: () => void
 }
 
 const ICON: Record<string, string> = { ok: '✓', warn: '!', error: '✕', info: 'i' }
@@ -25,10 +33,18 @@ export default function PreflightDialog({
   onCancel,
   onProceed,
   onOpenData,
+  onBuildDerived,
 }: Props) {
   const errors = result.items.filter((i) => i.status === 'error')
   const warns = result.items.filter((i) => i.status === 'warn')
   const blocked = errors.length > 0
+  /** 缺的是"可以生成"的那两类文件（而不是影像本身） */
+  const canDerive =
+    !!onBuildDerived &&
+    result.items.some(
+      (i) =>
+        (i.key === 'chm_path' || i.key === 'forest_mask') && i.status !== 'ok',
+    )
 
   return (
     <div className="wizard-mask">
@@ -69,6 +85,11 @@ export default function PreflightDialog({
             <button className="btn" onClick={onCancel} disabled={busy}>
               取消
             </button>
+            {canDerive && (
+              <button className="btn" onClick={onBuildDerived} disabled={busy}>
+                去生成高度图 / 林地边界
+              </button>
+            )}
             {blocked ? (
               <button className="btn primary big" onClick={onOpenData} disabled={busy}>
                 去选择数据
