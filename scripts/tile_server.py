@@ -720,6 +720,86 @@ def ensure_overviews(
 
 
 # --------------------------------------------------------------------------
+# 导入期的金字塔体检（桌面端"选了影像之后"调用）
+# --------------------------------------------------------------------------
+def overview_plan(source: Path, mode: str = "auto") -> dict:
+    """只做判断、**不写任何文件**：这张影像要不要建金字塔、会走哪条路。
+
+    为什么单独抽出来：桌面端需要先告诉用户"要花多少磁盘、会不会动你的原图"，
+    再让他点确认。如果直接执行，用户是**在不知情的情况下**等了 3 分钟、
+    磁盘少了 4.7 GB，而且原图可能已经被改。
+    """
+    source = Path(source)
+    with rasterio.open(source) as ds:
+        levels = [int(v) for v in ds.overviews(1)]
+        width, height = ds.width, ds.height
+    size = source.stat().st_size
+    gdaladdo = _find_gdaladdo()
+
+    if levels:
+        action, why = "none", "已有金字塔，无需处理"
+    elif mode == "inplace":
+        action, why = "inplace", "就地写入源文件（不可逆，+约 25%）"
+    elif mode == "gdal":
+        if gdaladdo:
+            action, why = "ovr", "生成外置 .ovr（源文件不动，约占原图 1/3）"
+        else:
+            action, why = "error", "找不到 gdaladdo，无法生成外置 .ovr"
+    elif mode == "copy":
+        action, why = "copy", "复制副本后建内部金字塔（源文件不动，约占原图 100%）"
+    else:  # auto
+        if gdaladdo:
+            action, why = "ovr", "生成外置 .ovr（源文件不动，约占原图 1/3）"
+        else:
+            action, why = "copy", "无 gdaladdo，复制副本（源文件不动，约占原图 100%）"
+
+    # 额外磁盘估算：.ovr 约 1/3；副本约 1 倍；就地约 1/4
+    factor = {"none": 0.0, "ovr": 0.34, "copy": 1.0, "inplace": 0.25, "error": 0.0}[action]
+    return {
+        "source": str(source),
+        "has_overviews": bool(levels),
+        "levels": levels,
+        "width": width,
+        "height": height,
+        "size_bytes": size,
+        "extra_bytes": int(size * factor),
+        "gdaladdo": gdaladdo,
+        "mode": mode,
+        "action": action,
+        "why": why,
+        "touches_source": action == "inplace",
+    }
+
+
+def build_overviews_only(source: Path, mode: str, dry_run: bool = False) -> int:
+    """一次性建金字塔后退出（不启动服务）。stdout 每行一个 JSON 事件。
+
+    stdout 是**数据通道**（与 sidecar 同一约定）：只输出 JSON，
+    人类可读的话一律走 stderr —— 否则宿主解析时会多出无法识别的行。
+    """
+    def emit(obj: dict) -> None:
+        print(json.dumps(obj, ensure_ascii=False), flush=True)
+
+    plan = overview_plan(source, mode)
+    emit({"event": "plan", **plan})
+
+    if dry_run or plan["action"] == "none":
+        emit({"event": "done", "ok": True, "note": plan["why"], "served": str(source)})
+        return 0
+    if plan["action"] == "error":
+        emit({"event": "done", "ok": False, "error": plan["why"]})
+        return 3
+
+    try:
+        served, note = ensure_overviews(Path(source), ROOT / "output" / ".tile-cache", mode)
+    except RuntimeError as e:
+        emit({"event": "done", "ok": False, "error": str(e)})
+        return 3
+    emit({"event": "done", "ok": True, "note": note, "served": str(served)})
+    return 0
+
+
+# --------------------------------------------------------------------------
 # 导出
 # --------------------------------------------------------------------------
 # 不可种植类别（与前端 lib/classes.ts 的 unplantable 组一致）
@@ -1172,6 +1252,16 @@ def main() -> int:
         "copy=总是复制副本；gdal=强制外置 .ovr（需 gdaladdo）；"
         "inplace=就地写入源文件（不可逆，需显式指定）",
     )
+    ap.add_argument(
+        "--overviews-only",
+        action="store_true",
+        help="只建金字塔后退出，不启动服务（桌面端导入影像时用；stdout 输出 JSON 事件）",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="配合 --overviews-only：只报告会怎么做，不实际写任何文件",
+    )
     args = ap.parse_args()
 
     source = Path(args.source) if args.source else next(
@@ -1184,6 +1274,9 @@ def main() -> int:
         return 2
 
     source = Path(source)
+    if args.overviews_only:
+        return build_overviews_only(source, args.ovr_mode, args.dry_run)
+
     if args.build_overviews:
         try:
             source, ovr_note = ensure_overviews(
