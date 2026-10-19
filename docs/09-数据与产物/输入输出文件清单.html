@@ -174,12 +174,14 @@
   </tbody>
 </table>
 
-<div class="card warn">
-  <h4>⚠️ 目前界面里还没有「生成 CHM / 掩膜」的按钮</h4>
+<div class="card">
+  <h4>✅ 界面里可以直接生成（2026-10-19 起）</h4>
   <p style="margin:0">
-  这两步现在只能在命令行跑一次。换园区时要重新跑：
-  <span class="mono">build_chm.py</span> 约 2~4 分钟、<span class="mono">build_forest_mask.py</span> 约 1 分钟。
-  生成完放进数据根的 <span class="mono">output/</span>，之后的检测就能自动用上。
+  「⋯ 更多 → 生成高度图与林地边界…」一步完成两步（约 1 分钟，本项目实测 42 秒）：
+  先出 <span class="mono">chm.tif</span>，再出 <span class="mono">forest-mask.geojson</span>，
+  直接写进数据根的 <span class="mono">output/</span>，之后的检测自动用上。<br>
+  <span class="dim">命令行仍可用（<span class="mono">scripts/build_derived.py</span>），
+  但现场用户不需要碰它。生成完记得重跑一次检测 —— 旧结果是用旧高度图算的。</span>
   </p>
 </div>
 

@@ -130,7 +130,7 @@
 技术栈已冻结：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS），
 Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 条坑见 `desktop/README.md`。
 
-**验收基线**：`npm test`（445 项断言）· `cargo test`（25）·
+**验收基线**：`npm test`（445 项断言）· `cargo test`（32）·
 契约测试 95/95 · `cargo check`。
 **打包**：`desktop_entry.py` 单入口 → PyInstaller 179 MB → NSIS **67.7 MiB**，装到
 `%LOCALAPPDATA%\Forest Gap Detection`；release 无控制台，排障看 `%LOCALAPPDATA%\fgd\logs\app.log`。
@@ -189,7 +189,15 @@ Rust 外壳 + **stdio NDJSON sidecar**（只有瓦片走 HTTP）。细节与 24 
     只有比它新产生的文件才允许接管显式路径（既保住"检测完自动刷新"，又不让历史残留抢占）。
     ⚠️ `gaps_search_dirs()` 永远含 `ROOT/output`：仓库有 20 个 `*gaps*.geojson` 残留，
     **拿仓库根当 cwd 验收会看到 12 块而不是 1,726 块** → 验收必须用干净数据根。
-20. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
+20. **界面可直接生成 CHM/掩膜**（`build_derived.py` + `--build-derived` +
+    `derive_core`/`run_build_derived` + `DerivedDialog`）：换园区必做，约 42 秒。
+    ① **薄包装不改算法**：替换模块级 `log()` 把 print 变 NDJSON 事件
+    ② `_StdoutGuard` 把非 JSON 输出转 stderr（GDAL 会往 stdout 打警告）
+    ③ `tree_info.json` 是 build_forest_mask 的**必需**输入（无回退）→ 缺了只出 CHM
+    ④ 生成**不可取消**（半个 CHM 比没有更糟，检测读到不报错）；
+    与检测**双向互锁**（都写 output/）
+    ⑤ 生成完必须重跑检测，否则新 CHM + 旧结果口径不一致
+21. **"单文件自包含"自检不能搜 `"http://"`**：内联 SVG 的 `xmlns` 是命名空间
     标识符；要查 `<link href>` / `<script src>` / `<img src>` / `@import` / `url(`。
 
 **其它要点**
