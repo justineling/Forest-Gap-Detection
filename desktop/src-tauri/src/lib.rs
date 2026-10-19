@@ -308,7 +308,58 @@ fn resolve_image(app: &tauri::AppHandle) -> Option<PathBuf> {
     None
 }
 
-/// 结果文件：配置优先，其次数据根下的常见位置。
+/// 在**一个目录**里找名字含 `gaps` 的 geojson，按 mtime 取最新。
+///
+/// 为什么是"含 gaps + 按 mtime"而不是写死文件名：
+/// 产物名由前端的 `job` 参数决定（当前是 `wgr17-desktop-gaps.geojson`），
+/// 换一个 job 名、或者换一台机器跑，写死的名字就永远对不上 ——
+/// 实测症状是"检测明明成功了（1,762 个要素在磁盘上），界面却说没有空地"。
+/// 按特征 + mtime 发现，才能做到"谁最新用谁"，且与 job 名解耦。
+fn scan_gaps(dir: &Path) -> Option<PathBuf> {
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()? {
+        let Ok(e) = entry else { continue };
+        let p = e.path();
+        let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
+            continue;
+        };
+        if !name.contains("gaps") || !name.ends_with(".geojson") {
+            continue;
+        }
+        // 目录名里带 gaps 的（`output/gaps-archive/`）不该被当成结果文件
+        if !p.is_file() {
+            continue;
+        }
+        let mtime = std::fs::metadata(&p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+            best = Some((mtime, p));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// 在数据根下找最新的检测结果：先看 `output/`，再退回数据根本身。
+///
+/// 顺序是刻意的：`output/` 是本项目约定的产物目录，数据根下偶尔会有
+/// 用户手动拷出来的结果（排障/交付时很常见），作为兜底。
+fn resolve_gaps_in(data: &Path) -> Option<PathBuf> {
+    for sub in ["output", ""] {
+        let dir = if sub.is_empty() {
+            data.to_path_buf()
+        } else {
+            data.join(sub)
+        };
+        if let Some(p) = scan_gaps(&dir) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// 结果文件：settings.json 里显式配置的优先（用户手动指定过就尊重他），
+/// 否则在数据根下按 mtime 找最新的 `*gaps*.geojson`。
 fn resolve_gaps(app: &tauri::AppHandle) -> Option<PathBuf> {
     let cfg = load_config();
     if let Some(p) = cfg.gaps {
@@ -317,20 +368,7 @@ fn resolve_gaps(app: &tauri::AppHandle) -> Option<PathBuf> {
             return Some(pb);
         }
     }
-    let data = data_base(app);
-    for name in ["wgr17-final-gaps.geojson", "wgr17-elev-gaps.geojson"] {
-        for sub in ["output", ""] {
-            let cand = if sub.is_empty() {
-                data.join(name)
-            } else {
-                data.join(sub).join(name)
-            };
-            if cand.exists() {
-                return Some(cand);
-            }
-        }
-    }
-    None
+    resolve_gaps_in(&data_base(app))
 }
 
 /// 写一行日志到 `%LOCALAPPDATA%\fgd\logs\app.log` 并同步打到 stderr。
@@ -413,6 +451,11 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     // 让前端显示「选择影像」引导（而不是给用户看一句开发者才懂的命令）。
     let image = resolve_image(app);
     let gaps = resolve_gaps(app);
+    // 结果文件找不到时界面只会显示"没有空地" —— 这一行是唯一的排障线索
+    match &gaps {
+        Some(g) => log_line(&format!("检测结果：{}", g.display())),
+        None => log_line("还没有检测结果（数据根的 output/ 下没有 *gaps*.geojson）"),
+    }
 
     let mut args: Vec<String> = Vec::new();
     if backend.is_bundled() {
@@ -1307,6 +1350,18 @@ mod tests {
         fs::write(p, vec![b'x'; bytes]).unwrap();
     }
 
+    /// 造一个文件并**显式设定 mtime**（自 UNIX_EPOCH 起的秒数）。
+    ///
+    /// 为什么不用 sleep 制造"谁更新"：文件系统的时间戳粒度与刷新时机并不保证
+    /// "先写 A 后写 B 就一定 B 更新"，mtime 相同会让"取最新"退化成"取任意一个"，
+    /// 测试就会偶发失败。显式设时间戳，测试才是确定性的。
+    fn touch_at(p: &Path, bytes: usize, unix_secs: u64) {
+        touch(p, bytes);
+        let f = fs::File::options().write(true).open(p).unwrap();
+        f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(unix_secs))
+            .unwrap();
+    }
+
     fn item<'a>(r: &'a PreflightResult, key: &str) -> &'a PreflightItem {
         r.items.iter().find(|i| i.key == key).expect("缺少预检项")
     }
@@ -1620,6 +1675,70 @@ mod tests {
             }),
         );
         assert_eq!(item(&r, "roi").status, "ok");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    // ---- 结果文件发现（缺陷：界面说"没有空地"，其实检测成功了）----
+
+    #[test]
+    fn latest_gaps_wins_by_mtime() {
+        // 两个名字都含 gaps：a 更旧、b 更新 → 必须选 b
+        let base = scratch("gaps-new");
+        touch_at(&base.join("output/a-gaps.geojson"), 16, 1_600_000_000);
+        touch_at(&base.join("output/b-gaps.geojson"), 16, 1_700_000_000);
+        let got = resolve_gaps_in(&base).expect("必须找到一个结果文件");
+        assert_eq!(
+            got.file_name().unwrap().to_string_lossy(),
+            "b-gaps.geojson",
+            "必须按 mtime 取最新的那个，否则用户会一直看到上一轮的结果"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn gaps_name_is_not_hardcoded() {
+        // 产物名由前端 `job` 决定（wgr17-desktop-gaps.geojson）——
+        // 以前写死 wgr17-final-gaps / wgr17-elev-gaps，换 job 名就永远读不到
+        let base = scratch("gaps-name");
+        touch_at(&base.join("output/wgr17-desktop-gaps.geojson"), 16, 1_700_000_000);
+        let got = resolve_gaps_in(&base).expect("不能只认写死的文件名");
+        assert!(got.to_string_lossy().contains("wgr17-desktop-gaps"));
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn gaps_ignores_unrelated_geojson() {
+        // `forest-mask-*.geojson` 名字里没有 gaps，绝不能当成检测结果
+        let base = scratch("gaps-unrelated");
+        touch_at(&base.join("output/forest-mask-50m-exg60.geojson"), 16, 1_700_000_000);
+        touch_at(&base.join("output/ab-w1.geojson"), 16, 1_700_000_001);
+        assert!(
+            resolve_gaps_in(&base).is_none(),
+            "非结果文件必须被忽略，否则会把掩膜当成空地展示"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn no_gaps_file_returns_none() {
+        let base = scratch("gaps-none");
+        fs::create_dir_all(base.join("output")).unwrap();
+        assert!(resolve_gaps_in(&base).is_none());
+        // output/ 不存在时也不能 panic（首次使用就是这种状态）
+        let empty = scratch("gaps-noout");
+        assert!(resolve_gaps_in(&empty).is_none());
+        fs::remove_dir_all(&base).ok();
+        fs::remove_dir_all(&empty).ok();
+    }
+
+    #[test]
+    fn gaps_falls_back_to_data_root() {
+        // output/ 里没有、但数据根下有一份（用户手动拷出来排障的常见形态）
+        let base = scratch("gaps-root");
+        fs::create_dir_all(base.join("output")).unwrap();
+        touch_at(&base.join("manual-gaps.geojson"), 16, 1_700_000_000);
+        let got = resolve_gaps_in(&base).expect("数据根下的结果也要认");
+        assert_eq!(got.file_name().unwrap().to_string_lossy(), "manual-gaps.geojson");
         fs::remove_dir_all(&base).ok();
     }
 }
