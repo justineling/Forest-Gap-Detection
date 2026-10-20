@@ -1,0 +1,18 @@
+# Forest Gap Detection —— Python 运行依赖
+#
+# 用途：CI（.github/workflows/ci.yml）与本地 .venv 共用同一份清单。
+# 背景：此前 CI 手写 `pip install numpy rasterio scipy shapely pyproj pyshp`，
+#       漏了 Pillow（tile_server.py 顶层 import PIL）→ CLI --help 冒烟层
+#       一直 ModuleNotFoundError，CI 从未变绿。清单收敛到本文件避免再漏。
+#
+# 不在此列：deepforest（~1 GB torch 依赖，仅 scripts/active_learning.py 用，
+#           需要时单独装）；matplotlib 等仅临时分析脚本用。
+
+numpy>=1.26
+rasterio>=1.3
+scipy>=1.11
+shapely>=2.0
+pyproj>=3.6
+pyshp>=2.3
+pillow>=10.0
+pandas>=2.0

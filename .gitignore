@@ -50,7 +50,16 @@ desktop/tests/dist/
 # ---- PyInstaller 打包产物（179 MB 二进制，绝不入库）----
 # 只提交 scripts/desktop_entry.py 与 scripts/build_desktop_runtime.ps1，
 # 换机器跑一次构建脚本即可重新生成。
-desktop/runtime/
+#
+# 例外：desktop/runtime/desktop_entry/ 里放一个 .gitkeep 占位。
+# 原因：tauri.conf.json 的 bundle.resources 指向该目录，tauri-build 对
+# resources 做存在性硬检查（目录缺失 → build.rs 报错 → cargo test/tauri build
+# 全挂）。占位文件让干净克隆也能跑 cargo test，CI 不必依赖打包产物。
+# ⚠️ git 的规则：父目录被忽略后不能直接 `!子文件`，必须逐级放行（下面 4 行）。
+desktop/runtime/*
+!desktop/runtime/desktop_entry/
+desktop/runtime/desktop_entry/*
+!desktop/runtime/desktop_entry/.gitkeep
 build/pyinstaller/
 build/*.spec
 *.spec.bak

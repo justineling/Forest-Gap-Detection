@@ -14,6 +14,19 @@
 # · e2e（`desktop/tests/e2e/`）：需要真 Chrome + 真影像，手工回归用
 # · `tauri build`：4 分钟且要签名证书，发布时手动跑
 # · 全量检测：350 秒，成本远超收益
+#
+# ## 曾经"从来没过"的三个原因（2026-10-20 修）
+#
+# 1. `backend`：`tauri.conf.json` 的 `bundle.resources` 指向
+#    `../runtime/desktop_entry`（PyInstaller 产物，不入库）。tauri-build 对
+#    resources 做**存在性硬检查**（canonicalize + is_file），目录缺失时
+#    build.rs 直接报错 → cargo test 编译期就挂。修法：仓库里放一个
+#    `.gitkeep` 占位（.gitignore 开了例外），workflow 再兜底建一次目录。
+# 2. `frontend`：依赖清单是手写的，漏了 Pillow —— `tile_server.py` 顶层
+#    `from PIL import Image`，`--help` 冒烟层必然 ImportError。
+#    修法：依赖收敛到仓库根的 `requirements.txt`。
+# 3. `ubuntu-latest` 于 2026-10-19 起迁往 Ubuntu 26，runner 镜像行为会漂移。
+#    修法：显式钉 `ubuntu-24.04`，要升级时单独改这一行。
 name: CI
 
 on:
@@ -31,17 +44,19 @@ concurrency:
 jobs:
   frontend:
     name: 前端 + Python 静态检查
-    runs-on: ubuntu-latest
+    # 不用 ubuntu-latest：2026-10-19 起该标签迁往 Ubuntu 26，镜像内容会漂移，
+    # 钉死 24.04 让"昨天绿今天红"不至于来自 runner 换版
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -53,7 +68,7 @@ jobs:
         working-directory: desktop
         run: npx tsc --noEmit
 
-      - name: 前端断言（445 项）
+      - name: 前端断言（529 项）
         working-directory: desktop
         run: npm test
 
@@ -66,8 +81,10 @@ jobs:
       # 这层抓 argparse 构造期异常。
       # 现实价值：它当场抓出过 process_image.py --help 崩溃（help 里的裸 % 触发
       # ValueError: unsupported format character）—— 那是 ruff 和 tsc 都看不见的。
+      # 依赖必须从 requirements.txt 装：手写清单漏过 Pillow，导致 tile_server.py
+      # （顶层 import PIL）在这一层一直 ImportError。
       - name: 安装 Python 运行依赖（--help 需要 import 顶层模块）
-        run: pip install numpy rasterio scipy shapely pyproj pyshp
+        run: pip install -r requirements.txt
 
       # 文档红线：单文件自包含 / 无 Markdown 残留 / 标签平衡。
       # 不加这层的话，"在 HTML 里写 **加粗**"这种错会一直漏（我犯了三次）。
@@ -93,9 +110,9 @@ jobs:
     name: Rust 单测 + 契约测试
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -105,12 +122,22 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
+      # tauri.conf.json 的 bundle.resources 指向 ../runtime/desktop_entry
+      # （PyInstaller 产物，不入库）。tauri-build 的 copy_resources 会对每个
+      # 资源条目 canonicalize + 检查 is_file，**目录不存在就直接报错**，
+      # build.rs 失败 → cargo test 编译期挂掉。这是 CI 长期红的第一个原因。
+      # 空目录就够：ResourcePaths 展开后无文件可复制，不报错。
+      # 仓库里已放 .gitkeep 占位，这里再兜一次底（防止占位文件被误删）。
+      - name: 补齐 tauri-build 需要的资源目录
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path desktop/runtime/desktop_entry | Out-Null
+
       - name: Rust 单测（32 项）
         working-directory: desktop/src-tauri
         run: cargo test --message-format=short
 
       - name: 安装 Python 依赖
-        run: pip install numpy rasterio scipy shapely pyproj pyshp
+        run: pip install -r requirements.txt
 
       - name: 契约测试（95 项）
         run: python scripts/test_sidecar_contract.py
