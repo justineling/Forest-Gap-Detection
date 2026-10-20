@@ -38,7 +38,8 @@
 ## 7. 批处理脚本（项目根，UTF-8 无 BOM + CRLF）
 - 入口：`构建安装包.bat`（中文）/ **`Build Installer.bat`（英文，2026-10-20 新增，动机：cmd 乱码）** / `启动桌面端.bat`；共享库 `_环境准备.bat`（子命令派发，顶层禁 setlocal）。
 - **`FG_LANG=en` → 共享库英文输出**（21 处 if/else，默认中文零变化）；英文入口在 setlocal 后设置；心跳子进程经环境变量继承。
-- ⚠️ **if (...) 块内的 echo 文本禁用 ASCII 括号**（提前闭合代码块 → `. was unexpected at this time.`）。中文原版靠全角（）天然规避；英文翻译必须替换（扫描器见 10-20 日志）。
+- ⚠️ **if (...) 块内的 echo 文本禁用 ASCII 括号**（提前闭合代码块）。两种症状：① 显性：`. was unexpected at this time.` 脚本静默死亡；② **隐性：if/else 双双执行、`set` 丢失**（公司电脑实测 `(cargo)` → [缺失]/[ready] 同屏、FG_NEED_RUST 没置位、跳过自动安装直到构建才失败）。中文原版靠全角（）天然规避；英文翻译必须替换。兜底：`scripts/check_bat_safety.py`（13 项 selftest，覆盖块内裸 echo 与**任意嵌套深度的单行 if-echo**，已进 check_all 第 9 层与 CI）。
+- **check_runtime 的 Rust 判定必须真跑 `cargo --version`**（rustup 无默认工具链时 cargo 是能 where 到、一执行就报错的 shim，只 where 会误判"就绪"）。
 - ✅ 已修复（2026-10-20）：dba6d11 曾把 `park_stale` 跑到 `set FG_REL/FG_STALE_DIR` 之前 → 旧安装包挪走保护静默失效。现两行 `park_stale`（含注释块）必须位于 `set "FG_STALE_DIR=…"` 之后、`mark_project_path` 之前（两入口同改；坑清单第 46 条；QA 桩测 56/56）。
 - 测试法：桩 helper + 桩 npm.bat + 假产物目录干跑全部分支（见 10-20 日志，42 断言）。
 
