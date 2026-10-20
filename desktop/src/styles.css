@@ -644,6 +644,73 @@ kbd {
   line-height: 1.6;
 }
 
+/* 失败标题单独加粗：用户第一眼要知道"到底是什么错了"，
+   而不是像以前那样被三条并列的猜测（①②③）糊住。 */
+.wizard-err-title {
+  font-weight: 600;
+  color: #ffc9c9;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+/* 可执行下一步。用数字/项目符号而不是段落：
+   用户是照着做的，不是读论文。 */
+.wizard-err-steps {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  color: #f0d0d0;
+}
+
+.wizard-err-steps li {
+  margin: 3px 0;
+  word-break: break-word;
+  /* 步骤里有命令行，等宽更不容易抄错 */
+  white-space: pre-wrap;
+}
+
+/* 技术细节默认折叠：普通人不需要看，排障时一键展开。
+   展开后要能选中复制（这是发给开发者的原始证据）。 */
+.wizard-err-diag {
+  margin-top: 8px;
+  border-top: 1px dashed rgba(224, 82, 82, 0.35);
+  padding-top: 8px;
+}
+
+.wizard-err-diag > summary {
+  cursor: pointer;
+  color: #ffb4b4;
+  opacity: 0.85;
+  user-select: none;
+}
+
+.wizard-err-diag > summary:hover {
+  opacity: 1;
+}
+
+.wizard-err-diag .mono {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #ffe0e0;
+  user-select: text;
+  /* 长路径 / 长 JSON 必须能换行，否则会把弹窗撑破 */
+  word-break: break-all;
+}
+
+.wizard-err-log {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.32);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
 .wizard-foot {
   display: flex;
   align-items: flex-end;

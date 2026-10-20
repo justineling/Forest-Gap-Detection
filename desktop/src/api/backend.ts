@@ -47,14 +47,34 @@ export interface BackendStatus {
   online: boolean
   meta?: RasterMeta
   error?: string
+  /** `/meta` 应答来自别的程序（端口被占用），不是本应用的瓦片服务 */
+  foreign?: boolean
 }
+
+/** 本应用瓦片服务的身份标记，与 `scripts/tile_server.py` 的 `meta["app"]` 一致 */
+export const TILE_APP_ID = 'fgd-tile-server'
 
 /** 探测后端是否在线（并顺手取回影像元数据） */
 export async function probeBackend(): Promise<BackendStatus> {
   try {
     const meta = await getJson<RasterMeta>('/meta')
+    // ⚠️ 只判 `ok` 是不够的：8765 上可能是**别人的程序**，对方也可能返回 ok:true。
+    //    身份不认识就不算就绪，否则前端会把别人的页面/数据当成自己的。
+    if (meta?.app !== undefined) {
+      if (meta.app !== TILE_APP_ID) {
+        return {
+          online: false,
+          foreign: true,
+          error: `端口被其它程序占用（应答方 app=${meta.app}）`,
+        }
+      }
+      return meta.ok ? { online: true, meta } : { online: false, error: '后端返回 ok=false' }
+    }
+    // 兼容本次改动之前构建的后端（没有 app 字段）：靠 source + tile_url 认亲，
+    // 否则用户升级外壳后，自己上一版残留的服务进程会被误判成"外人"。
     if (!meta?.ok) return { online: false, error: '后端返回 ok=false' }
-    return { online: true, meta }
+    if (typeof meta.source === 'string' && !!meta.tile_url) return { online: true, meta }
+    return { online: false, error: '后端应答缺少必要字段' }
   } catch (e) {
     return { online: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -490,6 +510,96 @@ export async function waitBackend(timeoutMs = 90_000): Promise<boolean> {
     await new Promise((r) => setTimeout(r, 800))
   }
   return false
+}
+
+/**
+ * 瓦片服务排障快照（外壳 Rust 侧采集）。
+ *
+ * 字段与 `desktop/src-tauri/src/lib.rs` 的 `TileDiag` 一一对应 —— 改一处必须改另一处。
+ */
+export interface TileDiag {
+  port: number
+  /** 端口上有没有人在听（**只能证明"有人在听"**，不能证明是我们的服务） */
+  port_open: boolean
+  /** 应答 `/meta` 的是不是本应用的服务 */
+  ours: boolean
+  /** `/meta` 应答前 300 字 —— 不是自己人时，这就是"别人长什么样" */
+  meta_head: string
+  probe_error: string
+  /** 我们拉起的子进程是否还活着 */
+  child_alive: boolean
+  /** 退出码（自己退出的才有；0xC0000135 = DLL 找不到，0xC0000142 = DLL 初始化失败） */
+  exit_code: number | null
+  /** 上次启动被拒的原因（端口被占等） */
+  start_error: string
+  /** 子进程 stderr 最近 60 行 —— traceback 就在这里 */
+  log_tail: string[]
+  backend: string | null
+}
+
+/**
+ * 取一次排障快照。浏览器模式返回 null（没有外壳可问）。
+ *
+ * 为什么要它：界面上原来那句「影像服务没能启动，请确认①文件占用②标准GeoTIFF
+ * ③磁盘空间」是**纯猜测**——它只知道"120 秒内 /meta 没应答"。真因（端口被别人占、
+ * 杀软拦截导致进程秒退、GDAL 打不开文件）只有外壳知道。
+ */
+export async function tileDiagnose(): Promise<TileDiag | null> {
+  if (!isTauri()) return null
+  try {
+    return await tauriInvoke<TileDiag>('tile_diagnose')
+  } catch {
+    return null
+  }
+}
+
+/** 等待就绪的结果，失败时带证据回来 */
+export interface WaitOutcome {
+  ok: boolean
+  /** 失败证据（浏览器模式为 null） */
+  diag: TileDiag | null
+  /** 服务是"别人的"（端口被占） */
+  foreign: boolean
+  /** 最后一次探活错误 */
+  error?: string
+}
+
+/**
+ * 等后端就绪，**失败要快、理由要真**。
+ *
+ * 比 `waitBackend` 多两件事：
+ *  1. 每 4 秒问一次外壳"子进程是不是已经死了 / 启动是否被拒"——杀软拦截的
+ *     典型表现是"spawn 成功但秒退"，此时端口永远不开，傻等 120 秒纯属折磨。
+ *  2. 端口上应答的不是自己人（`foreign`）立刻结束，不再等。
+ */
+export async function waitBackendDetailed(timeoutMs = 120_000): Promise<WaitOutcome> {
+  const t0 = Date.now()
+  let diag: TileDiag | null = null
+  let round = 0
+  while (Date.now() - t0 < timeoutMs) {
+    const st = await probeBackend()
+    if (st.online) return { ok: true, diag: null, foreign: false }
+
+    if (++round % 5 === 0) {
+      diag = await tileDiagnose()
+      if (diag) {
+        if (diag.start_error) return { ok: false, diag, foreign: false, error: diag.start_error }
+        if (diag.exit_code !== null && diag.exit_code !== 0) {
+          return { ok: false, diag, foreign: false, error: `服务进程已退出（退出码 ${diag.exit_code}）` }
+        }
+        if (diag.port_open && !diag.ours) {
+          return { ok: false, diag, foreign: true, error: diag.probe_error || '端口被其它程序占用' }
+        }
+      }
+    }
+    if (st.foreign) {
+      diag = diag ?? (await tileDiagnose())
+      return { ok: false, diag, foreign: true, error: st.error }
+    }
+    await new Promise((r) => setTimeout(r, 800))
+  }
+  diag = diag ?? (await tileDiagnose())
+  return { ok: false, diag, foreign: false, error: '等待超时（120 秒内 /meta 没有应答）' }
 }
 
 export interface ExportRequest {

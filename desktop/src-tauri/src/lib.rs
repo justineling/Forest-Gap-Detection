@@ -17,7 +17,7 @@
 //! ⚠️ 刻意**不引入** `tauri-plugin-shell`：托管子进程用标准库 `std::process`
 //! 就够了，少一个插件少一层 capability 权限配置（也少一个打包时的坑）。
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -60,6 +60,200 @@ fn port_open(port: u16) -> bool {
         Err(_) => return false,
     };
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+// ============================================================================
+//  瓦片服务：探活 / 身份校验 / 排障证据
+//  ---------------------------------------------------------------------------
+//  为什么有这一节（2026-10-20 公司电脑事故，代价是一次装完打不开的交付）：
+//
+//  1. **`port_open()` 只能证明"有人在听"，不能证明"那是我们的服务"。**
+//     公司机上 8765 一旦被别的软件占住，`start_tile_server` 就直接
+//     `return Ok("复用现有服务")` 跳过启动 —— 外壳以为成功了，前端等 120 秒
+//     也等不到 `/meta`，最后弹出那句"请确认①文件占用②标准GeoTIFF③磁盘空间"。
+//     三个提示**没有一个是对的**，因为服务压根没起来。
+//     → 复用前必须问一句"你是谁"：GET /meta 看 `app` 字段。
+//
+//  2. **release 版没有控制台，`eprintln!` 是黑洞。**
+//     `windows_subsystem = "windows"` 下 stdout/stderr 全部丢弃，瓦片服务的
+//     traceback（真因）就这样消失了，`app.log` 里只剩"已用 … 启动瓦片服务"。
+//     → stderr 逐行转存 `app.log`，并在内存里留 200 行环形缓冲给前端回放。
+//
+//  3. **子进程"起来了"和"活下来了"是两件事。**
+//     spawn 成功不代表成功：杀软拦截、DLL 缺失都会让进程秒退，而退出码
+//     （0xC0000135 之类）是最省事的判据。原来这个数字从未被读取。
+// ============================================================================
+
+/// 本应用瓦片服务的身份标记，与 `scripts/tile_server.py` 的 `meta["app"]` 一致。
+const TILE_APP_ID: &str = "fgd-tile-server";
+
+/// 子进程 stderr 的环形缓冲（最多 200 行）。请求日志不进这里 —— 见 `push_tile_log`。
+static TILE_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// 最近一次"服务自己退出"的退出码。主动 kill（重启/退出应用）不记。
+static TILE_EXIT: Mutex<Option<i32>> = Mutex::new(None);
+/// 最近一次启动/复用判定的失败原因，前端直接拿去展示。
+static TILE_START_ERR: Mutex<String> = Mutex::new(String::new());
+
+/// 按字符边界截断（不能按字节切，否则中文/emoji 会切出半个 UTF-8 序列）。
+fn clip_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+/// 判断一行 stderr 是不是 HTTP 访问日志（`"GET /tiles/15/1/2.png" 200 -`）。
+///
+/// 为什么要区分：一个满屏瓦片的地图每秒能刷几十行访问日志，全写进 `app.log`
+/// 会把真正的错误冲掉，也会让日志文件无限增长。访问日志只进环形缓冲。
+fn is_http_access_log(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("\"GET ") || t.starts_with("\"POST ") || t.starts_with("\"HEAD ")
+}
+
+/// 记一行瓦片服务输出：进环形缓冲；非访问日志同时写 `app.log`。
+fn push_tile_log(line: &str) {
+    if line.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut buf) = TILE_LOG.lock() {
+        if buf.len() >= 200 {
+            buf.remove(0);
+        }
+        buf.push(line.to_string());
+    }
+    if !is_http_access_log(line) {
+        log_line(&format!("[tile_server] {line}"));
+    }
+}
+
+/// 直接开 TCP 发 `GET /meta`，**不走系统代理、不经过 WebView**。
+///
+/// 为什么不用 HTTP 客户端库：项目刻意不引 reqwest（少一个依赖少一份打包体积），
+/// 而这里只需要读一个小 JSON。同时它还是"服务活着但前端连不上"的判别器 ——
+/// 代理有问题时 Rust 侧能通、WebView 侧不通，一眼分开。
+fn http_get_meta(port: u16) -> Result<String, String> {
+    let addr: SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .map_err(|e| format!("端口解析失败：{e}"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(800))
+        .map_err(|e| format!("连不上 127.0.0.1:{port}（{e}）"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(2500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
+    stream
+        .write_all(
+            b"GET /meta HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+        )
+        .map_err(|e| format!("写请求失败：{e}"))?;
+
+    // 只读 64 KB：`/meta` 不到 1 KB，但对端可能是任何东西，不能无限读。
+    let mut raw = Vec::new();
+    stream
+        .take(64 * 1024)
+        .read_to_end(&mut raw)
+        .map_err(|e| format!("读应答失败：{e}"))?;
+    let text = String::from_utf8_lossy(&raw).to_string();
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| format!("应答不是合法 HTTP：{}", clip_chars(&text, 80)))?;
+    let status = head.lines().next().unwrap_or("").trim().to_string();
+    if !status.contains(" 200") {
+        return Err(format!("/meta 返回 {status}"));
+    }
+    Ok(body.to_string())
+}
+
+/// `/meta` 的应答是不是本应用的瓦片服务。
+///
+/// 兼容两种：带 `app` 标记的新版；以及**本次改动之前构建的旧版**（没有 `app`，
+/// 但有 `ok`/`source`/`tile_url` 三件套）—— 否则用户升级外壳后，旧的服务进程
+/// 会被误判成"外人"，反而多一个坑。
+fn is_our_meta(body: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    if v.get("app").and_then(|x| x.as_str()) == Some(TILE_APP_ID) {
+        return true;
+    }
+    v.get("ok").and_then(|x| x.as_bool()) == Some(true)
+        && v.get("source").is_some()
+        && v.get("tile_url").is_some()
+}
+
+/// 前端排障面板拿到的全部证据。字段名与 `desktop/src/api/backend.ts` 的
+/// `TileDiag` 一一对应（改一处必须改另一处）。
+#[derive(Serialize)]
+struct TileDiag {
+    port: u16,
+    /// 端口上有没有人在听（只能证明"有人在听"）
+    port_open: bool,
+    /// 应答 `/meta` 的是不是本应用的服务（身份校验结果）
+    ours: bool,
+    /// `/meta` 应答前 300 字（不是自己人时，这就是"别人长什么样"）
+    meta_head: String,
+    /// 探活失败原因（连不上 / 无应答 / 非 200）
+    probe_error: String,
+    /// 我们拉起的子进程是否还活着
+    child_alive: bool,
+    /// 子进程退出码（自己退出的才有值；主动重启/退出应用为 null）
+    exit_code: Option<i32>,
+    /// 上次启动被拒的原因（端口被占等）
+    start_error: String,
+    /// 子进程 stderr 最近 60 行（traceback 就在这里）
+    log_tail: Vec<String>,
+    /// 后端形态（打包运行时 / 开发态解释器）
+    backend: Option<String>,
+}
+
+/// 采集一次排障快照。前端在"等服务就绪"失败后调用，用来把兜底文案换成真因。
+#[tauri::command]
+fn tile_diagnose(app: tauri::AppHandle, state: tauri::State<'_, Services>) -> TileDiag {
+    let open = port_open(BACKEND_PORT);
+    let (ours, head, perr) = if open {
+        match http_get_meta(BACKEND_PORT) {
+            Ok(body) => (is_our_meta(&body), clip_chars(&body, 300), String::new()),
+            Err(e) => (false, String::new(), e),
+        }
+    } else {
+        (false, String::new(), "端口没有监听".to_string())
+    };
+
+    // 顺手 try_wait 一次：万一监视线程还没轮到，这里也能立刻拿到退出码
+    let mut alive = false;
+    let mut code: Option<i32> = None;
+    if let Ok(mut guard) = state.tile.lock() {
+        if let Some(child) = guard.as_mut() {
+            match child.try_wait() {
+                Ok(Some(st)) => code = st.code(),
+                Ok(None) => alive = true,
+                Err(_) => alive = true,
+            }
+        }
+    }
+    if code.is_none() && !alive {
+        code = *TILE_EXIT.lock().unwrap_or_else(|e| e.into_inner());
+    }
+
+    TileDiag {
+        port: BACKEND_PORT,
+        port_open: open,
+        ours,
+        meta_head: head,
+        probe_error: perr,
+        child_alive: alive,
+        exit_code: code,
+        start_error: TILE_START_ERR
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
+        log_tail: TILE_LOG
+            .lock()
+            .map(|b| b.iter().rev().take(60).rev().cloned().collect())
+            .unwrap_or_default(),
+        backend: resolve_backend(&app).map(|b| b.describe()),
+    }
 }
 
 /// 仓库根：开发态是 `desktop/src-tauri` 往上两级；打包后取资源目录的上一级。
@@ -439,11 +633,43 @@ fn build_command(backend: &Backend, args: &[String], bundled_cwd: &Path) -> Comm
     cmd
 }
 
-/// 拉起瓦片服务。已在监听则不重复启动（多人共用 / 手动起过服务的场景）。
+/// 拉起瓦片服务。
+///
+/// **端口已被监听 ≠ 可以复用**：必须先问一句"你是谁"（`/meta` 的 `app` 字段）。
+/// 公司电脑事故的根因就是这里曾经无条件 `return Ok("复用")` —— 别人的程序占着
+/// 8765 时，外壳以为服务已就绪，前端却永远拿不到 `/meta`，最后报一个
+/// 完全不相干的三条猜测。宁可**明确失败**，也不静默骗过用户。
 fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, String> {
     if port_open(BACKEND_PORT) {
-        return Ok(format!("端口 {BACKEND_PORT} 已在监听，复用现有服务"));
+        // 可能是：① 我们自己上一次起的实例 ② 别的程序 ③ 我们的实例还在启动中。
+        // 冷启动要打开 5 GB 影像、必要时还要算窗口降采样，`/meta` 慢一两秒是正常的，
+        // 所以给它 3 次机会再判"不是自己人" —— 一次就下结论会误杀。
+        let mut last_err = String::new();
+        for attempt in 0..3 {
+            match http_get_meta(BACKEND_PORT) {
+                Ok(body) if is_our_meta(&body) => {
+                    set_start_err("");
+                    return Ok(format!(
+                        "端口 {BACKEND_PORT} 上已有本应用的瓦片服务，复用（第 {} 次探测确认）",
+                        attempt + 1
+                    ));
+                }
+                Ok(body) => {
+                    last_err = format!(
+                        "端口 {BACKEND_PORT} 被**其它程序**占用：应答 /meta 的不是本应用（开头：{}）",
+                        clip_chars(&body, 120)
+                    );
+                }
+                Err(e) => last_err = format!("端口 {BACKEND_PORT} 有监听但答不上 /meta：{e}"),
+            }
+            std::thread::sleep(Duration::from_millis(600));
+        }
+        set_start_err(&last_err);
+        log_line(&format!("瓦片服务未启动：{last_err}"));
+        // ⚠️ 绝不 kill 占用者（可能是用户的浏览器调试代理、别的业务系统）。
+        return Err(last_err);
     }
+
     let backend = resolve_backend(app).ok_or(
         "找不到后端：请先跑 scripts/build_desktop_runtime.ps1 打包，或配置好 .venv",
     )?;
@@ -501,20 +727,89 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     let mut cmd = build_command(&backend, &args, &data_root);
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("启动瓦片服务失败：{e}（{}）", backend.describe()))?;
+    // 新一轮启动：清掉上一轮的证据，否则前端看到的是上次的 traceback（会查错方向）
+    if let Ok(mut buf) = TILE_LOG.lock() {
+        buf.clear();
+    }
+    *TILE_EXIT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    set_start_err("");
 
-    // 把服务的人类日志转到本进程 stderr，方便在 Tauri 控制台观察
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("启动瓦片服务失败：{e}（{}）", backend.describe());
+            set_start_err(&msg);
+            log_line(&msg);
+            return Err(msg);
+        }
+    };
+    let pid = child.id();
+
+    // 把服务的日志接住。
+    //
+    // ⚠️ 这里**必须**写 app.log，不能只 eprintln：
+    //    release 是 `windows_subsystem = "windows"`，stderr 无人接收 —— 公司电脑
+    //    现场就是这样把 GDAL/PROJ 的 traceback 全丢了，只剩一句"已启动"。
     if let Some(err) = child.stderr.take() {
         std::thread::spawn(move || {
             for line in BufReader::new(err).lines().map_while(Result::ok) {
-                eprintln!("[tile_server] {line}");
+                push_tile_log(&line);
             }
         });
     }
 
     *svc.tile.lock().unwrap() = Some(child);
+
+    // 监视线程：等它自己退出时把**退出码**记下来。
+    // 为什么需要：杀软拦截 / DLL 缺失会让进程"spawn 成功但秒退"，退出码
+    // （0xC0000135 = DLL 找不到、0xC0000142 = DLL 初始化失败）是最省事的判据。
+    // 原来这个数字从未被读取，于是"秒退"和"服务正常但前端连不上"在日志里
+    // 长得一模一样，只能靠猜。
+    let app2 = app.clone();
+    std::thread::spawn(move || {
+        // State 只是 app 的借用视图，必须先绑定再 lock，
+        // 否则 `app2.state::<Services>().tile.lock()` 里的临时值会在语句结束被释放
+        // （E0716: temporary value dropped while borrowed）。
+        let services = app2.state::<Services>();
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let mut guard = match services.tile.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let Some(c) = guard.as_mut() else {
+                // 被主动 kill（重启 / 退出应用）后 take() 掉了 —— 不是异常退出，不记录
+                return;
+            };
+            if c.id() != pid {
+                // 已经被新一轮启动替换掉，本线程的使命结束
+                return;
+            }
+            match c.try_wait() {
+                Ok(Some(status)) => {
+                    let code = status.code();
+                    *TILE_EXIT.lock().unwrap_or_else(|e| e.into_inner()) = code;
+                    log_line(&format!(
+                        "瓦片服务已退出：{}",
+                        match code {
+                            Some(0) => "退出码 0（正常结束）".to_string(),
+                            // 非 0 时把十六进制一起打出来：0xC0000135 / 0xC0000142 这类
+                            // NTSTATUS 是"杀软拦截 / DLL 缺失"的直接指纹
+                            Some(c) => format!(
+                                "退出码 {c}（0x{:08X}）—— 若非 0，见上方 [tile_server] 日志",
+                                c as u32
+                            ),
+                            None => "被信号终止（无退出码）".to_string(),
+                        }
+                    ));
+                    return;
+                }
+                Ok(None) => {}
+                Err(_) => return,
+            }
+        }
+    });
+
     // ⚠️ 这里**不要**再 log_line：两个调用方（setup / restart_tile_server）都会记一行，
     //    内部再记就重复了 —— 实测 app.log 里同一行出现两次，
     //    会让人误以为起了两个瓦片服务。
@@ -523,6 +818,13 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
         backend.describe(),
         data_root.display()
     ))
+}
+
+/// 记录"为什么没启动"，供前端排障面板展示。
+fn set_start_err(msg: &str) {
+    let mut g = TILE_START_ERR.lock().unwrap_or_else(|e| e.into_inner());
+    g.clear();
+    g.push_str(msg);
 }
 
 // ============================================================================
@@ -1455,10 +1757,19 @@ fn set_data_paths(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    // 主动换数据不算"异常退出"，别把上一轮的退出码留成这一轮的证据
+    *TILE_EXIT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     match start_tile_server(&app, &state) {
         Ok(msg) => log_line(&msg),
         Err(e) if e == NEED_IMAGE => {}
-        Err(e) => log_line(&format!("重启瓦片服务失败：{e}")),
+        Err(e) => {
+            log_line(&format!("重启瓦片服务失败：{e}"));
+            // ⚠️ 必须**当场抛回前端**，不能只写日志。
+            //    以前这里吞掉了错误，前端只好空等 120 秒再弹一句
+            //    "请确认①文件占用②标准GeoTIFF③磁盘空间"—— 三条全都不对。
+            //    现在端口被别的程序占住这类硬失败会立刻显示真因。
+            return Err(e);
+        }
     }
 
     Ok(get_status(app))
@@ -1546,10 +1857,20 @@ fn backend_url() -> String {
 fn service_status(app: tauri::AppHandle) -> ServiceStatus {
     ServiceStatus {
         backend_url: format!("http://127.0.0.1:{BACKEND_PORT}"),
-        tile_server_running: port_open(BACKEND_PORT),
+        // 端口有人听 ≠ 我们的服务在跑（别的程序也可能占着 8765）。
+        // 这里必须验身份，否则这个"状态"会在最需要它的时候撒谎。
+        tile_server_running: is_our_service(),
         backend: resolve_backend(&app).map(|b| b.describe()),
         project_root: project_root(&app).map(|p| p.display().to_string()),
     }
+}
+
+/// 8765 上是否真的是本应用的瓦片服务在跑。
+fn is_our_service() -> bool {
+    port_open(BACKEND_PORT)
+        && http_get_meta(BACKEND_PORT)
+            .map(|b| is_our_meta(&b))
+            .unwrap_or(false)
 }
 
 /// 前端按钮「重新拉起服务」用（服务崩了不必重启整个 App）
@@ -1568,6 +1889,8 @@ fn restart_tile_server(
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+    // 主动重启不算"异常退出"：不重置的话，上一轮的退出码会被当成这一轮的证据
+    *TILE_EXIT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     start_tile_server(&app, &state)
 }
 
@@ -1580,6 +1903,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_url,
             service_status,
+            tile_diagnose,
             restart_tile_server,
             run_detect,
             preflight_detect,
@@ -2202,5 +2526,119 @@ mod tests {
         let got = resolve_gaps_in(&base).expect("数据根下的结果也要认");
         assert_eq!(got.file_name().unwrap().to_string_lossy(), "manual-gaps.geojson");
         fs::remove_dir_all(&base).ok();
+    }
+
+    // ---- 瓦片服务身份校验 ----
+    //
+    // 这组测试守的是一个**具体事故**：8765 被别的程序占住时，
+    // `start_tile_server` 曾经无条件 `return Ok("复用现有服务")`。
+    // 外壳以为就绪，前端等 120 秒拿不到 /meta，最后弹三条毫不相干的猜测。
+    // 所以"这个应答是不是我们的"必须判得准，且**不能把旧版自己当外人**。
+
+    #[test]
+    fn meta_with_app_id_is_ours() {
+        let body = r#"{"app":"fgd-tile-server","ok":true,"source":"a.tif","tile_url":"/tiles/{z}/{x}/{y}.png"}"#;
+        assert!(is_our_meta(body));
+    }
+
+    #[test]
+    fn meta_from_other_app_is_foreign() {
+        // 别人的服务也可能返回 ok:true —— 只判 ok 就会误认为就绪
+        let body = r#"{"app":"other-service","ok":true,"source":"whatever"}"#;
+        assert!(!is_our_meta(body), "app 字段不认识就必须判为外人");
+        let body = r#"{"ok":true,"message":"hello"}"#;
+        assert!(!is_our_meta(body));
+        // 非 JSON（HTML 报错页 / 纯文本）不能 panic，一律当外人
+        assert!(!is_our_meta("<html>not found</html>"));
+        assert!(!is_our_meta(""));
+    }
+
+    #[test]
+    fn meta_from_older_build_is_still_ours() {
+        // 兼容：本次改动之前构建的瓦片服务没有 app 字段。
+        // 若判成外人，用户升级外壳后会被自己上一版的残留进程挡住（更糟）。
+        let body = r#"{"ok":true,"source":"D:/data/a.tif","width":100,"tile_url":"/tiles/{z}/{x}/{y}.png"}"#;
+        assert!(is_our_meta(body));
+    }
+
+    #[test]
+    fn meta_missing_essentials_is_foreign() {
+        // 有 ok 但缺 source/tile_url —— 不足以认亲
+        assert!(!is_our_meta(r#"{"ok":true}"#));
+        assert!(!is_our_meta(r#"{"ok":false,"source":"a.tif","tile_url":"x"}"#));
+    }
+
+    #[test]
+    fn clip_chars_respects_utf8_boundary() {
+        // 按字节切会把中文切成半个 UTF-8 序列 → 前端拿到乱码/替换符
+        assert_eq!(clip_chars("abcdef", 10), "abcdef");
+        assert_eq!(clip_chars("abcdef", 3), "abc…");
+        let s = clip_chars("油棕园空地检测", 3);
+        assert_eq!(s, "油棕园…");
+        assert_eq!(s.chars().count(), 4, "3 个字 + 省略号");
+    }
+
+    #[test]
+    fn http_access_log_is_not_written_to_app_log() {
+        // 满屏瓦片的地图每秒几十行访问日志，全写进 app.log 会把真错误冲掉
+        assert!(is_http_access_log(r#""GET /tiles/15/1/2.png" 200 -"#));
+        assert!(is_http_access_log(r#"  "POST /export HTTP/1.1" 200 -"#));
+        assert!(!is_http_access_log("Traceback (most recent call last):"));
+        assert!(!is_http_access_log("  ⚠️ 影像无金字塔"));
+        assert!(!is_http_access_log(r#"RasterioIOError: D:/a.tif"#));
+    }
+
+    /// 起一个只会应答一次的玩具 HTTP 服务，返回真实端口。
+    ///
+    /// 为什么不用 mock：`http_get_meta` 手写了 TCP 请求与报文解析，
+    /// 出错的地方恰恰在"真的发出去、真的读回来"这一步（响应头切分、状态码判断、
+    /// 对端不关连接时阻塞）。纯逻辑测试覆盖不到它。
+    fn spawn_fake_http(status_line: &'static str, body: &'static str) -> u16 {
+        use std::io::Write as _;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("监听失败");
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                // 必须先读完请求头，否则对端可能因 RST 丢应答（Windows 常见）
+                let mut req = [0u8; 1024];
+                let _ = std::io::Read::read(&mut s, &mut req);
+                let resp = format!(
+                    "HTTP/1.0 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(resp.as_bytes());
+                let _ = s.flush();
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn http_get_meta_reads_our_service() {
+        let port = spawn_fake_http(
+            "200 OK",
+            r#"{"app":"fgd-tile-server","ok":true,"source":"a.tif","tile_url":"/tiles"}"#,
+        );
+        let body = http_get_meta(port).expect("/meta 应当读得到");
+        assert!(body.starts_with('{'), "拿到的应该是响应体而不是响应头");
+        assert!(is_our_meta(&body), "真实握手后应认出是自己人");
+    }
+
+    #[test]
+    fn http_get_meta_rejects_non_200() {
+        let port = spawn_fake_http("500 Internal Server Error", r#"{"ok":false}"#);
+        let err = http_get_meta(port).unwrap_err();
+        assert!(err.contains("500"), "错误里要带状态码，便于排障：{err}");
+    }
+
+    #[test]
+    fn http_get_meta_on_closed_port_errors() {
+        // 端口没人听：必须返回 Err 而不是 panic —— 这是"服务没起来"的常规路径
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert!(http_get_meta(port).is_err());
     }
 }

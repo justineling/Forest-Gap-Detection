@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-import { isTauri, pickFile, setDataPaths, waitBackend, type AppStatus } from '../api/backend'
+import {
+  isTauri,
+  pickFile,
+  setDataPaths,
+  tileDiagnose,
+  waitBackendDetailed,
+  type AppStatus,
+  type TileDiag,
+} from '../api/backend'
+import { explain } from '../lib/tileDiag'
 
 /**
  * 首次使用引导。
@@ -37,6 +46,10 @@ export default function WelcomeWizard({
   const [busy, setBusy] = useState(false)
   const [stage, setStage] = useState('')
   const [err, setErr] = useState<string | null>(null)
+  /** 失败时的可执行下一步（由 `explain()` 生成） */
+  const [hint, setHint] = useState<string[]>([])
+  /** 失败时的现场证据（外壳采集；浏览器模式为 null） */
+  const [diag, setDiag] = useState<TileDiag | null>(null)
 
   const tauri = isTauri()
 
@@ -85,16 +98,21 @@ export default function WelcomeWizard({
     if (!image) return
     setBusy(true)
     setErr(null)
+    setDiag(null)
+    setHint([])
     try {
       setStage('正在保存选择并重启影像服务…')
+      // ⚠️ `setDataPaths` 现在会把**硬失败**（端口被别人占、进程序拉不起来）
+      //    直接抛回来，而不是吞进日志让我们空等 120 秒。所以下面 catch 里的
+      //    文案是"真因"，不是猜测。
       await setDataPaths({ image, gaps })
       setStage('正在加载影像（首次可能需要几秒建索引）…')
-      const ok = await waitBackend(120_000)
-      if (!ok) {
-        setErr(
-          '影像服务没能启动。请确认：① 文件没被其它程序占用；' +
-            '② 文件是标准的 GeoTIFF；③ 磁盘剩余空间足够。',
-        )
+      const r = await waitBackendDetailed(120_000)
+      if (!r.ok) {
+        const { title, steps } = explain(r.diag, r.foreign, 120)
+        setErr(title)
+        setHint(steps)
+        setDiag(r.diag ?? (await tileDiagnose()))
         setBusy(false)
         setStage('')
         return
@@ -102,7 +120,14 @@ export default function WelcomeWizard({
       setStage('就绪')
       onDone()
     } catch (e) {
-      setErr(`启动失败：${e instanceof Error ? e.message : String(e)}`)
+      const msg = e instanceof Error ? e.message : String(e)
+      // 外壳抛回来的就是真因；同时抓一份快照，把日志尾一起摆出来
+      setErr(msg)
+      setHint([
+        '这是外壳在启动影像服务时当场返回的错误（不是超时后的猜测）。',
+        '展开下方「技术细节」可看到服务自己的输出，连这段错误一起发给开发者即可定位。',
+      ])
+      setDiag(await tileDiagnose())
       setBusy(false)
       setStage('')
     }
@@ -188,7 +213,43 @@ export default function WelcomeWizard({
           </div>
         </div>
 
-        {err && <div className="wizard-err">{err}</div>}
+        {err && (
+          <div className="wizard-err">
+            <div className="wizard-err-title">✕ {err}</div>
+            {hint.length > 0 && (
+              <ul className="wizard-err-steps">
+                {hint.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            )}
+            {diag && (
+              <details className="wizard-err-diag">
+                <summary>
+                  技术细节（端口 {diag.port} ·{' '}
+                  {diag.port_open ? '端口有人应答' : '端口无人应答'} ·{' '}
+                  {diag.ours ? '身份已确认' : '身份未确认'}
+                  {diag.exit_code !== null ? ` · 退出码 ${diag.exit_code}` : ''}）
+                </summary>
+                <div className="mono">
+                  {diag.start_error ? <div>启动错误：{diag.start_error}</div> : null}
+                  <div>探活结果：{diag.probe_error || '（无）'}</div>
+                  <div>子进程：{diag.child_alive ? '存活' : '已退出/未启动'}</div>
+                  {diag.backend ? <div>后端：{diag.backend}</div> : null}
+                  {diag.meta_head ? <div>对方应答：{diag.meta_head}</div> : null}
+                  {diag.log_tail.length > 0 ? (
+                    <>
+                      <div>服务日志（最后 {diag.log_tail.length} 行）：</div>
+                      <pre className="wizard-err-log">{diag.log_tail.join('\n')}</pre>
+                    </>
+                  ) : (
+                    <div>服务日志：一个字都没有（进程在打印之前就退出了）</div>
+                  )}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
 
         <div className="wizard-foot">
           <div className="dim wizard-hint">

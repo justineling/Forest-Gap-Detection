@@ -119,6 +119,14 @@ export interface PlantingGrid {
 
 /** `/meta` 返回的影像元数据 */
 export interface RasterMeta {
+  /**
+   * 服务身份标记（`fgd-tile-server`）。
+   *
+   * 为什么需要：8765 是固定端口，**别的程序也可能在这个端口上应答**。
+   * 只判 `ok === true` 会把别人的 JSON 当成"我们的影像服务就绪"。
+   * 老版本后端没有这个字段（undefined），按兼容处理。
+   */
+  app?: string
   ok: boolean
   source: string
   width: number

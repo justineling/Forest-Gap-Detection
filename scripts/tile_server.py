@@ -286,6 +286,11 @@ class TileServer:
             z = math.log2(360.0 / span_lon * 1000.0 / 256.0)
             zoom = float(max(10.0, min(19.0, round(z, 2))))
             self._meta = {
+                # ⚠️ 身份标识：桌面端外壳用它判断"8765 上应答的是不是自己人"。
+                #    端口被别的软件占住时，`port_open()` 只能看到"有人在听"，
+                #    盲信会直接跳过启动 → 前端永远拿不到 /meta（2026-10-20 事故）。
+                #    改这里必须同步 `desktop/src-tauri/src/lib.rs` 的 TILE_APP_ID。
+                "app": "fgd-tile-server",
                 "ok": True,
                 "source": str(self.source),
                 "width": ds.width,
