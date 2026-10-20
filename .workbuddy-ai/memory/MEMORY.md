@@ -32,6 +32,7 @@
 ## 6. 桌面端（Tauri v2）
 栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。验收基线：`npm test` 529 断言 · `cargo test` 全绿 · 契约 95/95。
 致命 5 条：① `output/*.geojson` 是 `blocks[].gaps` 结构、无顶层 features；② 结果路径只按"扫目录+名含 gaps+mtime 取最新"，候选目录必须含 `cwd/output`，`/gaps` 空时绝不能 `applyRerun([])`；③ 检测前必须预检（W1001/W1004/W3001 都是"算偏不报错"）；④ Tauri↔sidecar 两线程分读 stdout/stderr（64 KB 管道填满→死锁）；⑤ 撤销栈 1.5 s 时间窗合并 TerraDraw change，框选必须传 `visibleClasses`。
+⚠️ 第 6 条（2026-10-20 交付事故）：**8765 有人监听 ≠ 我们的服务在跑** —— 复用前必须验 `/meta` 的 `app` 字段；子进程 stderr 必须落 `app.log`（release 无控制台，`eprintln!` 是黑洞）并用 `try_wait` 记退出码；启动失败要当场抛回前端。详见坑 47。
 打包：`desktop_entry.py` 单入口 → PyInstaller onedir → NSIS 67.7 MiB。红线：`freeze_support()` 是 `__main__` 第一行；`PROJ_DATA` 优先 rasterio；`codegen-units=4` + `lto="thin"`。
 验证集（10-19）：150 块 Neyman 分层 + H-T 权重（**Σwᵢ 必须精确 = 1726.0**）；`scripts/eval_validation.py --selftest` 13 项；`uncertain` 不允许"确认"；`initValidation` effect deps 必须含 scope/samples.length。
 
