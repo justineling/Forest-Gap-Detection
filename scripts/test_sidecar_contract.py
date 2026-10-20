@@ -87,9 +87,9 @@ def run_sidecar(params: dict | str, expect_exit: int | None = None
     if expect_exit is not None:
         assert proc.returncode == expect_exit, (
             f"退出码应为 {expect_exit}，实际 {proc.returncode}\n"
-            f"  stderr: {proc.stderr[-500:]}\n"
+            f"  stderr: {(proc.stderr or '')[-500:]}\n"
             f"  events: {[e['event'] for e in events]}")
-    return events, proc.returncode, proc.stderr
+    return events, proc.returncode, proc.stderr or ""
 
 
 def assert_sequence(events: list[dict], expect: str) -> None:
@@ -451,6 +451,17 @@ def test_undefined_behavior(tmpdir: Path) -> None:
 
 
 def main() -> int:
+    # Windows 上 stdout 编码跟随 locale：英文系统 / GitHub Actions 的
+    # windows-latest runner 是 cp1252，打印中文（本文件的测试项名称全是中文）
+    # 会直接 UnicodeEncodeError: 'charmap' codec can't encode ...
+    # 强制 UTF-8，保证本地（GBK 控制台）与 CI（cp1252）行为一致。
+    # 注：读子进程输出已显式 encoding="utf-8"，这里只管本进程的 stdout/stderr。
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+        except (AttributeError, OSError):
+            pass
+
     print("=" * 70)
     print("sidecar 契约测试")
     print("=" * 70)

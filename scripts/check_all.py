@@ -184,9 +184,21 @@ def main() -> int:
     ok, dt = run([str(PY), "scripts/check_docs.py"], ROOT, "check_docs（6 个 HTML）")
     rec("docs", ok, dt)
 
-    # ---- 7. 契约测试 ----
+    # ---- 9. 批处理括号安全 ----
+    # CI 的 frontend job 跑在 ubuntu 上，cmd 的 if 块解析问题它天生抓不到；
+    # 这类坑只在真机上炸（2026-10-20 公司电脑：echo 文本里的 (cargo) 让
+    # if/else 双双执行、FG_NEED_RUST 没置位，脚本跳过自动安装直到构建才失败）。
+    # 所以静态扫描是唯一防线，必须进本清单。
+    print("\n[9] 批处理括号安全")
+    ok, dt = run(
+        [str(PY), "scripts/check_bat_safety.py"],
+        ROOT, "check_bat_safety（6 个 bat）",
+    )
+    rec("bat-safety", ok, dt)
+
+    # ---- 10. 契约测试 ----
     if not args.fast:
-        print("\n[9] 契约测试")
+        print("\n[10] 契约测试")
         ok, dt = run([str(PY), "scripts/test_sidecar_contract.py"], ROOT,
                      "test_sidecar_contract（95 项）")
         rec("contract", ok, dt)

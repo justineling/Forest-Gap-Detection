@@ -209,12 +209,22 @@ if exist "%~dp0desktop\node_modules" (
 )
 
 where cargo >nul 2>nul
-if errorlevel 1 (
-    set "FG_NEED_RUST=1"
-    if "%FG_LANG%"=="en" (echo   [missing] Rust toolchain (cargo)) else (echo   [缺失]   Rust 工具链（cargo）)
-) else (
-    if "%FG_LANG%"=="en" (echo   [ready]   Rust toolchain) else (echo   [已就绪] Rust 工具链)
-)
+if errorlevel 1 goto :cr_rust_missing
+rem ⚠️ 只 where 到 cargo 不够：rustup 装了但没有默认工具链时，cargo 是个
+rem    shim，能 where 到、一执行就报 "rustup could not choose a version of
+rem    cargo to run ... no default is configured"（公司电脑实测踩过）。
+rem    必须真跑一次 --version 才算就绪，否则会被误判为"环境完整"、
+rem    跳过自动安装，然后在 tauri build 阶段才失败。
+cargo --version >nul 2>nul
+if errorlevel 1 goto :cr_rust_missing
+if "%FG_LANG%"=="en" (echo   [ready]   Rust toolchain) else (echo   [已就绪] Rust 工具链)
+goto :cr_rust_done
+
+:cr_rust_missing
+set "FG_NEED_RUST=1"
+if "%FG_LANG%"=="en" (echo   [missing] Rust toolchain - cargo exists but cannot run) else (echo   [缺失]   Rust 工具链（cargo 不可用或无默认工具链）)
+
+:cr_rust_done
 exit /b 0
 
 

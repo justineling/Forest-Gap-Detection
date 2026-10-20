@@ -41,6 +41,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Windows runner 的 Python 默认 stdout 编码是 cp1252（不是 UTF-8），
+  # 脚本里的中文 print 会 UnicodeEncodeError。开 UTF-8 模式（PEP 540）后
+  # stdio 与子进程统一 UTF-8 —— 本地（GBK 控制台）与 CI 行为一致。
+  PYTHONUTF8: '1'
+
 jobs:
   frontend:
     name: 前端 + Python 静态检查
@@ -90,6 +96,12 @@ jobs:
       # 不加这层的话，"在 HTML 里写 **加粗**"这种错会一直漏（我犯了三次）。
       - name: 文档合规检查
         run: python scripts/check_docs.py
+
+      # cmd 的 if 块内 echo 文本含 ASCII 括号会提前闭合代码块，导致脚本静默
+      # 错乱甚至跳过关键检测 —— 这类坑 CI（ubuntu）天生抓不到，只能静态扫。
+      # 现实中已造成两次事故（见 scripts/check_bat_safety.py 头注释）。
+      - name: 批处理括号安全
+        run: python scripts/check_bat_safety.py
 
       - name: 结果过期判定（13 项）
         run: python scripts/test_stale.py
