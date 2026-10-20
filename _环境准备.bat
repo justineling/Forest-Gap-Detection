@@ -42,7 +42,11 @@ exit /b 0
 
 
 :stage_end
-echo   [完成] %FG_STAGE_NAME%
+if "%FG_LANG%"=="en" (
+    echo   [done] %FG_STAGE_NAME%
+) else (
+    echo   [完成] %FG_STAGE_NAME%
+)
 exit /b 0
 
 
@@ -62,7 +66,13 @@ rem ============================================================================
 :start_heartbeat
 rem 参数：%1=文案（可选） %2=最长运行分钟数（可选，默认 90）
 set "FG_HB_MSG=%~1"
-if not defined FG_HB_MSG set "FG_HB_MSG=仍在处理，请耐心等待"
+if not defined FG_HB_MSG (
+    if "%FG_LANG%"=="en" (
+        set "FG_HB_MSG=Still working, please wait..."
+    ) else (
+        set "FG_HB_MSG=仍在处理，请耐心等待"
+    )
+)
 set "FG_HB_MAXMIN=%~2"
 if not defined FG_HB_MAXMIN set "FG_HB_MAXMIN=90"
 set "FG_HB_SENT=%TEMP%\fgd-hb-%RANDOM%-%RANDOM%.flag"
@@ -101,7 +111,11 @@ set /a FG_HB_DT=FG_EPOCH-FG_HB_T0
 if %FG_HB_DT% lss 0 set "FG_HB_DT=0"
 set /a FG_HB_M=FG_HB_DT/60
 set /a FG_HB_S=FG_HB_DT-FG_HB_M*60
-echo   ... %FG_HB_MSG%（已用 %FG_HB_M% 分 %FG_HB_S% 秒）
+if "%FG_LANG%"=="en" (
+    echo   ... %FG_HB_MSG% - elapsed %FG_HB_M% min %FG_HB_S% sec
+) else (
+    echo   ... %FG_HB_MSG%（已用 %FG_HB_M% 分 %FG_HB_S% 秒）
+)
 set /a FG_HB_LIMIT=FG_HB_MAXMIN*60
 if %FG_HB_DT% geq %FG_HB_LIMIT% goto :hb_done
 if %FG_HB_TICKS% geq %FG_HB_MAXTICKS% goto :hb_done
@@ -110,7 +124,11 @@ goto :hb_tick
 :hb_ticks_only
 set /a FG_HB_M=FG_HB_TICKS/6
 set /a FG_HB_S=FG_HB_TICKS*10-FG_HB_M*60
-echo   ... %FG_HB_MSG%（已约 %FG_HB_M% 分 %FG_HB_S% 秒）
+if "%FG_LANG%"=="en" (
+    echo   ... %FG_HB_MSG% - about %FG_HB_M% min %FG_HB_S% sec
+) else (
+    echo   ... %FG_HB_MSG%（已约 %FG_HB_M% 分 %FG_HB_S% 秒）
+)
 if %FG_HB_TICKS% geq %FG_HB_MAXTICKS% goto :hb_done
 goto :hb_tick
 
@@ -177,25 +195,25 @@ set "FG_NEED_NPM="
 set "FG_NEED_RUST="
 
 if exist "%~dp0.venv\Scripts\python.exe" (
-    echo   [已就绪] Python 虚拟环境 .venv
+    if "%FG_LANG%"=="en" (echo   [ready]   Python virtual environment .venv) else (echo   [已就绪] Python 虚拟环境 .venv)
 ) else (
     set "FG_NEED_PY=1"
-    echo   [缺失]   Python 虚拟环境 .venv
+    if "%FG_LANG%"=="en" (echo   [missing] Python virtual environment .venv) else (echo   [缺失]   Python 虚拟环境 .venv)
 )
 
 if exist "%~dp0desktop\node_modules" (
-    echo   [已就绪] 前端依赖 node_modules
+    if "%FG_LANG%"=="en" (echo   [ready]   Frontend dependencies node_modules) else (echo   [已就绪] 前端依赖 node_modules)
 ) else (
     set "FG_NEED_NPM=1"
-    echo   [缺失]   前端依赖 node_modules
+    if "%FG_LANG%"=="en" (echo   [missing] Frontend dependencies node_modules) else (echo   [缺失]   前端依赖 node_modules)
 )
 
 where cargo >nul 2>nul
 if errorlevel 1 (
     set "FG_NEED_RUST=1"
-    echo   [缺失]   Rust 工具链（cargo）
+    if "%FG_LANG%"=="en" (echo   [missing] Rust toolchain (cargo)) else (echo   [缺失]   Rust 工具链（cargo）)
 ) else (
-    echo   [已就绪] Rust 工具链
+    if "%FG_LANG%"=="en" (echo   [ready]   Rust toolchain) else (echo   [已就绪] Rust 工具链)
 )
 exit /b 0
 
@@ -204,11 +222,16 @@ exit /b 0
 rem 调用项目已有的环境配置向导（scripts\一键配置环境.bat → 配置环境.ps1）。
 rem 那个脚本会做 6 个阶段：系统检测 / 工具链 / GPU / 安装 / venv+依赖 / 模型+前端依赖。
 if not exist "%~dp0scripts\一键配置环境.bat" (
-    echo   [错误] 找不到 scripts\一键配置环境.bat，无法自动配置环境。
+    if "%FG_LANG%"=="en" (echo   [ERROR] The bundled setup wizard was not found; cannot configure the environment automatically.) else (echo   [错误] 找不到 scripts\一键配置环境.bat，无法自动配置环境。)
     exit /b 1
 )
-echo   正在调用项目自带的环境配置向导（首次约 5~15 分钟）...
-echo   （它会把 Python 环境、依赖、Rust 工具链都装好；期间会持续输出进度）
+if "%FG_LANG%"=="en" (
+    echo   Launching the bundled setup wizard - first run takes about 5-15 minutes...
+    echo   - it installs the Python environment, dependencies and the Rust toolchain, printing progress all the way
+) else (
+    echo   正在调用项目自带的环境配置向导（首次约 5~15 分钟）...
+    echo   （它会把 Python 环境、依赖、Rust 工具链都装好；期间会持续输出进度）
+)
 call "%~dp0scripts\一键配置环境.bat"
 if errorlevel 1 exit /b 1
 exit /b 0
@@ -216,8 +239,13 @@ exit /b 0
 
 :ensure_npm
 if exist "%~dp0desktop\node_modules" exit /b 0
-echo   正在下载前端依赖（首次约 1~3 分钟）...
-call :start_heartbeat "仍在下载前端依赖" 30
+if "%FG_LANG%"=="en" (
+    echo   Downloading frontend dependencies - first run takes about 1-3 minutes...
+    call :start_heartbeat "Still downloading frontend dependencies" 30
+) else (
+    echo   正在下载前端依赖（首次约 1~3 分钟）...
+    call :start_heartbeat "仍在下载前端依赖" 30
+)
 pushd "%~dp0desktop"
 call npm install
 set "FG_RC=%ERRORLEVEL%"
@@ -250,9 +278,15 @@ rem 在跑 npm/cargo 之前调一次：**中和**当前进程的 CARGO_TARGET_DI
 rem 让 cargo 回落到默认的 `desktop\src-tauri\target`。
 rem ⚠️ 只改本进程的环境变量，**绝不** setx / 改注册表 —— 不影响用户其它项目。
 if defined CARGO_TARGET_DIR (
-    echo   [提示] 已临时忽略 CARGO_TARGET_DIR（%CARGO_TARGET_DIR%），
-    echo          编译产物固定到项目内：desktop\src-tauri\target
-    echo          （首次切换会重新编译一遍，约 5~10 分钟，之后就有缓存）
+    if "%FG_LANG%"=="en" (
+        echo   [NOTE] Temporarily ignoring CARGO_TARGET_DIR %CARGO_TARGET_DIR%;
+        echo         artifacts are fixed inside the project: desktop\src-tauri\target
+        echo         - switching once rebuilds everything, about 5-10 minutes; later runs use the cache
+    ) else (
+        echo   [提示] 已临时忽略 CARGO_TARGET_DIR（%CARGO_TARGET_DIR%），
+        echo          编译产物固定到项目内：desktop\src-tauri\target
+        echo          （首次切换会重新编译一遍，约 5~10 分钟，之后就有缓存）
+    )
 )
 set "CARGO_TARGET_DIR="
 set "FG_TARGET=%~dp0desktop\src-tauri\target"
@@ -297,7 +331,7 @@ rem    .d 文件记录的也是别的项目路径 → 会被误判成"搬家"然
 rem    直接把别人的编译缓存删掉。这种破坏性误判必须从源头掐掉。
 set "FG_LOCAL_TARGET=%~dp0desktop\src-tauri\target"
 if /i not "%FG_TARGET%"=="%FG_LOCAL_TARGET%" (
-    echo   [提示] CARGO_TARGET_DIR 指向项目外（%FG_TARGET%），跳过搬家检测。
+    if "%FG_LANG%"=="en" (echo   [NOTE] CARGO_TARGET_DIR points outside the project %FG_TARGET%; skipping the move check.) else (echo   [提示] CARGO_TARGET_DIR 指向项目外（%FG_TARGET%），跳过搬家检测。)
     exit /b 0
 )
 
@@ -325,21 +359,38 @@ exit /b 0
 :dm_hit
 echo.
 echo  ====================================================
-echo   检测到项目文件夹被移动过
+if "%FG_LANG%"=="en" (
+    echo   The project folder has been moved
+) else (
+    echo   检测到项目文件夹被移动过
+)
 echo  ====================================================
-echo  之前的编译缓存指向旧位置，已失效，需要清理后重新编译。
-echo  正在清理（可能要几分钟，期间请勿关闭窗口）...
-call :start_heartbeat "仍在清理失效的编译缓存" 20
+if "%FG_LANG%"=="en" (
+    echo  The previous build cache points to the old location and is stale;
+    echo  it must be cleaned before rebuilding.
+    echo  Cleaning now - may take a few minutes; do not close this window...
+    call :start_heartbeat "Still cleaning the stale build cache" 20
+) else (
+    echo  之前的编译缓存指向旧位置，已失效，需要清理后重新编译。
+    echo  正在清理（可能要几分钟，期间请勿关闭窗口）...
+    call :start_heartbeat "仍在清理失效的编译缓存" 20
+)
 if exist "%FG_TARGET%" rmdir /s /q "%FG_TARGET%"
 call :stop_heartbeat
 if exist "%FG_TARGET%" (
     echo.
-    echo  [错误] 清理失败 —— 通常是该文件夹正被占用
-    echo  （已开着的应用窗口 / 资源管理器 / 杀毒软件）。
-    echo  请关掉它们后重新双击本文件。
+    if "%FG_LANG%"=="en" (
+        echo  [ERROR] Cleanup failed - usually the folder is in use
+        echo  - an open app window / File Explorer / antivirus software.
+        echo  Close them and double-click this file again.
+    ) else (
+        echo  [错误] 清理失败 —— 通常是该文件夹正被占用
+        echo  （已开着的应用窗口 / 资源管理器 / 杀毒软件）。
+        echo  请关掉它们后重新双击本文件。
+    )
     exit /b 1
 )
-echo  清理完成，继续。
+if "%FG_LANG%"=="en" (echo  Cleanup done, continuing.) else (echo  清理完成，继续。)
 exit /b 0
 
 
@@ -358,24 +409,47 @@ rem  原因说明（错误分支统一调用，避免每个脚本各写一份）
 rem ============================================================================
 :why_tauri
 echo.
-echo  可能的原因与对应处理：
-echo    · 缺少 MSVC 生成工具：若报错含 link.exe not found 或 LINK : fatal error，
-echo      说明 C++ 编译工具没装好。请重新运行「启动桌面端.bat」自动安装，
-echo      或手动安装「Visual Studio 2022 生成工具」并勾选「使用 C++ 的桌面开发」。
-echo    · 缺少 WebView2 运行时：重新运行「启动桌面端.bat」自动安装。
-echo    · 端口被占用：脚本会自动换端口；若仍失败，见上方端口占用提示。
-echo    · 杀毒软件拦截：把本文件夹加入信任后重试。
-echo    · 首次编译较慢：首次约 10~20 分钟属正常。
-echo.
+if "%FG_LANG%"=="en" (
+    echo  Possible causes and fixes:
+    echo    - MSVC build tools missing: if the error mentions link.exe not found or
+    echo      LINK : fatal error, the C++ toolchain is not installed. Re-run the
+    echo      project one-click setup to install it automatically, or install
+    echo      "Visual Studio 2022 Build Tools" with the "Desktop development with C++" workload.
+    echo    - WebView2 runtime missing: re-run the project one-click setup to install it.
+    echo    - Port in use: the script picks another port automatically; if it still fails,
+    echo      see the port-in-use notice above.
+    echo    - Antivirus blocking: add this folder to the trust list and retry.
+    echo    - First compile is slow: 10-20 minutes on the first run is normal.
+    echo.
+) else (
+    echo  可能的原因与对应处理：
+    echo    · 缺少 MSVC 生成工具：若报错含 link.exe not found 或 LINK : fatal error，
+    echo      说明 C++ 编译工具没装好。请重新运行「启动桌面端.bat」自动安装，
+    echo      或手动安装「Visual Studio 2022 生成工具」并勾选「使用 C++ 的桌面开发」。
+    echo    · 缺少 WebView2 运行时：重新运行「启动桌面端.bat」自动安装。
+    echo    · 端口被占用：脚本会自动换端口；若仍失败，见上方端口占用提示。
+    echo    · 杀毒软件拦截：把本文件夹加入信任后重试。
+    echo    · 首次编译较慢：首次约 10~20 分钟属正常。
+    echo.
+)
 exit /b 0
 
 
 :why_python
 echo.
-echo  可能的原因与对应处理：
-echo    · Python 3.11+ 未安装：请到 python.org 安装并勾选「Add to PATH」。
-echo    · .venv 创建失败：确认磁盘剩余空间 ≥ 5 GB。
-echo    · 依赖下载失败：确认能访问 pypi（或配置国内镜像）。
-echo    · 若反复失败，请把本窗口的报错内容截图反馈。
-echo.
+if "%FG_LANG%"=="en" (
+    echo  Possible causes and fixes:
+    echo    - Python 3.11+ not installed: install it from python.org and tick "Add to PATH".
+    echo    - .venv creation failed: make sure at least 5 GB of disk space is free.
+    echo    - Dependency download failed: check access to pypi or configure a mirror.
+    echo    - If it keeps failing, send a screenshot of the errors in this window.
+    echo.
+) else (
+    echo  可能的原因与对应处理：
+    echo    · Python 3.11+ 未安装：请到 python.org 安装并勾选「Add to PATH」。
+    echo    · .venv 创建失败：确认磁盘剩余空间 ≥ 5 GB。
+    echo    · 依赖下载失败：确认能访问 pypi（或配置国内镜像）。
+    echo    · 若反复失败，请把本窗口的报错内容截图反馈。
+    echo.
+)
 exit /b 0
