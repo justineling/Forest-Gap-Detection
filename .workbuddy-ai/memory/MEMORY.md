@@ -47,6 +47,7 @@
 - **文档**：HTML 报告必须同时出「专业版 + `-小白版`」；中文文件名；含图 HTML 内联 base64/SVG，禁相对路径；历史决策文档纠错时不改正文（顶部提示+文末后记）。
 - **代码**：标识符纯 ASCII，中文只在注释/显示字符串；`sidecar.py` 的 stdout 是 NDJSON 数据通道，禁 print 污染，人类日志走 stderr。组件抛错会卸载整棵 React 树 → 白屏，需 ErrorBoundary。
 - 契约测试 `scripts/test_sidecar_contract.py` 期望 95/95；PowerShell 5.1 读 `.ps1` 必须有 UTF-8 BOM；别手删安装目录（NSIS 弹 "Unable to install"）。
+- **CI（2026-10-20 修复）**：Python 依赖唯一清单是根目录 `requirements.txt`（CI 与本地共用，别再手写 pip 清单——漏过 Pillow 导致 CI 从未绿）；`desktop/runtime/desktop_entry/.gitkeep` 必须保留（tauri-build 对 bundle.resources 做存在性硬检查，目录没了 `cargo test` 编译期就挂）；frontend 钉 `ubuntu-24.04`（latest 已迁 Ubuntu 26）；`cargo test`(debug) 不需要 `dist`（codegen 仅在非 dev 且无 devUrl 时 panic）。
 - `check_all.py` 9 层静态检查（tsc/npm test/ruff/CLI --help/cargo test/契约等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。
 
 ## 9. 待办
