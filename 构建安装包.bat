@@ -90,17 +90,17 @@ echo        WebView2 由安装包在**安装时**联网下载。
 echo  ----------------------------------------------------
 echo.
 
-rem ---- 关键：构建前把上一次的旧安装包挪走（不删除，移到 _stale）----
-rem 目的：让构建后的查找**只可能**命中本次产物。零命中即「本次没产出」，
-rem       杜绝「报告 / 弹出上一次的旧包」这种最坑的误报。
-call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\nsis\*.exe" "%FG_STALE_DIR%"
-call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\msi\*.msi" "%FG_STALE_DIR%"
 
 rem 中和 CARGO_TARGET_DIR：安装包产物固定到项目内
 rem   desktop\src-tauri\target\release\bundle\nsis\
 call "%~dp0_环境准备.bat" prepare_build_env
 set "FG_REL=%FG_TARGET%\release"
 set "FG_STALE_DIR=%FG_REL%\bundle\_stale"
+rem ---- 关键：构建前把上一次的旧安装包挪走（不删除，移到 _stale）----
+rem 目的：让构建后的查找**只可能**命中本次产物。零命中即「本次没产出」，
+rem       杜绝「报告 / 弹出上一次的旧包」这种最坑的误报。
+call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\nsis\*.exe" "%FG_STALE_DIR%"
+call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\msi\*.msi" "%FG_STALE_DIR%"
 call "%~dp0_环境准备.bat" mark_project_path
 call "%~dp0_环境准备.bat" start_heartbeat "仍在构建（链接阶段可能较久）" 40
 pushd "%~dp0desktop"

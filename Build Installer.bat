@@ -94,18 +94,18 @@ echo        WebView2 is downloaded by the installer at install time.
 echo  ----------------------------------------------------
 echo.
 
-rem ---- Key: move the previous installers away (not delete, to _stale) ----
-rem Purpose: after the build, the lookup can only hit THIS run's output.
-rem        A zero-hit means "this run produced nothing" - it rules out
-rem        the worst misreport: reporting / launching the previous package.
-call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\nsis\*.exe" "%FG_STALE_DIR%"
-call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\msi\*.msi" "%FG_STALE_DIR%"
 
 rem Neutralize CARGO_TARGET_DIR: installers always go to
 rem   desktop\src-tauri\target\release\bundle\nsis\
 call "%~dp0_环境准备.bat" prepare_build_env
 set "FG_REL=%FG_TARGET%\release"
 set "FG_STALE_DIR=%FG_REL%\bundle\_stale"
+rem ---- Key: move the previous installers away (not delete, to _stale) ----
+rem Purpose: after the build, the lookup can only hit THIS run's output.
+rem        A zero-hit means "this run produced nothing" - it rules out
+rem        the worst misreport: reporting / launching the previous package.
+call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\nsis\*.exe" "%FG_STALE_DIR%"
+call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\msi\*.msi" "%FG_STALE_DIR%"
 call "%~dp0_环境准备.bat" mark_project_path
 call "%~dp0_环境准备.bat" start_heartbeat "Still building (the linking stage can take a while)" 40
 pushd "%~dp0desktop"

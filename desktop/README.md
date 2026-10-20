@@ -75,9 +75,10 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 |---|---|---|
 | `..\启动桌面端.bat` | **开发** | 检查环境 → 缺什么自动装（调 `scripts/一键配置环境.bat`）→ 挑端口 → `tauri dev` |
 | `..\构建安装包.bat` | **发布** | 检查环境 → `npm run build` → `tauri build` → 报告产物并自动弹安装程序 |
+| `..\Build Installer.bat` | **发布（英文）** | 同「构建安装包.bat」，用于 cmd 控制台中文乱码的环境 |
 | `..\_环境准备.bat` | 上面两个的**共享模块** | 阶段提示 / 心跳 / 端口探测 / 旧产物归档 / 搬家自愈 |
 
-> 三个脚本放在**项目根目录**（与 `drone data/`、`output/` 同级），不是 `desktop/` 下 ——
+> 四个脚本放在**项目根目录**（与 `drone data/`、`output/` 同级），不是 `desktop/` 下 ——
 > 因为要检查影像与结果文件，放根目录路径更直观。脚本内部用 `pushd "%~dp0desktop"`
 > 进前端工程跑 npm，跑完 `popd`。
 
@@ -88,7 +89,7 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 > 不动系统环境变量），否则 cargo 会把产物甩到那个变量指向的目录去。
 > 想恢复"用外部 target"（多项目共用编译缓存）：设 `FGD_USE_EXTERNAL_TARGET=1` 再跑脚本。
 
-三个脚本都遵循同一套约定（与同作者的 KIRA Manager 脚本一致）：
+四个脚本都遵循同一套约定（与同作者的 KIRA Manager 脚本一致）：
 
 - **自动下载环境**：`.venv` / `node_modules` / `cargo` 缺任一项 → 自动调项目自带的环境向导
 - **心跳**：长任务（npm install / Rust 编译 / 链接）每 ~10 秒打一行"已用 X 分 Y 秒"，
@@ -102,7 +103,7 @@ npm run tauri:build    # 出 msi / nsis 安装包（首次编译 5~15 分钟）
 - **搬家自愈**：编译缓存里记的是绝对路径，项目移动后自动清理（**仅限项目内 `src-tauri/target`**，
   `CARGO_TARGET_DIR` 指向项目外时跳过 —— 那是多项目共用目录，删了会伤到别人）
 
-> ⚠️ 三个 `.bat` 必须存成 **UTF-8 无 BOM + CRLF 行尾**。
+> ⚠️ 四个 `.bat` 必须存成 **UTF-8 无 BOM + CRLF 行尾**。
 > 用 LF 行尾时 cmd 会把中文路径拆断（实测报 `'D://...//2.' is not recognized`）。
 
 > ⚠️ **`--build-overviews` 会就地修改源影像**（对本 BigTIFF 是**写入文件内部**，
@@ -1097,3 +1098,14 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 
     修法：依赖补 `validation.scope` / `samples.length`；
     并删掉 `|| 150` 这类兜底默认值 —— 它把"抽了 0 块"这个错误状态伪装成了正常状态。
+
+46. **`park_stale` 挪旧安装包必须晚于 `FG_REL` / `FG_STALE_DIR` 赋值，否则归档保护静默失效**
+
+    现象：本次没产出安装包时，构建完却把上一次的旧包当本次产物报告，
+    甚至自动弹出了旧安装程序；有时还在盘根多出一个 `bundle\_stale` 目录。
+    原因：commit dba6d11 把 `set "FG_REL=..."` / `set "FG_STALE_DIR=..."`
+    挪到了 `call prepare_build_env` 之后，但同一阶段的 `park_stale` 两行没跟着挪 ——
+    执行时两个变量还是空的，`"%FG_REL%\bundle\nsis\*.exe"` 被当成盘根相对路径
+    `\bundle\nsis\*.exe`，归档保护不报错、静默失效。
+    修法：`park_stale` 两行（连同注释块）必须放在 `set "FG_STALE_DIR=..."` 之后、
+    `call mark_project_path` 之前（2026-10-20 修复）。
