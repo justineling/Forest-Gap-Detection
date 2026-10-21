@@ -225,6 +225,25 @@ set "FG_NEED_RUST=1"
 if "%FG_LANG%"=="en" (echo   [missing] Rust toolchain - cargo exists but cannot run) else (echo   [缺失]   Rust 工具链（cargo 不可用或无默认工具链）)
 
 :cr_rust_done
+rem ---- MSVC（Tauri 打包的唯一支持目标）----
+rem Tauri v2 在 Windows 上只支持 MSVC：tauri / windows crate 的 WebView2 loader
+rem 要链接 MSVC 的 .lib。GNU 工具链能编普通 Rust，但 tauri build 会链接失败。
+rem 这里只**提示**不阻断（装 VS 生成工具需管理员 + 2~6 GB，脚本不代劳），
+rem 目的是让用户在阶段 1 就知道，而不是等编译几分钟后才看到 link.exe 报错。
+set "FG_MSVC="
+rem ⚠️ 只用 vswhere 判定，**不要**用 `where link` 兜底：MSYS/Git Bash 自带
+rem    /usr/bin/link（coreutils 的硬链接工具），MinGW 也可能放一个同名 exe，
+rem    `where link` 会误判成"MSVC 已装"（2026-10-21 实测踩过）。
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+    for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "FG_MSVC=%%i"
+)
+if defined FG_MSVC (
+    if "%FG_LANG%"=="en" (echo   [ready]   MSVC C++ build tools) else (echo   [已就绪] MSVC C++ 生成工具)
+) else (
+    if "%FG_LANG%"=="en" (echo   [warn]    MSVC C++ build tools not found - tauri build will fail) else (echo   [警告]   MSVC C++ 生成工具未找到 —— tauri build 会失败)
+    if "%FG_LANG%"=="en" (echo             Install "Visual Studio 2022 Build Tools" with "Desktop development with C++") else (echo             需装「Visual Studio 2022 生成工具」并勾选「使用 C++ 的桌面开发」)
+)
 exit /b 0
 
 

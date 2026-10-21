@@ -213,10 +213,17 @@ function Get-Download {
             $barW = 26; $fill = [int]($barW * $pct / 100)
             $bar = ('#' * $fill) + ('.' * ($barW - $fill))
             $spd = 0.0; if ($el -gt 0.5) { $spd = $mb / $el }
-            [Console]::Write("`r      $Label [$bar] {0,3}%  {1,7:N1}/{2,7:N1} MB  {3,5:N1} MB/s      " -f `
-                $pct, $mb, ($ExpectedBytes/1MB), $spd)
+            # ⚠️ 不能写成 [Console]::Write("..." -f $a, $b)：
+            #    方法调用参数列表里的逗号是**参数分隔符**，-f 只会拿到第一个值，
+            #    字符串里的 {1}/{2}/{3} 全部越界 → "Index must be ... less than
+            #    the size of the argument list"（2026-10-21 实测刷屏）。
+            #    必须先算出整行再交给 Write。
+            $line = "`r      $Label [$bar] {0,3}%  {1,7:N1}/{2,7:N1} MB  {3,5:N1} MB/s      " -f `
+                $pct, $mb, ($ExpectedBytes/1MB), $spd
+            [Console]::Write($line)
         } else {
-            [Console]::Write("`r      $Label  已下载 {0,8:N1} MB   耗时 {1:N0}s      " -f $mb, $el)
+            $line = "`r      $Label  已下载 {0,8:N1} MB   耗时 {1:N0}s      " -f $mb, $el
+            [Console]::Write($line)
         }
         if (($el - $lastBeat) -ge $script:HeartbeatSec) {
             $lastBeat = $el
@@ -383,10 +390,12 @@ if (-not $linkOK) {
 }
 if ($linkOK) { Add-Result 'MSVC 生成工具' '已安装' 'Rust MSVC 工具链可用' '桌面端推荐' }
 else {
-    Warn 'MSVC C++ 生成工具：未找到 —— 脚本会改用 GNU 工具链（免管理员，可正常构建）'
-    Add-Result 'MSVC 生成工具' '缺失' '已用 GNU 工具链替代，不影响使用' '可选'
-    # 只有在确实需要 MSVC 时再提示手动安装；GNU 工具链已能覆盖 Tauri 构建
-    # Add-Manual 'Visual Studio Build Tools 2022' 'https://visualstudio.microsoft.com/visual-cpp-build-tools/' '勾选「使用 C++ 的桌面开发」；需管理员'
+    # ⚠️ 别写"GNU 工具链可正常构建 Tauri"——Tauri v2 在 Windows 上**只支持 MSVC**：
+    #    tauri / windows crate 的 WebView2 loader 要链接 MSVC 的 .lib，GNU 目标
+    #    （mingw）能编普通 Rust 程序，但 tauri build 会链接失败。
+    Warn 'MSVC C++ 生成工具：未找到 —— 普通 Rust 程序可编译，但 Tauri 打包会失败（见下）'
+    Add-Result 'MSVC 生成工具' '缺失' 'Tauri 打包必需；GNU 工具链只能编普通 Rust' '打包必需'
+    Add-Manual 'Visual Studio Build Tools 2022' 'https://visualstudio.microsoft.com/visual-cpp-build-tools/' '勾选「使用 C++ 的桌面开发」；需管理员；约 2~6 GB'
 }
 
 $wv2 = $null
@@ -533,11 +542,12 @@ if (-not $rustOK -and -not $rustNeedRepair -and -not $SkipRust) {
     if ($UseChinaMirror) { $rustupUrl = 'https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe' }
     Act "自动安装 Rust 工具链（RUSTUP_HOME=$($dirs.RustupHome)）"
     if (Get-Download -Url $rustupUrl -OutFile $rustupExe -Label 'rustup-init.exe') {
-        # 优先 MSVC（需 VS 生成工具），否则用 GNU 工具链（自带链接器，免管理员）
+        # 优先 MSVC（Tauri 打包的唯一支持目标）；缺链接器时退回 GNU —— 但必须
+        # 说清代价：GNU 只能编普通 Rust 程序，tauri build 会链接失败。
         $toolchain = 'stable-x86_64-pc-windows-msvc'
         if (-not $linkOK) {
             $toolchain = 'stable-x86_64-pc-windows-gnu'
-            Warn '未检测到 MSVC 链接器 → 改用 GNU 工具链（自带 MinGW 链接器，无需管理员）'
+            Warn '未检测到 MSVC 链接器 → 装 GNU 工具链（普通 Rust 可编译；Tauri 打包仍需 VS 生成工具）'
         }
         $rargs = @('-y','--no-modify-path','--default-toolchain',$toolchain,'--profile','default')
         $r = Invoke-Heartbeat -Name 'Rust 工具链下载安装' -Script {
