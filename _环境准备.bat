@@ -229,22 +229,112 @@ exit /b 0
 
 
 :ensure_python_env
+rem 英文入口不走中文向导（800+ 行纯中文输出，会把界面从全英文变成方块），
+rem 改走文件末尾的 :ensure_env_en —— 最小安装，命令本身都是英文输出。
+if "%FG_LANG%"=="en" goto :ensure_env_en
+
 rem 调用项目已有的环境配置向导（scripts\一键配置环境.bat → 配置环境.ps1）。
 rem 那个脚本会做 6 个阶段：系统检测 / 工具链 / GPU / 安装 / venv+依赖 / 模型+前端依赖。
 if not exist "%~dp0scripts\一键配置环境.bat" (
-    if "%FG_LANG%"=="en" (echo   [ERROR] The bundled setup wizard was not found; cannot configure the environment automatically.) else (echo   [错误] 找不到 scripts\一键配置环境.bat，无法自动配置环境。)
+    echo   [错误] 找不到 scripts\一键配置环境.bat，无法自动配置环境。
     exit /b 1
 )
-if "%FG_LANG%"=="en" (
-    echo   Launching the bundled setup wizard - first run takes about 5-15 minutes...
-    echo   - it installs the Python environment, dependencies and the Rust toolchain, printing progress all the way
-) else (
-    echo   正在调用项目自带的环境配置向导（首次约 5~15 分钟）...
-    echo   （它会把 Python 环境、依赖、Rust 工具链都装好；期间会持续输出进度）
-)
+echo   正在调用项目自带的环境配置向导（首次约 5~15 分钟）...
+echo   （它会把 Python 环境、依赖、Rust 工具链都装好；期间会持续输出进度）
+rem ⚠️ 必须设 FGD_NO_PAUSE：向导开头有 pause，自动调用时没人按键 →
+rem    整个构建会永久卡在 "Press any key to continue"（2026-10-21 实测：
+rem    用户等了 22 分钟，向导一步都没跑，只有心跳在刷屏）。
+set "FGD_NO_PAUSE=1"
 call "%~dp0scripts\一键配置环境.bat"
-if errorlevel 1 exit /b 1
+set "FG_ENV_RC=%ERRORLEVEL%"
+set "FGD_NO_PAUSE="
+if not "%FG_ENV_RC%"=="0" exit /b 1
 exit /b 0
+
+
+rem ============================================================================
+rem  英文入口的环境补齐（最小安装，不调用中文向导）
+rem  ---------------------------------------------------------------------------
+rem  只做构建必需的三件事：Rust 工具链 / Python venv+依赖 / node_modules。
+rem  rustup / pip / npm 自身的输出都是英文，所以整条路径不会出现中文方块。
+rem ============================================================================
+:ensure_env_en
+set "FG_EN_RC=0"
+
+rem ---- 1) Rust ----
+where cargo >nul 2>nul
+if errorlevel 1 goto :en_rust_absent
+cargo --version >nul 2>nul
+if not errorlevel 1 goto :en_rust_ok
+echo   Rust is installed but no default toolchain is configured.
+echo   Running: rustup default stable   [downloads about 300 MB, takes several minutes]
+where rustup >nul 2>nul
+if errorlevel 1 (
+    echo   [ERROR] rustup not found. Install Rust from https://rustup.rs and re-run this script.
+    set "FG_EN_RC=1"
+    goto :en_rust_done
+)
+rustup default stable
+cargo --version >nul 2>nul
+if errorlevel 1 (
+    echo   [ERROR] rustup default stable finished but cargo still cannot run. See the messages above.
+    set "FG_EN_RC=1"
+) else (
+    echo   [ready] Rust toolchain is now available.
+)
+goto :en_rust_done
+
+:en_rust_absent
+echo   [ERROR] cargo not found. Install Rust from https://rustup.rs and re-run this script.
+set "FG_EN_RC=1"
+goto :en_rust_done
+
+:en_rust_ok
+echo   [ready] Rust toolchain already available.
+
+:en_rust_done
+
+rem ---- 2) Python venv + dependencies ----
+if exist "%~dp0.venv\Scripts\python.exe" goto :en_venv_ok
+echo   Creating the Python virtual environment .venv ...
+set "FG_PY="
+where py >nul 2>nul
+if not errorlevel 1 set "FG_PY=py -3"
+if defined FG_PY goto :en_py_found
+where python >nul 2>nul
+if not errorlevel 1 set "FG_PY=python"
+:en_py_found
+if not defined FG_PY (
+    echo   [ERROR] Python 3.11+ not found. Install it from https://www.python.org/downloads/
+    echo           Tick "Add python.exe to PATH" during setup, then re-run this script.
+    set "FG_EN_RC=1"
+    goto :en_venv_done
+)
+%FG_PY% -m venv "%~dp0.venv"
+if errorlevel 1 (
+    echo   [ERROR] Failed to create .venv - check free disk space and folder permissions.
+    set "FG_EN_RC=1"
+    goto :en_venv_done
+)
+"%~dp0.venv\Scripts\python.exe" -m pip install --upgrade pip
+"%~dp0.venv\Scripts\python.exe" -m pip install -r "%~dp0requirements.txt"
+if errorlevel 1 (
+    echo   [ERROR] pip install failed - check network access to pypi or configure a mirror.
+    set "FG_EN_RC=1"
+) else (
+    echo   [ready] Python virtual environment with dependencies.
+)
+goto :en_venv_done
+
+:en_venv_ok
+echo   [ready] Python virtual environment already present.
+
+:en_venv_done
+
+rem ---- 3) node_modules ----
+call :ensure_npm
+if errorlevel 1 set "FG_EN_RC=1"
+exit /b %FG_EN_RC%
 
 
 :ensure_npm
