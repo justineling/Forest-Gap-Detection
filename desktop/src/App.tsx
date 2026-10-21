@@ -340,9 +340,17 @@ export default function App() {
   const onWizardDone = useCallback(async () => {
     setWizard(null)
     const st = await getStatus()
+    // ⚠️ 换影像后必须清空 store 里的旧结果：`setGaps([])` 会把
+    //    `workflow.loaded` 置 false，步骤判定才会回到「运行检测」。
+    //    不清的话：旧结果属于上一张影像（网格原点/坐标系都可能不同），
+    //    界面会直接跳到「复核结果」并弹"结果没读到"（2026-10-21 实测）。
+    if (st.image && st.image !== appStatus?.image) {
+      setGaps([])
+      setGapsError(null)
+    }
     setAppStatus(st)
     await probeAndLoad()
-  }, [probeAndLoad])
+  }, [probeAndLoad, appStatus, setGaps])
 
   // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 进度条 / 日志 / 自动重载结果
   // ⚠️ 浏览器模式（Headless Chrome）下 onSidecarEvent 直接返回空订阅，

@@ -1793,12 +1793,20 @@ fn set_data_paths(
     gaps: Option<String>,
 ) -> Result<AppStatus, String> {
     let mut cfg = load_config();
+    let old_image = cfg.image.clone();
     if let Some(p) = image {
         let pb = PathBuf::from(&p);
         if !pb.exists() {
             return Err(format!("影像文件不存在：{p}"));
         }
         cfg.image = Some(p);
+    }
+    // ⚠️ 换影像且没指定新结果时，**必须清掉旧结果**：
+    //    旧结果是上一张影像跑出来的，网格原点/坐标系都可能完全不同，
+    //    继续挂着会让前端认为"检测已完成"直接跳到「复核结果」，
+    //    同时弹出"结果没读到"（2026-10-21 公司电脑实测）。
+    if cfg.image != old_image && gaps.is_none() {
+        cfg.gaps = None;
     }
     if let Some(g) = gaps {
         let pb = PathBuf::from(&g);
