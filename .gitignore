@@ -63,3 +63,4 @@ desktop/runtime/desktop_entry/*
 build/pyinstaller/
 build/*.spec
 *.spec.bak
+影像服务诊断报告.txt
