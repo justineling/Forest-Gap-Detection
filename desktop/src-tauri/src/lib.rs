@@ -800,8 +800,27 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     //    现场就是这样把 GDAL/PROJ 的 traceback 全丢了，只剩一句"已启动"。
     if let Some(err) = child.stderr.take() {
         std::thread::spawn(move || {
-            for line in BufReader::new(err).lines().map_while(Result::ok) {
-                push_tile_log(&line);
+            // ⚠️ 不能用 `.lines().map_while(Result::ok)`：只要有一行不是严格
+            //    UTF-8（Windows 代码页混入、或中文横幅），迭代器就**整体停止**，
+            //    后面的 traceback 全部丢失 —— 2026-10-21 实测：日志里只剩一行
+            //    `====`，退出码 1 却看不到任何原因。
+            //    改成按字节读到换行、再用 from_utf8_lossy 兜底：坏字节变成 �，
+            //    但后续行照常记录。
+            let mut reader = BufReader::new(err);
+            let mut buf: Vec<u8> = Vec::new();
+            loop {
+                buf.clear();
+                match reader.read_until(b'\n', &mut buf) {
+                    Ok(0) => break, // EOF
+                    Ok(_) => {
+                        let text = String::from_utf8_lossy(&buf);
+                        let line = text.trim_end_matches(['\r', '\n']);
+                        if !line.is_empty() {
+                            push_tile_log(line);
+                        }
+                    }
+                    Err(_) => break,
+                }
             }
         });
     }

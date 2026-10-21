@@ -129,7 +129,7 @@ Write-Stage '[3/4] PyInstaller 打包（首次约 3~8 分钟）' '[3/4] PyInstal
 Write-Host ''
 Say '  说明：' '  Notes:'
 Say '    · --onedir 目录模式（不是 --onefile）：启动零解压，不会被杀软拦' '    - --onedir mode - not --onefile: no extraction at startup, not flagged by antivirus'
-Say '    · --collect-all rasterio/pyproj/shapely：这些包的 Cython .pyd 与' '    - --collect-all rasterio/pyproj/shapely: their Cython .pyd and'
+Say '    · --exclude-module torch/cv2/av/transformers/matplotlib/pyogrio：' '    - --exclude-module torch/cv2/av/transformers/matplotlib/pyogrio:'
 Say '      数据文件（proj.db / gdal_data）静态分析抓不全，必须显式收集' '      data files - proj.db / gdal_data - are not fully caught by static analysis, so collect them explicitly'
 Say '    · 单入口：tile_server 与 sidecar 共享同一份动态库' '    - single entry: tile_server and sidecar share the same dynamic libraries'
 Write-Host ''
@@ -144,6 +144,13 @@ Invoke-Native {
         --collect-submodules scipy.ndimage `
         --collect-submodules scipy.spatial `
         --hidden-import shapefile `
+        --exclude-module torch `
+        --exclude-module torchvision `
+        --exclude-module cv2 `
+        --exclude-module av `
+        --exclude-module transformers `
+        --exclude-module matplotlib `
+        --exclude-module pyogrio `
         $Entry
 }
 

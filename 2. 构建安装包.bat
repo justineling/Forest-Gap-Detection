@@ -119,7 +119,7 @@ rem       杜绝「报告 / 弹出上一次的旧包」这种最坑的误报。
 call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\nsis\*.exe" "%FG_STALE_DIR%"
 call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\msi\*.msi" "%FG_STALE_DIR%"
 call "%~dp0_环境准备.bat" mark_project_path
-call "%~dp0_环境准备.bat" start_heartbeat "仍在构建（链接阶段可能较久）" 40
+call "%~dp0_环境准备.bat" start_heartbeat "仍在构建安装包（Rust 编译 + NSIS 压缩，共约 10-20 分钟）" 40
 pushd "%~dp0desktop"
 call npm run tauri:build
 set "FG_RC=%ERRORLEVEL%"

@@ -54,20 +54,6 @@ export function explain(
   foreign: boolean,
   timeoutSec = 120,
 ): Explanation {
-  // ① 端口被别人占 —— 和服务、影像都无关，却最常被误判成"影像有问题"
-  if (foreign || (d && d.port_open && !d.ours)) {
-    const port = d?.port ?? 8765
-    return {
-      title: `端口 ${port} 被其它程序占用`,
-      steps: [
-        '本应用的影像服务没能启动，因为端口已经被别人占住了 —— 不是影像文件的问题。',
-        '保持本应用开着，用管理员 PowerShell 跑这一行，看是谁占的：',
-        `  Get-NetTCPConnection -LocalPort ${port} -State Listen | Select-Object OwningProcess`,
-        '再 Get-Process -Id <上面那个 PID> 认一下是谁，关掉它（或重启电脑），然后重新点「开始使用」。',
-      ],
-    }
-  }
-
   // ② 进程起来了又立刻退出 —— 杀软拦截 / DLL 缺失的典型指纹
   if (d && d.exit_code !== null && d.exit_code !== 0) {
     const c = d.exit_code
@@ -79,6 +65,39 @@ export function explain(
         '  %LOCALAPPDATA%\\Programs\\Forest Gap Detection',
         '需要放行的具体文件是 py-runtime\\desktop_entry\\desktop_entry.exe。',
         '下方「技术细节」里有它退出前打印的最后几行，可直接发给开发者。',
+      ],
+    }
+  }
+
+  // ① 进程起来了又立刻退出 —— **先判这个**：退出码是最确凿的证据。
+  //    为什么顺序重要：服务崩溃后端口可能还残留（TIME_WAIT / 未回收），
+  //    此时 port_open=true、ours=false；若先判端口就会误报"被别人占用"。
+  //    2026-10-21 公司电脑实测：真因是服务秒退，界面却让用户去查端口占用。
+  //    杀软拦截 / DLL 缺失的典型指纹
+  if (d && d.exit_code !== null && d.exit_code !== 0) {
+    const c = d.exit_code
+    return {
+      title: `影像服务启动后立即退出（退出码 ${c} / ${exitCodeHex(c)}）`,
+      steps: [
+        exitHint(c) ?? '服务进程刚起来就退出了，通常是安全软件拦截，或运行库不完整。',
+        '把这个目录加入杀毒软件 / EDR 的白名单后重试：',
+        '  %LOCALAPPDATA%\\Programs\\Forest Gap Detection',
+        '需要放行的具体文件是 py-runtime\\desktop_entry\\desktop_entry.exe。',
+        '下方「技术细节」里有它退出前打印的最后几行，可直接发给开发者。',
+      ],
+    }
+  }
+
+  // ② 端口被别人占 —— 只有"我们的进程没留下退出码"时才成立
+  if (foreign || (d && d.port_open && !d.ours && d.exit_code == null)) {
+    const port = d?.port ?? 8765
+    return {
+      title: `端口 ${port} 被其它程序占用`,
+      steps: [
+        '本应用的影像服务没能启动，因为端口已经被别的东西占住了 —— 不是影像文件的问题。',
+        '保持本应用开着，用管理员 PowerShell 跑这一行，看是谁占的：',
+        `  Get-NetTCPConnection -LocalPort ${port} -State Listen | Select-Object OwningProcess`,
+        '再 Get-Process -Id <上面那个 PID> 认一下是谁，关掉它（或重启电脑），然后重新点「开始使用」。',
       ],
     }
   }

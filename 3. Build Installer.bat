@@ -125,7 +125,7 @@ rem        the worst misreport: reporting / launching the previous package.
 call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\nsis\*.exe" "%FG_STALE_DIR%"
 call "%~dp0_环境准备.bat" park_stale "%FG_REL%\bundle\msi\*.msi" "%FG_STALE_DIR%"
 call "%~dp0_环境准备.bat" mark_project_path
-call "%~dp0_环境准备.bat" start_heartbeat "Still building (the linking stage can take a while)" 40
+call "%~dp0_环境准备.bat" start_heartbeat "Still building the installer (Rust compile + NSIS compression, 10-20 min)" 40
 pushd "%~dp0desktop"
 call npm run tauri:build
 set "FG_RC=%ERRORLEVEL%"
