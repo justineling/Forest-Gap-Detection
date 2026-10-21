@@ -221,6 +221,17 @@ def run(args: argparse.Namespace) -> dict:
     # 装守卫的时机：**必须在第一条 _emit 之前** —— 否则"装守卫"这件事本身
     # 会让前面已经发出的行进不了新缓冲。而 _emit 内部用的是真 stdout
     # （通过 _StdoutGuard._real），所以装上之后发的事件仍然正常。
+    # ⚠️ 强制 UTF-8：`os.environ.setdefault("PYTHONIOENCODING", ...)` 对**当前进程**
+    #    无效 —— 那个变量只在解释器启动时读取。PyInstaller 打包后 stdout 是管道，
+    #    默认走 locale 编码（中文 Windows 是 cp936），写中文/特殊字符就
+    #    `UnicodeEncodeError: 'charmap' codec can't encode`（2026-10-21 实测：
+    #    「生成高度图与林地边界」报 [E4099]）。
+    #    errors="replace" 是兜底：极端字符变成 ?，但进程绝不因编码崩掉。
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
     guard = _StdoutGuard()
     sys.stdout = guard
     try:

@@ -117,6 +117,17 @@ def _bootstrap_frozen_runtime() -> dict:
     # 打包后 multiprocessing 的子进程也要能 import 到本目录的模块
     os.environ.setdefault("PYTHONUTF8", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    # ⚠️ 强制 UTF-8：`os.environ.setdefault("PYTHONIOENCODING", ...)` 对**当前进程**
+    #    无效 —— 那个变量只在解释器启动时读取。PyInstaller 打包后 stdout 是管道，
+    #    默认走 locale 编码（中文 Windows 是 cp936），写中文/特殊字符就
+    #    `UnicodeEncodeError: 'charmap' codec can't encode`（2026-10-21 实测：
+    #    「生成高度图与林地边界」报 [E4099]）。
+    #    errors="replace" 是兜底：极端字符变成 ?，但进程绝不因编码崩掉。
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:
+            pass
     return info
 
 
