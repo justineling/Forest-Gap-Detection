@@ -21,15 +21,24 @@
 .PARAMETER SkipInstall
     跳过 PyInstaller 的安装检查（离线环境 / 已确认装好时用）。
 
+.PARAMETER Lang
+    面向用户的输出语言。传 "en" 走英文分支；留空（默认）走中文，
+    行为与历史版本完全一致。
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smoke
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smoke -Lang en
 #>
 param(
     [switch]$Smoke,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [string]$Lang = ''
 )
 
 $ErrorActionPreference = 'Stop'
+$IsEn = ($Lang -eq 'en')
 $Root = Split-Path -Parent $PSScriptRoot
 $Py = Join-Path $Root '.venv\Scripts\python.exe'
 $Entry = Join-Path $Root 'scripts\desktop_entry.py'
@@ -38,139 +47,158 @@ $WorkDir = Join-Path $Root 'build\pyinstaller'
 $SpecDir = Join-Path $Root 'build'
 $OutExe = Join-Path $DistDir 'desktop_entry\desktop_entry.exe'
 
-function Write-Stage([string]$Text) {
+# 双语输出助手：$IsEn 为真走英文，否则走中文（默认行为不变）。
+function Write-Stage([string]$Cn, [string]$En) {
+    $text = if ($IsEn) { $En } else { $Cn }
     Write-Host ''
     Write-Host ('  ' + ('-' * 60))
-    Write-Host ('  ' + $Text)
+    Write-Host ('  ' + $text)
     Write-Host ('  ' + ('-' * 60))
+}
+
+function Say([string]$Cn, [string]$En) {
+    if ($IsEn) { Write-Host $En } else { Write-Host $Cn }
+}
+
+# 调用外部命令（python / PyInstaller / exe）时临时把 ErrorActionPreference 降到
+# Continue：PowerShell 5.1 会把原生命令写到 stderr 的内容包成 NativeCommandError，
+# 在 Stop 下直接变成终止错误 —— 例如「No module named PyInstaller」会把脚本打断，
+# 连自动安装都跑不到（这正是历史上运行时一直没被产出的原因）。退出码仍由
+# $LASTEXITCODE 显式判断，行为不打折。
+function Invoke-Native([scriptblock]$Block) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Block } finally { $ErrorActionPreference = $prev }
 }
 
 Write-Host ''
 Write-Host '  ===================================================='
-Write-Host '    Forest Gap Detection - 打包 Python 运行时'
+Say '    Forest Gap Detection - 打包 Python 运行时' '    Forest Gap Detection - Bundle Python Runtime'
 Write-Host '  ===================================================='
 
 # ============================================================
 #  阶段 1/4：检查环境
 # ============================================================
-Write-Stage '[1/4] 检查环境'
+Write-Stage '[1/4] 检查环境' '[1/4] Check environment'
 
 if (-not (Test-Path $Py)) {
-    Write-Host '  [错误] 找不到 .venv\Scripts\python.exe'
-    Write-Host '         请先双击 scripts\一键配置环境.bat 配置环境。'
+    Say '  [错误] 找不到 .venv\Scripts\python.exe' '  [ERROR] .venv\Scripts\python.exe not found'
+    Say '         请先双击 scripts\一键配置环境.bat 配置环境。' '         Run scripts\一键配置环境.bat first to set up the environment.'
     exit 1
 }
-Write-Host ('  [已就绪] Python: ' + $Py)
+Say ('  [已就绪] Python: ' + $Py) ('  [ready]   Python: ' + $Py)
 
 if (-not (Test-Path $Entry)) {
-    Write-Host ('  [错误] 找不到入口脚本: ' + $Entry)
+    Say ('  [错误] 找不到入口脚本: ' + $Entry) ('  [ERROR] entry script not found: ' + $Entry)
     exit 1
 }
-Write-Host ('  [已就绪] 入口脚本: ' + $Entry)
+Say ('  [已就绪] 入口脚本: ' + $Entry) ('  [ready]   entry script: ' + $Entry)
 
 if (-not $SkipInstall) {
-    $pyiVer = & $Py -m PyInstaller --version 2>$null
+    $pyiVer = Invoke-Native { & $Py -m PyInstaller --version 2>$null }
     if (-not $pyiVer) {
-        Write-Host '  [缺失] PyInstaller，正在安装（约 1 分钟）...'
-        & $Py -m pip install pyinstaller --no-cache-dir -q
+        Say '  [缺失] PyInstaller，正在安装（约 1 分钟）...' '  [missing] PyInstaller - installing now, about 1 minute...'
+        Invoke-Native { & $Py -m pip install pyinstaller --no-cache-dir -q }
         if ($LASTEXITCODE -ne 0) {
-            Write-Host '  [错误] PyInstaller 安装失败（检查网络 / 代理）'
+            Say '  [错误] PyInstaller 安装失败（检查网络 / 代理）' '  [ERROR] PyInstaller install failed - check network / proxy'
             exit 1
         }
-        $pyiVer = & $Py -m PyInstaller --version
+        $pyiVer = Invoke-Native { & $Py -m PyInstaller --version }
     }
-    Write-Host ('  [已就绪] PyInstaller ' + $pyiVer)
+    Say ('  [已就绪] PyInstaller ' + $pyiVer) ('  [ready]   PyInstaller ' + $pyiVer)
 } else {
-    Write-Host '  [跳过] PyInstaller 检查（-SkipInstall）'
+    Say '  [跳过] PyInstaller 检查（-SkipInstall）' '  [skip]    PyInstaller check -SkipInstall'
 }
 
 # ============================================================
 #  阶段 2/4：清理旧产物
 # ============================================================
-Write-Stage '[2/4] 清理旧产物'
+Write-Stage '[2/4] 清理旧产物' '[2/4] Clean previous output'
 foreach ($p in @($DistDir, $WorkDir, (Join-Path $SpecDir 'desktop_entry.spec'))) {
     if (Test-Path $p) {
         Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue
-        Write-Host ('  已删除 ' + $p)
+        Say ('  已删除 ' + $p) ('  Removed ' + $p)
     }
 }
-Write-Host '  清理完成'
+Say '  清理完成' '  Cleanup done'
 
 # ============================================================
 #  阶段 3/4：PyInstaller 打包
 # ============================================================
-Write-Stage '[3/4] PyInstaller 打包（首次约 3~8 分钟）'
+Write-Stage '[3/4] PyInstaller 打包（首次约 3~8 分钟）' '[3/4] PyInstaller build - first run about 3-8 minutes'
 Write-Host ''
-Write-Host '  说明：'
-Write-Host '    · --onedir 目录模式（不是 --onefile）：启动零解压，不会被杀软拦'
-Write-Host '    · --collect-all rasterio/pyproj/shapely：这些包的 Cython .pyd 与'
-Write-Host '      数据文件（proj.db / gdal_data）静态分析抓不全，必须显式收集'
-Write-Host '    · 单入口：tile_server 与 sidecar 共享同一份动态库'
+Say '  说明：' '  Notes:'
+Say '    · --onedir 目录模式（不是 --onefile）：启动零解压，不会被杀软拦' '    - --onedir mode - not --onefile: no extraction at startup, not flagged by antivirus'
+Say '    · --collect-all rasterio/pyproj/shapely：这些包的 Cython .pyd 与' '    - --collect-all rasterio/pyproj/shapely: their Cython .pyd and'
+Say '      数据文件（proj.db / gdal_data）静态分析抓不全，必须显式收集' '      data files - proj.db / gdal_data - are not fully caught by static analysis, so collect them explicitly'
+Say '    · 单入口：tile_server 与 sidecar 共享同一份动态库' '    - single entry: tile_server and sidecar share the same dynamic libraries'
 Write-Host ''
 
-& $Py -m PyInstaller `
-    --noconfirm --clean --onedir --name desktop_entry `
-    --distpath $DistDir --workpath $WorkDir --specpath $SpecDir `
-    --collect-all rasterio `
-    --collect-all pyproj `
-    --collect-all shapely `
-    --collect-submodules scipy.ndimage `
-    --collect-submodules scipy.spatial `
-    --hidden-import shapefile `
-    $Entry
+Invoke-Native {
+    & $Py -m PyInstaller `
+        --noconfirm --clean --onedir --name desktop_entry `
+        --distpath $DistDir --workpath $WorkDir --specpath $SpecDir `
+        --collect-all rasterio `
+        --collect-all pyproj `
+        --collect-all shapely `
+        --collect-submodules scipy.ndimage `
+        --collect-submodules scipy.spatial `
+        --hidden-import shapefile `
+        $Entry
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host ''
-    Write-Host '  [错误] PyInstaller 打包失败，见上方日志。'
-    Write-Host '  常见原因：'
-    Write-Host '    · 磁盘空间不足（需要 ~1.5 GB 临时空间）'
-    Write-Host '    · 杀毒软件拦截写入（把项目目录加入信任）'
-    Write-Host '    · 某些包缺 .pyd：补 --collect-all <包名>'
+    Say '  [错误] PyInstaller 打包失败，见上方日志。' '  [ERROR] PyInstaller build failed; see the log above.'
+    Say '  常见原因：' '  Common causes:'
+    Say '    · 磁盘空间不足（需要 ~1.5 GB 临时空间）' '    - not enough disk space - about 1.5 GB temp space needed'
+    Say '    · 杀毒软件拦截写入（把项目目录加入信任）' '    - antivirus blocking writes - add the project folder to the trust list'
+    Say '    · 某些包缺 .pyd：补 --collect-all <包名>' '    - a package is missing .pyd files: add --collect-all <package>'
     exit 1
 }
 
 if (-not (Test-Path $OutExe)) {
-    Write-Host ('  [错误] 打包结束但找不到 ' + $OutExe)
+    Say ('  [错误] 打包结束但找不到 ' + $OutExe) ('  [ERROR] build finished but not found: ' + $OutExe)
     exit 1
 }
 
 $sizeMb = [math]::Round(((Get-ChildItem -Recurse (Split-Path $OutExe) | Measure-Object -Property Length -Sum).Sum / 1MB), 1)
 Write-Host ''
-Write-Host '  打包完成：'
-Write-Host ('    目录：' + (Split-Path $OutExe))
-Write-Host ('    入口：' + $OutExe)
-Write-Host ('    体积：约 ' + $sizeMb + ' MB')
+Say '  打包完成：' '  Build complete:'
+Say ('    目录：' + (Split-Path $OutExe)) ('    Directory: ' + (Split-Path $OutExe))
+Say ('    入口：' + $OutExe) ('    Entry: ' + $OutExe)
+Say ('    体积：约 ' + $sizeMb + ' MB') ('    Size: about ' + $sizeMb + ' MB')
 
 # ============================================================
 #  阶段 4/4：冻结态冒烟（可选）
 # ============================================================
 if ($Smoke) {
-    Write-Stage '[4/4] 冻结态冒烟测试（脱离 .venv）'
+    Write-Stage '[4/4] 冻结态冒烟测试（脱离 .venv）' '[4/4] Frozen smoke test - detached from .venv'
     Write-Host ''
-    Write-Host '  ① 自检（import + EPSG 转换 + GDAL 驱动）：'
-    & $OutExe --self-test
+    Say '  ① 自检（import + EPSG 转换 + GDAL 驱动）：' '  [1] Self-test: import + EPSG transform + GDAL drivers:'
+    Invoke-Native { & $OutExe --self-test }
     $rc = $LASTEXITCODE
     if ($rc -ne 0) {
-        Write-Host ('  [失败] --self-test 退出码 ' + $rc)
-        Write-Host '  排查：PROJ_DATA / GDAL_DATA 没定位到 → 看输出里的 proj_dir / gdal_dir'
+        Say ('  [失败] --self-test 退出码 ' + $rc) ('  [FAIL] --self-test exit code ' + $rc)
+        Say '  排查：PROJ_DATA / GDAL_DATA 没定位到 → 看输出里的 proj_dir / gdal_dir' '  Check: PROJ_DATA / GDAL_DATA not located - see proj_dir / gdal_dir in the output'
         exit 1
     }
-    Write-Host '  [通过] 自检 OK'
+    Say '  [通过] 自检 OK' '  [PASS] self-test OK'
     Write-Host ''
-    Write-Host '  ② 瓦片服务 /meta（另起进程，5 秒后自动结束）：'
+    Say '  ② 瓦片服务 /meta（另起进程，5 秒后自动结束）：' '  [2] Tile service /meta - separate process, auto-stops after 5 seconds:'
     $srv = Start-Process -FilePath $OutExe -ArgumentList '--run-tile-server','--port','8799' -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 6
     try {
         $meta = Invoke-RestMethod -Uri 'http://127.0.0.1:8799/meta' -TimeoutSec 20
-        Write-Host ('  [通过] /meta ok=' + $meta.ok + '  金字塔=' + $meta.has_overviews + '  中心=' + ($meta.center -join ','))
+        Say ('  [通过] /meta ok=' + $meta.ok + '  金字塔=' + $meta.has_overviews + '  中心=' + ($meta.center -join ',')) ('  [PASS] /meta ok=' + $meta.ok + '  overviews=' + $meta.has_overviews + '  center=' + ($meta.center -join ','))
     } catch {
-        Write-Host ('  [失败] /meta 请求失败：' + $_.Exception.Message)
+        Say ('  [失败] /meta 请求失败：' + $_.Exception.Message) ('  [FAIL] /meta request failed: ' + $_.Exception.Message)
     } finally {
         if ($srv -and -not $srv.HasExited) { Stop-Process -Id $srv.Id -Force }
     }
     Write-Host ''
-    Write-Host '  ③ 多进程检测（--workers 2 + ROI + limit 4）：'
-    Write-Host '     需要 data 目录里有影像；没有就跳过。'
+    Say '  ③ 多进程检测（--workers 2 + ROI + limit 4）：' '  [3] Multi-process detection: --workers 2 + ROI + limit 4:'
+    Say '     需要 data 目录里有影像；没有就跳过。' '     Needs an image under the data directory; skipped if absent.'
     $DataRoot = Join-Path $Root 'drone data'
     $Img = Join-Path $DataRoot 'WGR17-002.tif'
     if (Test-Path $Img) {
@@ -181,22 +209,22 @@ if ($Smoke) {
             limit = 4
             force = $true
         } | ConvertTo-Json -Compress
-        & $OutExe --params-json $params 2>$null | Select-String '"event": "result"|"event": "error"'
+        Invoke-Native { & $OutExe --params-json $params 2>$null } | Select-String '"event": "result"|"event": "error"'
         if ($LASTEXITCODE -eq 0) {
-            Write-Host '  [通过] 冻结态多进程检测 exit 0'
+            Say '  [通过] 冻结态多进程检测 exit 0' '  [PASS] frozen multi-process detection exit 0'
         } else {
-            Write-Host ('  [失败] 冻结态检测退出码 ' + $LASTEXITCODE)
+            Say ('  [失败] 冻结态检测退出码 ' + $LASTEXITCODE) ('  [FAIL] frozen detection exit code ' + $LASTEXITCODE)
             exit 1
         }
     } else {
-        Write-Host ('  [跳过] 找不到影像 ' + $Img)
+        Say ('  [跳过] 找不到影像 ' + $Img) ('  [skip] image not found ' + $Img)
     }
 }
 
 Write-Host ''
 Write-Host '  ===================================================='
-Write-Host '   完成。下一步：'
-Write-Host '     · 桌面端开发：desktop\启动桌面端.bat'
-Write-Host '     · 出安装包：  desktop\构建安装包.bat'
+Say '   完成。下一步：' '   Done. Next steps:'
+Say '     · 桌面端开发：desktop\启动桌面端.bat' '     - Desktop development: desktop\启动桌面端.bat'
+Say '     · 出安装包：  desktop\构建安装包.bat' '     - Build installer:     desktop\构建安装包.bat'
 Write-Host '  ===================================================='
 Write-Host ''

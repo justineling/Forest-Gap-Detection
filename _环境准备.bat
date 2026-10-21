@@ -265,6 +265,39 @@ if not "%FG_RC%"=="0" exit /b 1
 exit /b 0
 
 
+:ensure_py_runtime
+rem 打包桌面端的 Python 运行时（PyInstaller 单入口 --onedir），产物供 Tauri
+rem bundle.resources 收进安装包的 py-runtime\desktop_entry。
+rem ⚠️ 必须判 **exe 文件**是否就绪，不能只判目录：干净克隆里
+rem    desktop\runtime\desktop_entry\ 只有 0 字节的 .gitkeep（给 tauri-build
+rem    的存在性检查占位），目录存在但里面没有运行时 → 打出来的包会缺瓦片服务。
+rem 用法：call "%~dp0_环境准备.bat" ensure_py_runtime
+if exist "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" goto :epr_ready
+
+if "%FG_LANG%"=="en" (echo   [missing] Python runtime bundle - bundling it now, first run takes about 3-5 minutes...) else (echo   [缺失]   Python 运行时 —— 正在用 PyInstaller 打包（首次约 3~5 分钟）...)
+if "%FG_LANG%"=="en" (echo   - PyInstaller freezes desktop_entry.py with all dependencies into py-runtime\desktop_entry) else (echo   （会把 desktop_entry.py 连同全部依赖冻结到 py-runtime\desktop_entry）)
+
+if "%FG_LANG%"=="en" (call :start_heartbeat "Still bundling the Python runtime" 40) else (call :start_heartbeat "仍在打包 Python 运行时" 40)
+
+if "%FG_LANG%"=="en" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build_desktop_runtime.ps1" -Lang en
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build_desktop_runtime.ps1"
+)
+call :stop_heartbeat
+
+rem 以「产物是否真的落地」为唯一判据，而不是 powershell 退出码
+if exist "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" goto :epr_ready
+
+if "%FG_LANG%"=="en" (echo   [ERROR] Python runtime bundle was not produced - the installer would be missing the tile service.) else (echo   [错误] 没有生成 Python 运行时 —— 这样打出来的安装包会缺瓦片服务，影像服务起不来。)
+if "%FG_LANG%"=="en" (echo   Manual command: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1) else (echo   手动命令：powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1)
+exit /b 1
+
+:epr_ready
+if "%FG_LANG%"=="en" (echo   [ready]   Python runtime bundle) else (echo   [已就绪] Python 运行时)
+exit /b 0
+
+
 rem ============================================================================
 rem  构建产物路径（尊重 CARGO_TARGET_DIR）
 rem  ---------------------------------------------------------------------------

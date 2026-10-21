@@ -23,11 +23,11 @@ call "%~dp0_环境准备.bat" resolve_target_dir
 rem FG_REL / FG_STALE_DIR are finalized only after :prepare_build_env (see stage 4)
 
 rem ============================================================
-rem  Stage 1/4: check the build environment (Python venv / frontend deps / Rust)
+rem  Stage 1/5: check the build environment (Python venv / frontend deps / Rust)
 rem  NOTE: WebView2 is NOT needed at build time - it is a runtime
 rem        dependency for end users.
 rem ============================================================
-call "%~dp0_环境准备.bat" stage_begin 1 4 "Check build environment"
+call "%~dp0_环境准备.bat" stage_begin 1 5 "Check build environment"
 call "%~dp0_环境准备.bat" check_runtime
 call "%~dp0_环境准备.bat" stage_end
 if defined FG_NEED_PY goto :need_setup
@@ -37,7 +37,7 @@ goto :stage2_ready
 
 
 :need_setup
-call "%~dp0_环境准备.bat" stage_begin 2 4 "Install missing components"
+call "%~dp0_环境准备.bat" stage_begin 2 5 "Install missing components"
 echo.
 echo   The environment is incomplete; launching the bundled one-click setup wizard (about 5-15 minutes).
 echo.
@@ -56,7 +56,7 @@ goto :stage3
 
 
 :stage2_ready
-call "%~dp0_环境准备.bat" stage_begin 2 4 "Install missing components"
+call "%~dp0_环境准备.bat" stage_begin 2 5 "Install missing components"
 echo   Environment complete, nothing to install.
 call "%~dp0_环境准备.bat" stage_end
 goto :stage3
@@ -64,9 +64,9 @@ goto :stage3
 
 :stage3
 rem ============================================================
-rem  Stage 3/4: build the frontend bundle (dist/)
+rem  Stage 3/5: build the frontend bundle (dist/)
 rem ============================================================
-call "%~dp0_环境准备.bat" stage_begin 3 4 "Build frontend bundle"
+call "%~dp0_环境准备.bat" stage_begin 3 5 "Build frontend bundle"
 echo   Building the frontend (tsc type check + vite build, about 10-30 seconds)...
 call "%~dp0_环境准备.bat" start_heartbeat "Still building the frontend" 10
 pushd "%~dp0desktop"
@@ -81,9 +81,22 @@ goto :stage4
 
 :stage4
 rem ============================================================
-rem  Stage 4/4: build the installer (tauri build)
+rem  Stage 4/5: bundle the Python runtime (PyInstaller -> py-runtime\desktop_entry)
+rem  NOTE: without this step the installer's py-runtime only contains a
+rem        .gitkeep, so the tile service cannot start on end-user machines.
 rem ============================================================
-call "%~dp0_环境准备.bat" stage_begin 4 4 "Build installer"
+call "%~dp0_环境准备.bat" stage_begin 4 5 "Bundle the Python runtime"
+call "%~dp0_环境准备.bat" ensure_py_runtime
+if errorlevel 1 goto :runtime_fail
+call "%~dp0_环境准备.bat" stage_end
+goto :stage5
+
+
+:stage5
+rem ============================================================
+rem  Stage 5/5: build the installer (tauri build)
+rem ============================================================
+call "%~dp0_环境准备.bat" stage_begin 5 5 "Build installer"
 echo.
 echo  ----------------------------------------------------
 echo   Please note:
@@ -179,6 +192,24 @@ echo   [ERROR] Frontend build failed (npm run build)
 echo  ====================================================
 echo   Usually a TypeScript type error or a vite config issue; see the errors above.
 echo   Quick local check: cd desktop ^&^& npx tsc --noEmit
+echo.
+pause
+exit /b 1
+
+
+:runtime_fail
+call "%~dp0_环境准备.bat" stop_heartbeat
+echo.
+echo  ====================================================
+echo   [ERROR] Python runtime bundling failed (PyInstaller)
+echo  ====================================================
+echo   No desktop\runtime\desktop_entry\desktop_entry.exe was produced,
+echo   so the installer would be missing the tile service and the
+echo   image service would not start on end-user machines.
+echo   Common causes: not enough disk space - about 1.5 GB needed;
+echo                  antivirus blocking writes; incomplete .venv deps
+echo                  - run scripts\一键配置环境.bat first.
+echo   Retry manually: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smoke
 echo.
 pause
 exit /b 1

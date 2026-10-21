@@ -20,10 +20,10 @@ call "%~dp0_环境准备.bat" resolve_target_dir
 rem FG_REL / FG_STALE_DIR 在 :prepare_build_env 之后才最终确定（见阶段 4）
 
 rem ============================================================
-rem  阶段 1/4：检查构建环境（Python venv / 前端依赖 / Rust）
+rem  阶段 1/5：检查构建环境（Python venv / 前端依赖 / Rust）
 rem  ⚠️ 构建期不需要 WebView2 —— 那是终端用户「运行」时的依赖。
 rem ============================================================
-call "%~dp0_环境准备.bat" stage_begin 1 4 "检查构建环境"
+call "%~dp0_环境准备.bat" stage_begin 1 5 "检查构建环境"
 call "%~dp0_环境准备.bat" check_runtime
 call "%~dp0_环境准备.bat" stage_end
 if defined FG_NEED_PY goto :need_setup
@@ -33,7 +33,7 @@ goto :stage2_ready
 
 
 :need_setup
-call "%~dp0_环境准备.bat" stage_begin 2 4 "自动补齐缺失环境"
+call "%~dp0_环境准备.bat" stage_begin 2 5 "自动补齐缺失环境"
 echo.
 echo   检测到环境不完整，将调用项目自带的「一键配置环境」向导（约 5~15 分钟）。
 echo.
@@ -52,7 +52,7 @@ goto :stage3
 
 
 :stage2_ready
-call "%~dp0_环境准备.bat" stage_begin 2 4 "自动补齐缺失环境"
+call "%~dp0_环境准备.bat" stage_begin 2 5 "自动补齐缺失环境"
 echo   环境完整，无需安装。
 call "%~dp0_环境准备.bat" stage_end
 goto :stage3
@@ -60,9 +60,9 @@ goto :stage3
 
 :stage3
 rem ============================================================
-rem  阶段 3/4：生成前端产物（dist/）
+rem  阶段 3/5：生成前端产物（dist/）
 rem ============================================================
-call "%~dp0_环境准备.bat" stage_begin 3 4 "生成前端产物"
+call "%~dp0_环境准备.bat" stage_begin 3 5 "生成前端产物"
 echo   正在构建前端（tsc 类型检查 + vite build，约 10~30 秒）...
 call "%~dp0_环境准备.bat" start_heartbeat "仍在构建前端" 10
 pushd "%~dp0desktop"
@@ -77,9 +77,22 @@ goto :stage4
 
 :stage4
 rem ============================================================
-rem  阶段 4/4：构建安装包（tauri build）
+rem  阶段 4/5：打包 Python 运行时（PyInstaller → py-runtime\desktop_entry）
+rem  ⚠️ 缺了这一步，安装包里的 py-runtime 只有一个 .gitkeep —— 装出来的包
+rem     必然缺瓦片服务。历史上靠"先手工跑一次 ps1"，很容易漏（2026-10-21 补进流程）。
 rem ============================================================
-call "%~dp0_环境准备.bat" stage_begin 4 4 "构建安装包"
+call "%~dp0_环境准备.bat" stage_begin 4 5 "打包 Python 运行时"
+call "%~dp0_环境准备.bat" ensure_py_runtime
+if errorlevel 1 goto :runtime_fail
+call "%~dp0_环境准备.bat" stage_end
+goto :stage5
+
+
+:stage5
+rem ============================================================
+rem  阶段 5/5：构建安装包（tauri build）
+rem ============================================================
+call "%~dp0_环境准备.bat" stage_begin 5 5 "构建安装包"
 echo.
 echo  ----------------------------------------------------
 echo   请注意：
@@ -174,6 +187,22 @@ echo   [错误] 前端构建失败（npm run build）
 echo  ====================================================
 echo   通常是 TypeScript 类型错误或 vite 配置问题，请查看上方报错。
 echo   本地快速自查：cd desktop ^&^& npx tsc --noEmit
+echo.
+pause
+exit /b 1
+
+
+:runtime_fail
+call "%~dp0_环境准备.bat" stop_heartbeat
+echo.
+echo  ====================================================
+echo   [错误] 打包 Python 运行时失败（PyInstaller）
+echo  ====================================================
+echo   没有产出 desktop\runtime\desktop_entry\desktop_entry.exe，
+echo   这样打出来的安装包会缺瓦片服务，终端电脑上影像服务起不来。
+echo   常见原因：磁盘空间不足（约需 1.5 GB）、杀毒软件拦截写入、
+echo             .venv 依赖不全（先跑 scripts\一键配置环境.bat）。
+echo   手动重试：powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smoke
 echo.
 pause
 exit /b 1

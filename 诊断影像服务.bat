@@ -48,11 +48,16 @@ if defined DE goto :got_de
 call :say "  没在默认位置找到安装目录"
 call :say "  请把安装目录粘进来，例如: D:\Forest Gap Detection"
 set /p "MANUAL=  安装目录: "
-if not defined MANUAL goto :after_de
+if not defined MANUAL goto :de_missing
+rem ⚠️ 清理粘贴带来的双引号与前导空格：资源管理器「复制为路径」会带 "..."，
+rem    不清理的话下面的 exist 判定必然失败（2026-10-21 实测：路径明明存在，
+rem    却报"该目录下没有 desktop_entry.exe"，还连带跳过了第 9/10 节的关键检查）。
+set MANUAL=!MANUAL:"=!
+for /f "tokens=* delims= " %%A in ("!MANUAL!") do set "MANUAL=%%A"
 if exist "!MANUAL!\py-runtime\desktop_entry\desktop_entry.exe" set "DE=!MANUAL!\py-runtime\desktop_entry\desktop_entry.exe"
 if defined DE goto :got_de
 call :say "  [失败] 该目录下没有 py-runtime\desktop_entry\desktop_entry.exe"
-goto :after_de
+goto :de_missing
 
 :got_de
 call :say "  desktop_entry.exe = !DE!"
@@ -258,3 +263,13 @@ powershell -NoProfile -Command "try { '  PID %~1 = ' + (Get-Process -Id %~1 -Err
 type "%TMPD%\who.txt"
 type "%TMPD%\who.txt" >> "%OUT%"
 goto :eof
+
+rem 找不到 desktop_entry.exe 时的统一结论（第 1 节两个失败分支都跳到这）
+:de_missing
+call :say "  → 该路径下确实没有 py-runtime\desktop_entry\desktop_entry.exe。"
+call :say "    排查顺序："
+call :say "      1. 路径是否贴错（多一层同名目录？例如 D:\Forest Gap Detection\Forest Gap Detection）"
+call :say "      2. 安装是否被中断 / 装到了别的盘（去「应用和功能」看实际位置）"
+call :say "      3. 杀软是否隔离了 desktop_entry.exe（Windows 安全中心 → 保护历史记录）"
+call :say "    确认目录后重跑本脚本，第 9/10 节才能给出真正的报错。"
+goto :after_de
