@@ -39,6 +39,10 @@ Thumbs.db
 
 # ---- 临时文件 ----
 *.tmp
+# 根目录 tmp/ 同理：诊断脚本、构建日志、验证用小影像（2026-10-21 加）。
+# 之前只有 .workbuddy-ai/tmp/ 被排除，根 tmp/ 会以 `?? tmp/` 出现在 git status 里，
+# 一不小心就被 `git add -A` 带进仓库。
+tmp/
 
 # ---- 桌面端 Node 工程产物 ----
 # desktop/ 自己的 .gitignore 在合并后已生效；主分支上再补一层，

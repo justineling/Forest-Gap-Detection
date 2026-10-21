@@ -126,7 +126,7 @@ scripts\一键配置环境.bat
 ├── desktop/                桌面端工程（Tauri + React）
 │   ├── src/                前端：五步工作流 / 复核 / 估算导出
 │   ├── src-tauri/          Rust 外壳：sidecar 进程 + 瓦片服务监督
-│   └── README.md           ★ 坑清单（48 条）与实测数字，开发前必读
+│   └── README.md           ★ 坑清单（50 条）与实测数字，开发前必读
 ├── scripts/                算法与工具（纯 CLI，可单独运行）
 │   ├── process_image.py    整幅检测主入口
 │   ├── sidecar.py          桌面端调算法用的 NDJSON 通道
@@ -165,7 +165,7 @@ cd desktop/src-tauri && cargo test
 | 需要准备哪些文件 | [输入输出文件清单](docs/09-数据与产物/输入输出文件清单.html) |
 | 当前缺陷与优先级 | [算法缺陷看板](docs/03-算法教学/算法缺陷与桌面端协同看板.html) |
 | 接手开发（最新状态） | [交接文档 2026-10-21](docs/01-需求与架构/交接文档-2026-10-21.md) |
-| 开发坑清单（48 条） | [desktop/README.md](desktop/README.md) |
+| 开发坑清单（50 条） | [desktop/README.md](desktop/README.md) |
 
 > 所有 HTML 文档都是单文件自包含（图片内联），双击即可看，且都提供「专业版 + 小白版」两份。
 

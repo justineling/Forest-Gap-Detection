@@ -13,7 +13,7 @@
 
 退出码 0 = 全过；非 0 = 有失败（CI 与 pre-push 钩子都靠它判断）。
 
-## 五层各有各的价值（不是凑数）
+## 各层各有各的价值（不是凑数）
 
 | 层 | 抓什么 | 耗时 |
 |---|---|---|
@@ -22,7 +22,18 @@
 | `ruff` | Python 语法错误 + **完全未定义**的名字 | ~0.2 s |
 | **`--help` 冒烟** | **CLI 构造期的异常**（argparse 配置错、模块级 NameError） | ~2 s |
 | `cargo test` | 41 项 Rust 单测（预检 + 瓦片服务探活） | ~10 s |
+| **仓库卫生** | `.gitkeep` 是否仍被 git 跟踪（CI 编译期硬依赖） | ~0.1 s |
 | 契约测试 | 95 项 sidecar 契约 | ~60 s |
+
+### ⚠️ 为什么还要查 `.gitkeep`（2026-10-21 一天丢两次）
+
+`desktop/runtime/desktop_entry/.gitkeep` 被 `bundle.resources` 的存在性检查与
+CI 的干净 clone 同时依赖。它一天内丢过两次：一次是工程师误删，一次是
+**打包脚本清理 `desktop\runtime` 时连带删掉，随后 `git add` 把删除一起提交**。
+
+致命的地方在于**本地完全看不出来**：开发机那个目录里有真的 PyInstaller 产物，
+`cargo test` 照样过；只有 CI 在干净 clone 上才炸，且报的是 build.rs 里
+一句看不出因果的 resources 错误。所以必须有一条"它还在 git 里吗"的廉价断言。
 
 ### ⚠️ 关于 ruff 的能力边界（踩过）
 
@@ -192,13 +203,31 @@ def main() -> int:
     print("\n[9] 批处理括号安全")
     ok, dt = run(
         [str(PY), "scripts/check_bat_safety.py"],
-        ROOT, "check_bat_safety（6 个 bat）",
+        ROOT, "check_bat_safety（7 个 bat）",
     )
     rec("bat-safety", ok, dt)
 
-    # ---- 10. 契约测试 ----
+    # ---- 10. 仓库卫生：占位文件必须仍在 git 里 ----
+    # 为什么不能用 Test-Path 判：开发机目录里有真产物，文件在不在都能过；
+    # 要问的是"**git 跟踪它吗**"，因为 CI 拿到的是干净 clone。
+    print("\n[10] 仓库卫生")
+    t0 = time.time()
+    keep = "desktop/runtime/desktop_entry/.gitkeep"
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", keep],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    if tracked.returncode == 0:
+        print(f"  [OK  ] {keep} 已被 git 跟踪")
+        rec("gitkeep", True, time.time() - t0)
+    else:
+        print(f"  [FAIL] {keep} 不在 git 里 —— CI 干净 clone 上 tauri-build 会直接失败")
+        print("         修法：git checkout <上一个还存在的提交> -- " + keep)
+        rec("gitkeep", False, time.time() - t0)
+
+    # ---- 11. 契约测试 ----
     if not args.fast:
-        print("\n[10] 契约测试")
+        print("\n[11] 契约测试")
         ok, dt = run([str(PY), "scripts/test_sidecar_contract.py"], ROOT,
                      "test_sidecar_contract（95 项）")
         rec("contract", ok, dt)

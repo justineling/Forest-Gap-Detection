@@ -508,9 +508,32 @@ rem ⚠️ 必须判 **exe 文件**是否就绪，不能只判目录：干净克
 rem    desktop\runtime\desktop_entry\ 只有 0 字节的 .gitkeep（给 tauri-build
 rem    的存在性检查占位），目录存在但里面没有运行时 → 打出来的包会缺瓦片服务。
 rem 用法：call "%~dp0_环境准备.bat" ensure_py_runtime
-if exist "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" goto :epr_ready
+rem
+rem ⚠️ **存在 ≠ 新鲜**（2026-10-21 血案）：只判 exe 存在的话，Python 侧的修复
+rem    （例如 [E4099] 的 stdout reconfigure）永远打不进包 —— 脚本照样打印
+rem    「已就绪」，而 desktop\runtime 里躺着几天前的旧产物。真机验证时 bug 依旧，
+rem    很容易被误判成"修复无效"，白跑一整轮构建 + 安装。
+rem    所以：存在之后还要问一句"它比源码旧吗"，旧了就强制重建。
+set "FG_PYR_STALE="
+if exist "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" (
+    if "%FG_LANG%"=="en" (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build_desktop_runtime.ps1" -CheckStale -Lang en
+    ) else (
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build_desktop_runtime.ps1" -CheckStale
+    )
+    rem 新鲜：ps1 已经打印过「[已就绪] Python 运行时（与源码同步）」，
+    rem 这里不再重复一行（同屏两行"已就绪"会让人以为跑了两遍）。
+    if not errorlevel 1 goto :epr_ready_silent
+    rem 存在但过期 ≠ 缺失：文案必须区分，否则用户以为包被打没了，
+    rem 而实际只是"旧了要重打"（2026-10-21 实测踩到这句自相矛盾的输出）。
+    if "%FG_LANG%"=="en" (echo   [stale]   Python runtime is older than the sources - rebuilding it now...) else (echo   [过期]   Python 运行时比源码旧 —— 正在重建（否则修复不会进包）...)
+    set "FG_PYR_STALE=1"
+)
 
+if defined FG_PYR_STALE goto :epr_build
 if "%FG_LANG%"=="en" (echo   [missing] Python runtime bundle - bundling it now, first run takes about 3-5 minutes...) else (echo   [缺失]   Python 运行时 —— 正在用 PyInstaller 打包（首次约 3~5 分钟）...)
+
+:epr_build
 if "%FG_LANG%"=="en" (echo   - PyInstaller freezes desktop_entry.py with all dependencies into py-runtime\desktop_entry) else (echo   （会把 desktop_entry.py 连同全部依赖冻结到 py-runtime\desktop_entry）)
 
 if "%FG_LANG%"=="en" (call :start_heartbeat "Still bundling the Python runtime" 40) else (call :start_heartbeat "仍在打包 Python 运行时" 40)
@@ -531,6 +554,10 @@ exit /b 1
 
 :epr_ready
 if "%FG_LANG%"=="en" (echo   [ready]   Python runtime bundle) else (echo   [已就绪] Python 运行时)
+exit /b 0
+
+:epr_ready_silent
+rem 只在"复用了已同步的运行时"这条路径上用：上一步已经打印过状态行
 exit /b 0
 
 

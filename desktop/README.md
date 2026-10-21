@@ -1165,3 +1165,39 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     （`backend.ts` 的 `ensurePort()`，首次请求前取一次并缓存）。
     `tile_diagnose` / `service_status` / `get_status` 全部改读实际端口。
 
+49. **"运行时存在"不等于"运行时新鲜" —— 只判存在会让 Python 侧的修复永远打不进包**
+
+    现象（2026-10-21 家机实测，差点白跑一整轮）：修好 `[E4099]` 编码崩溃后，
+    跑 `2. 构建安装包.bat` 时脚本打印「[已就绪] Python 运行时」直接跳过打包。
+    可 `desktop\runtime\desktop_entry\desktop_entry.exe` 还是 **10-19** 冻的旧产物，
+    编码修复在 `desktop_entry.py` / `build_derived.py` 里 —— 根本没进包。
+    装到真机上 bug 依旧，极容易被误判成"修复无效"。
+
+    根因：`ensure_py_runtime` 的判据是 `if exist <exe> goto :ready`。
+    它对"缺文件"有效，对"文件旧了"完全失效 —— 而后者才是修完 bug 后的常态。
+
+    修法：`build_desktop_runtime.ps1` 新增 `-CheckStale`（退出码 0 新鲜 / 1 过期 /
+    2 未打包），比较 **exe 的 LastWriteTimeUtc** 与 `scripts\*.py`（排除
+    `check_*` / `test_*`）+ `requirements.txt`；`ensure_py_runtime` 先问它，
+    过期就重建并打印「[过期] … 需重建：tile_server.py、desktop_entry.py」，
+    与「[缺失]」严格区分（否则用户以为包被打没了）。
+
+    实测：改前 exe 10-19、源码 10-21 → 正确判过期并重建（3m22s，158 MB）；
+    重建后再判 → `[已就绪]（与源码同步）`。
+
+50. **`desktop/runtime/desktop_entry/.gitkeep` 会被打包清掉，随后被 `git add` 一起提交**
+
+    现象：CI 在干净 clone 上 `cargo test` 编译期报 `bundle.resources` 相关错误，
+    而本地怎么跑都绿 —— 一天之内丢了两次（工程师误删一次、打包脚本一次）。
+
+    根因：`build_desktop_runtime.ps1` 阶段 2 会
+    `Remove-Item -Recurse desktop\runtime` 清旧产物，`.gitkeep` 一起没了；
+    打包完成后 `git add` 把这条删除一并提交。而 `tauri.conf.json` 的
+    `bundle.resources` 指向 `../runtime/desktop_entry`，`tauri-build` 对它做
+    **存在性硬检查**：干净 clone 上目录不存在 → 编译期直接失败。
+    本地看不出来，因为开发机那个目录里有真的 PyInstaller 产物。
+
+    修法（两条防线）：
+    ① 打包脚本在"打包完成"后自动补回 `.gitkeep`（不指望人记得）；
+    ② `check_all.py` 新增第 10 层「仓库卫生」：`git ls-files --error-unmatch`
+       断言它仍被跟踪 —— 必须问 git，不能用 `Test-Path`（本地永远存在）。

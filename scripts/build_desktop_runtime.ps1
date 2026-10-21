@@ -25,16 +25,24 @@
     面向用户的输出语言。传 "en" 走英文分支；留空（默认）走中文，
     行为与历史版本完全一致。
 
+.PARAMETER CheckStale
+    只做"运行时是否过期"判定，不打包。供 `_环境准备.bat` 的 ensure_py_runtime 调用。
+    退出码：0 = 新鲜（可复用）；1 = 过期（源码比 exe 新，必须重建）；2 = 尚未打包。
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smoke
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -Smoke -Lang en
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File scripts\build_desktop_runtime.ps1 -CheckStale
 #>
 param(
     [switch]$Smoke,
     [switch]$SkipInstall,
-    [string]$Lang = ''
+    [string]$Lang = '',
+    [switch]$CheckStale
 )
 
 $ErrorActionPreference = 'Stop'
@@ -69,6 +77,45 @@ function Invoke-Native([scriptblock]$Block) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { & $Block } finally { $ErrorActionPreference = $prev }
+}
+
+# ============================================================
+#  新鲜度判定（-CheckStale）：不打包，只回答"这个运行时还能用吗"
+#  ------------------------------------------------------------
+#  为什么需要它：`_环境准备.bat` 的 `ensure_py_runtime` 原来只判
+#  "exe 存不存在"，存在就打印「[已就绪]」跳过打包。
+#
+#  2026-10-21 的代价：编码修复（[E4099] charmap）改的是 **Python 侧**，
+#  而 `desktop\runtime` 里的 exe 还是 10-19 冻的旧产物 —— 构建脚本照样
+#  说"已就绪"，修复根本没进包。真机验证时 bug 依旧，很容易被误判成
+#  "修复无效"，白跑一整轮构建 + 安装。
+#
+#  判据：任何会被冻进 exe 的源码（scripts\*.py，排除检查/测试脚本）
+#  或依赖清单比 exe 新 → 过期。保守但便宜：重建只要 3~8 分钟，
+#  而漏掉一次修复要花掉一整天。
+# ============================================================
+if ($CheckStale) {
+    if (-not (Test-Path $OutExe)) {
+        Say '  [缺失]   Python 运行时尚未打包' '  [missing] Python runtime bundle not built yet'
+        exit 2
+    }
+    $exeTime = (Get-Item -LiteralPath $OutExe).LastWriteTimeUtc
+    $sources = @(
+        Get-ChildItem -LiteralPath (Join-Path $Root 'scripts') -Filter '*.py' -File |
+            Where-Object { $_.Name -notmatch '^(check_|test_)' }
+    )
+    $sources += Get-Item -LiteralPath (Join-Path $Root 'requirements.txt')
+    $stale = @()
+    foreach ($s in $sources) {
+        if ($s.LastWriteTimeUtc -gt $exeTime) { $stale += $s.Name }
+    }
+    if ($stale.Count -gt 0) {
+        Say ('  [过期]   Python 运行时比源码旧，需重建：' + ($stale -join '、')) `
+            ('  [stale]  Python runtime is older than: ' + ($stale -join ', '))
+        exit 1
+    }
+    Say '  [已就绪] Python 运行时（与源码同步）' '  [ready]  Python runtime (up to date with sources)'
+    exit 0
 }
 
 Write-Host ''
@@ -175,6 +222,23 @@ Say '  打包完成：' '  Build complete:'
 Say ('    目录：' + (Split-Path $OutExe)) ('    Directory: ' + (Split-Path $OutExe))
 Say ('    入口：' + $OutExe) ('    Entry: ' + $OutExe)
 Say ('    体积：约 ' + $sizeMb + ' MB') ('    Size: about ' + $sizeMb + ' MB')
+
+# ------------------------------------------------------------
+#  恢复 .gitkeep 占位文件
+#  ------------------------------------------------------------
+#  阶段 2 的清理会 `Remove-Item -Recurse desktop\runtime`，把
+#  `desktop\runtime\desktop_entry\.gitkeep` 一并删掉。而它有两个硬用途：
+#    ① tauri-build 对 `bundle.resources` 做**存在性硬检查**（目录不在 → 编译期报错）；
+#    ② CI 在干净 clone 上跑 `cargo test`，全靠这个文件把目录"撑"出来。
+#  2026-10-21 就是这样丢的：打包后 `.gitkeep` 消失，随后 `git add` 把删除
+#  一起提交，CI 的编译期检查重新变红 —— 而本地因为目录里有真产物，完全看不出来。
+#  所以：打包成功后自动补回，不指望人记得。
+$KeepFile = Join-Path $DistDir 'desktop_entry\.gitkeep'
+if (-not (Test-Path $KeepFile)) {
+    New-Item -ItemType File -Path $KeepFile -Force | Out-Null
+    Say '  已恢复占位文件 desktop\runtime\desktop_entry\.gitkeep（CI 依赖它）' `
+        '  Restored placeholder desktop\runtime\desktop_entry\.gitkeep (required by CI)'
+}
 
 # ============================================================
 #  阶段 4/4：冻结态冒烟（可选）
