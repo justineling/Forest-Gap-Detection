@@ -1781,6 +1781,23 @@ fn get_status(app: tauri::AppHandle) -> AppStatus {
     }
 }
 
+/// 换影像且没有同时指定新结果时，必须清掉旧结果路径。
+///
+/// 为什么：旧结果属于上一张影像（网格原点/坐标系都可能不同）。继续挂着会让前端
+/// 认为"检测已完成"直接跳到「复核结果」，同时弹"结果没读到"（2026-10-21 实测）。
+///
+/// 抽成纯函数而不是留在 `set_data_paths` 里内联判断：那个命令要碰文件系统、
+/// 配置文件、子进程和 AppHandle，写集成测试的成本远高于收益，
+/// 而这里出错的代价是"界面状态错乱"这种不报错、只让人困惑的故障 ——
+/// 恰恰是最需要被测试钉住的一类。纯函数四个分支覆盖完，测试是确定性的。
+fn should_clear_gaps(
+    old_image: &Option<String>,
+    new_image: &Option<String>,
+    gaps_given: bool,
+) -> bool {
+    new_image != old_image && !gaps_given
+}
+
 /// 用户选了影像（或结果文件）→ 存配置 + 重启瓦片服务。
 ///
 /// `restart_tile_server` 内部会先 kill 旧进程再起新的，所以这里直接复用，
@@ -1805,7 +1822,8 @@ fn set_data_paths(
     //    旧结果是上一张影像跑出来的，网格原点/坐标系都可能完全不同，
     //    继续挂着会让前端认为"检测已完成"直接跳到「复核结果」，
     //    同时弹出"结果没读到"（2026-10-21 公司电脑实测）。
-    if cfg.image != old_image && gaps.is_none() {
+    //    判定条件抽在 should_clear_gaps 里（有单测）。
+    if should_clear_gaps(&old_image, &cfg.image, gaps.is_some()) {
         cfg.gaps = None;
     }
     if let Some(g) = gaps {
@@ -2716,5 +2734,25 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         assert!(http_get_meta(port).is_err());
+    }
+
+    // ---- 换影像后清掉旧结果 ----
+    //
+    // 这组测试守的是 2026-10-21 的事故：换影像后旧结果还挂着，
+    // 前端据此认为"检测已完成"，直接跳到「复核结果」并弹"结果没读到"。
+    // 四个分支都要覆盖 —— 少判一条就会变成"重选同一张影像把结果抹了"（反向事故）。
+
+    #[test]
+    fn image_change_clears_stale_gaps() {
+        let a = Some("A.tif".to_string());
+        let b = Some("B.tif".to_string());
+        // 换影像 + 没给新结果 → 清空
+        assert!(should_clear_gaps(&a, &b, false));
+        // 换影像 + 同时给了新结果 → 不清（新结果会覆盖）
+        assert!(!should_clear_gaps(&a, &b, true));
+        // 同一张影像 + 没给结果 → 不清（重选同一张不该抹掉现有结果）
+        assert!(!should_clear_gaps(&a, &a, false));
+        // 首次选择（原来没有影像）→ 清空（可能残留上一次会话的结果）
+        assert!(should_clear_gaps(&None, &a, false));
     }
 }

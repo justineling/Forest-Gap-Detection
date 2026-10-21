@@ -85,3 +85,20 @@ export function decideGapsLoad(input: GapsLoadInput): GapsLoadDecision {
   if (error) return { action: 'keep', reason: 'missing_file', detail }
   return { action: 'apply', reason: 'empty_state' }
 }
+
+/**
+ * 换影像后是否必须清空 store 里的旧结果。
+ *
+ * `setGaps([])` 会把 `workflow.loaded` 置 false，步骤判定才会回到「运行检测」；
+ * 不清的话界面会直接跳到「复核结果」并弹"结果没读到"（2026-10-21 实测）。
+ *
+ * 两个参数的语义都是"已经发生的事实"，所以能纯函数化：
+ * - `next` 为空 → 不是换影像（清空会让"重选同一张"也丢结果），返回 false；
+ * - `prev` 为 undefined → 首次选择影像，旧结果可能是上一次会话残留的，要清。
+ */
+export function shouldClearGapsOnImageChange(
+  next: string | null | undefined,
+  prev: string | null | undefined,
+): boolean {
+  return !!next && next !== prev
+}

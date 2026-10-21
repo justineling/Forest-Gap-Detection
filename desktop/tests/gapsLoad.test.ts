@@ -13,7 +13,11 @@
  *   有数据 → 用；空 + 现有非空 → 只有"算法自报 0 块"才允许清空；
  *   其余一律保留现有结果并报错。误报一次"读不到"可以重试，误清一次数据找不回来。
  */
-import { decideGapsLoad, SUSPECT_EMPTY_DETAIL } from '../src/lib/gapsLoad'
+import {
+  decideGapsLoad,
+  shouldClearGapsOnImageChange,
+  SUSPECT_EMPTY_DETAIL,
+} from '../src/lib/gapsLoad'
 import { useAppStore } from '../src/store/useAppStore'
 import type { GapFeature } from '../src/types'
 
@@ -162,6 +166,30 @@ console.log('\nG. 后果验证：applyRerun([]) 真的会清空（所以 B 段�
   check(
     useAppStore.getState().gaps.length === 0,
     '反证：applyRerun([]) 把 3 块清成 0（必须拦住，否则就是"检测跑完结果没了"）',
+  )
+}
+
+// ---------- H. 换影像后是否清空旧结果 ----------
+//
+// 这一条守的是 2026-10-21 的另一个事故：换影像后旧结果还挂在 store 里，
+// `workflow.loaded` 仍为 true，界面直接跳到「复核结果」并弹"结果没读到"。
+// 四个分支都要判 —— 判错方向的后果是"重选同一张影像把现有结果抹了"。
+console.log('\nH. 换影像才清空旧结果（重选同一张不能抹）')
+{
+  const a = 'D:/data/A.tif'
+  const b = 'D:/data/B.tif'
+
+  check(shouldClearGapsOnImageChange(b, a), '换新影像 → true（必须清空旧结果）')
+  check(!shouldClearGapsOnImageChange(a, a), '★ 同一张影像 → false（重选不该抹掉现有结果）')
+  check(!shouldClearGapsOnImageChange('', a), '空字符串 → false（没选到文件就不动）')
+  check(
+    shouldClearGapsOnImageChange(a, undefined),
+    '首次选择（prev 为 undefined）→ true（可能残留上一次会话的结果）',
+  )
+  // 引导页取消 / 只换结果文件时 st.image 仍是旧值 → 不能清空
+  check(
+    !shouldClearGapsOnImageChange(a, a),
+    '★ 只换结果文件、影像没变 → false（否则刚选的结果立刻被清掉）',
   )
 }
 

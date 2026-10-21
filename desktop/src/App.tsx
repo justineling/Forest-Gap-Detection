@@ -31,7 +31,7 @@ import {
   type AppStatus,
 } from './api/backend'
 import { toInput, type ActionKind, type StepKey } from './lib/workflow'
-import { decideGapsLoad } from './lib/gapsLoad'
+import { decideGapsLoad, shouldClearGapsOnImageChange } from './lib/gapsLoad'
 import type { DetectProgress, GapCollection, PreflightResult } from './types'
 
 export default function App() {
@@ -344,7 +344,8 @@ export default function App() {
     //    `workflow.loaded` 置 false，步骤判定才会回到「运行检测」。
     //    不清的话：旧结果属于上一张影像（网格原点/坐标系都可能不同），
     //    界面会直接跳到「复核结果」并弹"结果没读到"（2026-10-21 实测）。
-    if (st.image && st.image !== appStatus?.image) {
+    //    判定条件抽在 shouldClearGapsOnImageChange 里（有单测）。
+    if (shouldClearGapsOnImageChange(st.image, appStatus?.image)) {
       setGaps([])
       setGapsError(null)
     }
