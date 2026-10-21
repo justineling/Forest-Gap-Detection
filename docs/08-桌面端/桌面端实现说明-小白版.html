@@ -46,7 +46,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <header>
   <h1>这个桌面软件到底在干什么？</h1>
-  <p class="sub">大白话版 ｜ 不用懂代码，也不用懂航拍 ｜ 2026-10-19</p>
+  <p class="sub">大白话版 ｜ 不用懂代码，也不用懂航拍 ｜ 2026-10-21</p>
 </header>
 
 <div class="card verdict">
@@ -219,7 +219,55 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 <p class="figcap" style="text-align:left">如果生成时提示"没找到 dsm.tif"，把大疆导出目录里的
 <code>dsm.tif</code>（地表高程）放到航拍图同一个文件夹就行。</p>
 
-<h2>八、算法到底有多准？——抽 150 块，验一下</h2>
+<h2>八、第一次打开，地图转半天不动？</h2>
+
+<p>这不是软件坏了，是<b>你这张航拍图还没做"加速处理"</b>。</p>
+
+<p>航拍图动辄 5 GB、四千多万像素。<span class="analogy">打个比方：你想看一张 5 米长的
+清明上河图，但手里只有原件</span>。缩远了想看全貌，按理说应该翻一张"缩小版"；
+可这张图里没提前准备缩小版，于是软件只能每次都从原件里一点点抠 —— 一屏要等一分多钟。</p>
+
+<div class="card" style="border-color:#c9852b;background:#fdf6e6">
+  <p style="margin:0"><b>你会看到什么</b>：地图顶上出现一条黄色横幅 ——
+  「这张影像没有加速结构 · 缩放到远处会很慢（一屏可能要等 1 分钟以上）」，
+  右边有两个按钮：「建立加速结构」和「以后再说」。</p>
+</div>
+
+<p>点「建立加速结构」，会先弹一个框，老老实实告诉你三件事：</p>
+
+<table>
+  <thead><tr><th style="width:32%">它说</th><th>意思</th></tr></thead>
+  <tbody>
+    <tr><td>复制一份并加速<br>（不动原图，需要约 5.3 GB 磁盘）</td>
+        <td>它会复制一份副本去做加速，<b>你的原始文件一个字节都不动</b></td></tr>
+    <tr><td>需要 5.3 GB，可用 171.0 GB</td>
+        <td>磁盘够不够。不够的话按钮是灰的，会提示你先腾空间</td></tr>
+    <tr><td>预计 约 3 分钟</td>
+        <td>大图第一次要等一会儿。转圈的时候能看到"已用 XX 秒"</td></tr>
+  </tbody>
+</table>
+
+<p>点「开始」之后，<b>不要关软件</b>。就算真关了也没关系 —— 下次会重新开始，
+不会留下坏文件，也不会弄坏原图。</p>
+
+<p>建完之后，横幅消失，状态栏写一行「加速结构已建立（用时 X 秒）」。
+以后每次打开都直接可用，<b>只需要做这一次</b>。缩放到远处的速度大约快 <b>100 倍</b>
+（实测从 104 秒降到 0.7 秒）。</p>
+
+<div class="card verdict">
+  <p style="margin:0"><b>几个容易误会的地方</b></p>
+  <ul style="margin:6px 0 0">
+    <li><b>它不会改你的原图。</b>做的是副本，原图还是原来那份。</li>
+    <li><b>点「以后再说」不是"永远不管"。</b>只是这次先不提醒，下次打开还会问 ——
+        因为这件事确实没做，地图还是会慢。</li>
+    <li><b>万一建失败了也不影响干活。</b>检测、复核、导出全都不受影响，
+        只是地图缩到很远处会慢。对话框里第一行是给人看的原因，
+        下面那段"技术细节"是给技术支持的，可以选中复制。</li>
+    <li><b>换了新影像要重新做一次。</b>加速结构是跟着具体那张图走的。</li>
+  </ul>
+</div>
+
+<h2>九、算法到底有多准？——抽 150 块，验一下</h2>
 
 <p>前面七节都在说「怎么用」。这一节说的是一个更硬的问题：<b>它算的到底对不对？</b></p>
 
@@ -281,7 +329,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
   <span class="analogy">像按人口比例分选票，不是一人一票</span>。</p>
 </div>
 
-<h2>九、交付包里到底有什么</h2>
+<h2>十、交付包里到底有什么</h2>
 
 <p>点「导出交付包」，选一个文件夹，几秒后那里会出现 <b>21 个文件</b>。</p>
 
@@ -303,7 +351,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
   以前导出的永远是算法原版，你在软件里改了半天等于白改。</p>
 </div>
 
-<h2>十、那张"一页纸"长什么样</h2>
+<h2>十一、那张"一页纸"长什么样</h2>
 
 <p>五块内容，从上到下：</p>
 <ol>
@@ -316,7 +364,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <p>它是<b>浅色</b>的（不是软件那种深色界面），因为要打印 —— 深色打印出来一片黑，还费墨。</p>
 
-<h2>十一、现在还不能做什么（说实话）</h2>
+<h2>十二、现在还不能做什么（说实话）</h2>
 
 <table>
   <thead><tr><th>做不到</th><th>为什么</th></tr></thead>
@@ -334,7 +382,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 </div>
 
 <footer>
-  Forest Gap Detection · 桌面端实现说明（小白版）· 2026-10-19<br>
+  Forest Gap Detection · 桌面端实现说明（小白版）· 2026-10-21<br>
   想看技术细节：<span class="code">桌面端实现说明.html</span> ｜ 想知道怎么操作：<span class="code">桌面端使用手册.md</span>
 </footer>
 

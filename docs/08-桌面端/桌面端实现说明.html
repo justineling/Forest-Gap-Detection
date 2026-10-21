@@ -52,7 +52,7 @@ footer{margin-top:2.4rem;text-align:center;font-size:.83rem;color:var(--muted);
 
 <header>
   <h1>桌面端实现说明（专业版）</h1>
-  <p class="sub">Forest Gap Detection · Tauri v2 + React 18 · 2026-10-19 ｜ P0–P2 全部完成 + 验证集（Q1）已合入 <span class="code">main</span></p>
+  <p class="sub">Forest Gap Detection · Tauri v2 + React 18 · 2026-10-21 ｜ P0–P2 + 验证集（Q1）+ 导入期金字塔体检（P1）全部完成</p>
 </header>
 
 <div class="card verdict">
@@ -552,9 +552,118 @@ CHM 阈值 ±1 m 会造成 ±30,400 m² 波动。这些能说明方法可信，�
   是 <b>≤220 m² 的「确定需补种」约 1/3 是误判</b>（全园投影约 231 块）。</p>
 </div>
 
-<h2>8. 45 条坑，按主题分</h2>
+<h2>8. 导入期金字塔体检：让"新电脑 + 新影像"不至于像卡死</h2>
 
-<p>完整清单在 <span class="code">desktop/README.md</span>（<b>45 条 / 8 组</b>，连续编号），每条都带错误原文。按主题归类：</p>
+<p>前七章解决的是"装上之后能不能干活"。这一章解决一个只有在<b>别人机器上</b>才会暴露的问题：
+你导入的影像，可能没有加速结构。</p>
+
+<p>正射影像 4.7 GB、4700 万像素。缩放到远处时，程序本来只需要读一张"缩略图"；
+如果影像里没有预先生成的缩略图层（金字塔 / overviews），GDAL 只能每次去原图里按比例抽样 ——
+实测 <b>z=13 一张瓦片 104 秒、z=15 35 秒</b>。用户看到的是<b>两分钟的全黑地图</b>，
+99% 的人会认为软件卡死并直接关掉。</p>
+
+<div class="card verdict-warn">
+  <p style="margin:0"><b>为什么开发时完全没发现</b>：项目自带的
+  <span class="code">WGR17-002.tif</span> 在 2026-10-17 就被就地写过一次金字塔
+  （3.48 GB → 4.66 GB），所以本地一切正常。<b>这个功能的价值只对"第一次用的人"存在。</b></p>
+</div>
+
+<h3>8.1 检测怎么做的（比想象的简单）</h3>
+
+<p>不需要读像素，也不需要算 —— 打开数据集问一句就行：</p>
+
+<pre>with rasterio.open(path) as ds:
+    levels = ds.overviews(1)   # 第 1 波段的降采样倍率
+    # 有金字塔 → [2, 4, 8, 16, 32, 64]
+    # 没有     → []</pre>
+
+<p>底层是 GDAL 读 TIFF 的<b>元数据</b>：金字塔要么作为 SubIFD 写在 <span class="code">.tif</span>
+内部，要么作为同名 <span class="code">.ovr</span> 边车文件躺在旁边。两种都能被
+<span class="code">overviews()</span> 看到。4.7 GB 的影像读一次元数据约 <b>0.3 秒</b>。</p>
+
+<h3>8.2 三条路，和一条走不通的路</h3>
+
+<table>
+  <thead><tr><th style="width:20%">策略</th><th style="width:14%">改源文件</th><th style="width:14%">额外磁盘</th><th>前提 / 说明</th></tr></thead>
+  <tbody>
+    <tr><td><b>外置 <span class="code">.ovr</span></b></td><td>否</td><td>约 1/3</td>
+      <td>最理想，但<b>需要 <span class="code">gdaladdo</span> 命令行工具</b>；本机与打包态都没有</td></tr>
+    <tr><td><b>复制副本</b>（默认）</td><td>否</td><td>约 1.5 倍</td>
+      <td>无前提。副本放 <span class="code">output/.tile-cache/</span>，可随时删</td></tr>
+    <tr><td><b>就地写入</b></td><td><b>是，不可逆</b></td><td>约 1.34 倍</td>
+      <td>只在 <span class="code">--ovr-mode inplace</span> 时启用，界面上带红色警告</td></tr>
+  </tbody>
+</table>
+
+<div class="card verdict-bad">
+  <p style="margin:0"><b>为什么不把 <span class="code">gdaladdo</span> 一起打包</b>：
+  它自带一套 GDAL DLL，和 rasterio 依赖的那份很容易撞版本 —— 那类问题只在冻结态暴露，
+  排查成本极高，而收益只是"省 1/3 磁盘"。<b>宁可让用户复制副本，也不引入 DLL 冲突风险。</b></p>
+</div>
+
+<h3>8.3 三个"不做"的决定</h3>
+
+<ul>
+  <li><b>不做进度条</b>：<span class="code">gdaladdo</span> 与 rasterio 的
+      <span class="code">build_overviews()</span> 都<b>没有进度回调</b>。
+      画一条走到 60% 的条就是骗人 —— 只给转圈 + 已用时计时器 + 「约 2~3 分钟」的诚实预期。</li>
+  <li><b>不做假精确的耗时</b>：文案写「预计约 3 分钟（按影像体积粗估，实际可能更久）」，
+      括号里那句是刻意留的。</li>
+  <li><b>「以后再说」不写 localStorage</b>：只在本次会话生效。写了就等于让用户
+      永久关掉一个真实存在的性能问题。</li>
+</ul>
+
+<h3>8.4 两个只有在真机上才会撞见的 bug</h3>
+
+<div class="card">
+  <p style="margin:0 0 8px"><b>① 防重入锁防不住"关窗重开"</b></p>
+  <p style="margin:0">原先用 <span class="code">AtomicBool</span> 防连点，但它<b>只活在本进程内存里</b>。
+  用户点「开始」→ 嫌慢 → 关窗 → 重开 → 再点一次：新进程的锁是全新
+  <span class="code">false</span>（放行），而上一轮的孤儿进程还在往<b>同一个
+  <span class="code">.part</span></b> 写 4.7 GB —— Windows 下必撞
+  <span class="code">PermissionError: [WinError 32]</span>。</p>
+  <p style="margin:8px 0 0"><b>解药不是"再删一次 <span class="code">.part</span>"
+  </b>（那只清垃圾，不消竞争），而是<b>启动新进程前先让旧的死掉</b>：
+  子进程登记进 <span class="code">Services</span> 的第 4 个槽位，spawn 之前先
+  <span class="code">kill + wait</span>，退出钩子也统一收尸。</p>
+</div>
+
+<div class="card">
+  <p style="margin:0 0 8px"><b>② 复用分支漏清残留 <span class="code">.part</span></b></p>
+  <p style="margin:0">copy 模式在"副本已存在且带金字塔"时会<b>提前 return</b>，
+  根本走不到后面的清理。于是"副本已建好 + 某次中断留下半截
+  <span class="code">.part</span>"这个组合，会把一份<b>完整副本大小</b>的垃圾
+  永久留在盘上（真机 4.7 GB）。已在 <span class="code">return</span> 前补
+  <span class="code">unlink(missing_ok=True)</span>，并加了反向验证的测试。</p>
+</div>
+
+<h3>8.5 失败态：人话打头，原文降级</h3>
+
+<p>后端报错原文是「找不到 <span class="code">gdaladdo</span>，无法生成外置
+<span class="code">.ovr</span>」—— 这句话对最终用户等于什么都没说。所以：</p>
+
+<pre>这台电脑缺少一个可选的加速组件          ← 人话（主文案）
+可以先关掉这个提示。检测和导出都不受影响，只是地图缩放到很远处会慢一些。   ← 下一步
+技术细节（反馈问题时可把这段发给技术支持）：   ← 降级为次要信息
+  建立加速结构失败：找不到 gdaladdo，无法生成外置 .ovr   ← 原文，可选中复制</pre>
+
+<p>两者都要：<b>人话给用户，原文给技术支持</b>。只留人话会让排障失去唯一线索，
+只留原文则等于没写。</p>
+
+<h3>8.6 磁盘预检里的一个坑</h3>
+
+<p>建副本前要先算"够不够"。第一版直接
+<span class="code">shutil.disk_usage(cache_dir)</span> —— 首次运行时
+<span class="code">output/.tile-cache</span> <b>还不存在</b>，直接抛
+<span class="code">FileNotFoundError</span>，被兜底成 <span class="code">free = 0</span>，
+于是 4.7 GB 的副本被误判成"磁盘不够"，按钮永远灰着。</p>
+
+<p>修法是<b>向上找最近存在的祖先目录</b>（同一分区，剩余空间等价），最多上溯 8 层。
+这种"路径还不存在"的坑，只有真跑第一次才会撞上。</p>
+
+<h2>9. 50 条坑，分 9 组</h2>
+
+<p>完整清单在 <span class="code">desktop/README.md</span>（<b>50 条 / 9 组</b>，连续编号），每条都带错误原文。按主题归类：</p>
 
 <table>
   <thead><tr><th style="width:22%">分组</th><th style="width:8%">条数</th><th>代表性问题</th></tr></thead>
@@ -567,25 +676,27 @@ CHM 阈值 ±1 m 会造成 ±30,400 m² 波动。这些能说明方法可信，�
     <tr><td>一键脚本侧</td><td class="num">3</td><td><span class="code">.bat</span> 必须 UTF-8 无 BOM + CRLF；搬家自愈会误删共享的 <span class="code">CARGO_TARGET_DIR</span></td></tr>
     <tr><td>IPC 桥接侧<br><span class="sub">（含打包 / 交互 / 导出 / 自检）</span></td><td class="num">26</td><td>只读 stdout 不读 stderr → 永久死锁；参数名写错只静默退化；两份 <span class="code">proj.db</span> 版本只在冻结态炸；<span class="code">warn</span> 事件没处理 = 告警全丢；拖拽 change 洪水吃光撤销栈；框选不传可见性会盲删</td></tr>
     <tr><td>验证集侧</td><td class="num">3</td><td><span class="code">uncertain</span> 层允许"直接确认"→ 存进去的是算法输出（60 块里 51 块存疑）；加权准确率必须有 <span class="code">Σw = N</span> 恒等式自检；<span class="code">localStorage</span> effect 依赖写窄 = StrictMode 双跑抹掉进度</td></tr>
+    <tr><td>构建与进程生命周期侧</td><td class="num">5</td><td>安装包"存在≠新鲜"→ Python 修复永远进不了包；<span class="code">.gitkeep</span> 被构建删掉又提交 → CI 编译期挂；<span class="code">park_stale</span> 顺序错 → 旧包当新包报告；端口复用不验身份/不验影像 → 连上僵尸服务；<span class="code">AtomicBool</span> 防不住关窗重开 → 两个进程抢同一个 <span class="code">.part</span></td></tr>
   </tbody>
 </table>
 
-<h2>9. 验收基线</h2>
+<h2>10. 验收基线</h2>
 
 <div class="card verdict-ok">
   <div style="display:flex;gap:2.2rem;flex-wrap:wrap">
-    <div><div class="big">529</div><div class="sub">前端断言</div></div>
-    <div><div class="big">32/32</div><div class="sub">Rust 单测</div></div>
+    <div><div class="big">632</div><div class="sub">前端断言</div></div>
+    <div><div class="big">45/45</div><div class="sub">Rust 单测</div></div>
     <div><div class="big">95/95</div><div class="sub">契约测试</div></div>
-    <div><div class="big">9/9</div><div class="sub">自检层（check_all.py）</div></div>
+    <div><div class="big">42</div><div class="sub">金字塔冒烟断言</div></div>
+    <div><div class="big">11/11</div><div class="sub">自检层（check_all.py）</div></div>
     <div><div class="big">350 s</div><div class="sub">全量检测（原 1,048 s）</div></div>
     <div><div class="big">42 s</div><div class="sub">生成高度图 + 掩膜</div></div>
-    <div><div class="big">67.8 MiB</div><div class="sub">安装包</div></div>
+    <div><div class="big">68 MB</div><div class="sub">安装包</div></div>
     <div><div class="big">21</div><div class="sub">交付文件 / 3,691 点</div></div>
   </div>
 </div>
 
-<h2>10. 还没做的</h2>
+<h2>11. 还没做的</h2>
 <table>
   <thead><tr><th>项</th><th>原因</th></tr></thead>
   <tbody>
@@ -598,7 +709,7 @@ CHM 阈值 ±1 m 会造成 ±30,400 m² 波动。这些能说明方法可信，�
 </table>
 
 <footer>
-  Forest Gap Detection · 桌面端实现说明（专业版）· 2026-10-19<br>
+  Forest Gap Detection · 桌面端实现说明（专业版）· 2026-10-21<br>
   配套阅读：<span class="code">桌面端使用手册.md</span>（怎么用）· <span class="code">desktop/README.md</span>（45 条坑）· <span class="code">桌面端实现说明-小白版.html</span>
 </footer>
 
