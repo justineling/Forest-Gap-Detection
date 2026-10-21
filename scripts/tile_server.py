@@ -637,6 +637,48 @@ def _find_gdaladdo() -> str | None:
     return None
 
 
+def _has_overviews(source: Path) -> bool:
+    """影像是否真的带金字塔（读不出来也算"没有"）。
+
+    为什么单独抽一个函数：`gdaladdo` 返回 0、`ds.overviews(1)` 为空、文件被锁住
+    三种情况在调用方都要做同一件事（删掉可疑产物 + 报错重试），
+    判定散在多处很容易只改了其中一条。
+
+    ⚠️ 打不开时返回 False 而不是抛异常：这条路径的调用方是"刚跑完 gdaladdo 的收尾校验"，
+       此刻宁可让用户重试一次，也不要留着一个可能是半截的 .ovr 让下次误判为"已建好"。
+    """
+    try:
+        with rasterio.open(source) as ds:
+            return bool(ds.overviews(1))
+    except Exception:
+        return False
+
+
+def _free_bytes(path: Path) -> int:
+    """`path` 所在卷的可用字节数；目录不存在时向上找最近的存在祖先。
+
+    为什么不能直接 `shutil.disk_usage(path)`：copy 模式的目标是
+    `output/.tile-cache`，**首次运行时它还不存在** → 抛 FileNotFoundError →
+    只能填 0 → 界面把"要复制 4.7 GB 副本"误判成"磁盘不够"而拦住用户。
+    同一分区上可用空间本来就是同一个数，查父目录完全等价。
+
+    真的查不到（连盘符根都读不了）才返回 0 —— 这时调用方会判成空间不足，
+    属于保守方向：宁可让用户自己看一眼磁盘，也不要让他等 3 分钟后写满盘。
+    """
+    import shutil as _sh
+
+    p = path
+    for _ in range(8):  # 最多上溯 8 层，防止根目录 parent == self 时死循环
+        try:
+            return _sh.disk_usage(p).free
+        except OSError:
+            parent = p.parent
+            if parent == p:
+                return 0
+            p = parent
+    return 0
+
+
 def ensure_overviews(
     source: Path, cache_dir: Path, mode: str = "auto"
 ) -> tuple[Path, str]:
@@ -683,6 +725,16 @@ def ensure_overviews(
             r = __import__("subprocess").run(cmd, capture_output=True, text=True)
             if r.returncode == 0:
                 ovr = Path(str(source) + ".ovr")
+                # ⚠️ gdaladdo 返回 0 不等于 .ovr 可用：磁盘写满、进程被强杀都可能
+                #    留下一个零字节或半截的 .ovr，而它会让后续每次打开影像都读到
+                #    "有 overviews" 的假象（或者干脆读不出来）。这里用 rasterio 复核一次。
+                #    校验不过就删掉 —— 留着比没有更糟：下次 auto 模式会以为已经建好了。
+                if not _has_overviews(source):
+                    try:
+                        ovr.unlink()
+                    except OSError:
+                        pass
+                    raise RuntimeError("外置 .ovr 生成后校验失败，已删除，请重试")
                 return source, f"已生成外置 .ovr（{time.time() - t0:.0f}s，源文件未改动，{ovr.name}）"
             print(f"  ⚠️ gdaladdo 失败：{r.stderr.strip()[:200]}", file=sys.stderr)
         elif mode == "gdal":
@@ -697,6 +749,13 @@ def ensure_overviews(
         return source, f"已就地写入源文件（{time.time() - t0:.0f}s，⚠️ 源文件已被修改）"
 
     # ---- 策略 3：复制副本再建内部金字塔（最安全的兜底）----
+    #
+    # ⚠️ 必须**原子写入**：以前是 copy2 到最终路径再就地建金字塔，
+    #    中途强退（用户等不及点关闭 / 断电）会留下一个"存在但没有金字塔"的副本，
+    #    而上面的 `if copy_path.exists()` 会认它存在 → 下次直接复用这个坏文件，
+    #    用户每次开图都慢 100 倍却看不出原因。
+    #    现在先写 `.part`，建完金字塔再 os.replace 转正 —— 最终路径要么不存在，
+    #    要么是完整的。os.replace 在同一分区上是原子的。
     cache_dir.mkdir(parents=True, exist_ok=True)
     copy_path = cache_dir / source.name
     if copy_path.exists():
@@ -712,12 +771,30 @@ def ensure_overviews(
             f"可改用 --ovr-mode gdal（需安装 GDAL）或自行腾出空间。"
         )
 
+    part_path = copy_path.with_suffix(copy_path.suffix + ".part")
+    # 上一次被打断留下的半截副本：先清掉，否则 copy2 会覆盖但残留大小可能不对
+    if part_path.exists():
+        try:
+            part_path.unlink()
+        except OSError:
+            pass
+
     print(f"  复制副本 → {copy_path}（源文件不动，请稍候）…", file=sys.stderr)
     sys.stderr.flush()
     t0 = time.time()
-    _sh.copy2(source, copy_path)
-    with rasterio.open(copy_path, "r+") as ds:
-        ds.build_overviews([int(v) for v in levels], Resampling.average)
+    try:
+        _sh.copy2(source, part_path)
+        with rasterio.open(part_path, "r+") as ds:
+            ds.build_overviews([int(v) for v in levels], Resampling.average)
+        os.replace(part_path, copy_path)  # 原子转正
+    except BaseException:
+        # 包括 KeyboardInterrupt / 进程被 kill 之外的异常：不留垃圾文件。
+        # 用 BaseException 而不是 Exception，是为了让 Ctrl+C 也走清理。
+        try:
+            part_path.unlink()
+        except OSError:
+            pass
+        raise
     return copy_path, (
         f"已复制副本并建金字塔（{time.time() - t0:.0f}s，源文件未改动；"
         f"副本 {copy_path}，可随时删除）"
@@ -760,6 +837,23 @@ def overview_plan(source: Path, mode: str = "auto") -> dict:
 
     # 额外磁盘估算：.ovr 约 1/3；副本约 1 倍；就地约 1/4
     factor = {"none": 0.0, "ovr": 0.34, "copy": 1.0, "inplace": 0.25, "error": 0.0}[action]
+
+    # ---- 磁盘预检 ----
+    # 为什么要预检而不是"写到一半再说"：copy 模式要占一倍原图空间（4.7 GB 影像 ≈ 4.7 GB），
+    # 磁盘不够时 gdaladdo / rasterio 会写到一半报 IO 错，留下一个**没有金字塔的半截副本**；
+    # 更糟的是用户等了 3 分钟才看到失败。所以判断阶段就把"够不够"算出来给界面看。
+    # 目标目录按 action 选：ovr / inplace 写在源文件旁边，copy 写在 output/.tile-cache。
+    # `_free_bytes` 会处理"缓存目录还不存在"（首次运行必然如此）——
+    # 直接 disk_usage 会抛 FileNotFoundError，只能填 0，界面就会把
+    # "要复制 4.7 GB 副本"误判成"磁盘不够"而拦住用户。
+    target_dir = ROOT / "output" / ".tile-cache" if action == "copy" else source.parent
+    free = _free_bytes(target_dir)
+    # 留 10% 余量：文件系统元数据、临时块、以及 gdaladdo 自己的中间开销都不在估算里。
+    # ⚠️ 这是"够不够开始"的下限，不是精确需求：`ensure_overviews` 的 copy 分支另有一道
+    #    更严的门槛（要求 size*2，因为副本与金字塔要同时容纳）。预检放行后仍可能被那道
+    #    门槛拦下，但它发生在复制之前 —— 失败是秒级的，不会让用户白等 3 分钟。
+    need = int(size * factor * 1.1)
+
     return {
         "source": str(source),
         "has_overviews": bool(levels),
@@ -773,6 +867,12 @@ def overview_plan(source: Path, mode: str = "auto") -> dict:
         "action": action,
         "why": why,
         "touches_source": action == "inplace",
+        "target_dir": str(target_dir),
+        "free_bytes": free,
+        "need_bytes": need,
+        # action=none 时不需要额外空间 —— 此时 need 是 0，但 free 可能查不到（0），
+        # 若直接比较会得出"空间不够"的错误结论，所以显式放行
+        "enough_space": free >= need or action == "none",
     }
 
 
@@ -785,22 +885,36 @@ def build_overviews_only(source: Path, mode: str, dry_run: bool = False) -> int:
     def emit(obj: dict) -> None:
         print(json.dumps(obj, ensure_ascii=False), flush=True)
 
+    # 耗时从"进函数"开始算，而不是从"开始建"算 —— 用户感知的等待包含读元数据与查磁盘
+    t0 = time.time()
     plan = overview_plan(source, mode)
-    emit({"event": "plan", **plan})
+    emit({"event": "plan", "elapsed_s": 0.0, **plan})
 
     if dry_run or plan["action"] == "none":
-        emit({"event": "done", "ok": True, "note": plan["why"], "served": str(source)})
+        emit({
+            "event": "done", "ok": True, "note": plan["why"], "served": str(source),
+            "elapsed_s": round(time.time() - t0, 1),
+        })
         return 0
     if plan["action"] == "error":
-        emit({"event": "done", "ok": False, "error": plan["why"]})
+        emit({
+            "event": "done", "ok": False, "error": plan["why"],
+            "elapsed_s": round(time.time() - t0, 1),
+        })
         return 3
 
     try:
         served, note = ensure_overviews(Path(source), ROOT / "output" / ".tile-cache", mode)
     except RuntimeError as e:
-        emit({"event": "done", "ok": False, "error": str(e)})
+        emit({
+            "event": "done", "ok": False, "error": str(e),
+            "elapsed_s": round(time.time() - t0, 1),
+        })
         return 3
-    emit({"event": "done", "ok": True, "note": note, "served": str(served)})
+    emit({
+        "event": "done", "ok": True, "note": note, "served": str(served),
+        "elapsed_s": round(time.time() - t0, 1),
+    })
     return 0
 
 

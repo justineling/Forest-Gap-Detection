@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, RunEvent};
@@ -76,6 +76,44 @@ fn active_port() -> u16 {
     ACTIVE_PORT.load(Ordering::Relaxed)
 }
 
+/// 两个路径是否指向同一个文件：能规范化就比规范化结果，不能就比原样字符串。
+///
+/// 为什么不直接 `canonicalize(a).ok() == canonicalize(b).ok()`：
+/// 两个路径**都不存在**时是 `None == None` → 被判成"相同"，
+/// 而这恰好是最危险的方向 —— 僵尸服务指向一个已被删除/移走的旧影像，
+/// 会被当成"一致"而直接复用，地图显示的就是旧影像。
+/// 所以只有两边都能规范化时才敢下"相同"的结论；否则退化成字符串比较，
+/// 不相等就判"不同"（保守方向：最多少复用一次残留服务，重开一次而已）。
+fn same_file_path(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// 端口上的服务能否直接复用：必须是我们自己的，且服务的影像与当前配置一致。
+///
+/// 为什么还要比影像：`is_our_meta` 只认身份。若上次异常退出留下一个
+/// **指向旧影像**的僵尸服务，身份校验会通过 → 直接复用 → 地图显示旧影像、
+/// 检测却用新影像，而且界面上完全看不出来（比"换影像跳复核"更难发现）。
+///
+/// `wanted` 为 None（还没有选影像）时只校验身份 —— 此时没有"正确影像"可比。
+fn should_reuse_service(meta_body: &str, wanted: Option<&Path>) -> bool {
+    if !is_our_meta(meta_body) {
+        return false;
+    }
+    let Some(want) = wanted else { return true };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(meta_body) else {
+        return false;
+    };
+    let Some(src) = v.get("source").and_then(|x| x.as_str()) else {
+        // 老版本（无 app 字段时期）一定有 source；这里拿不到就不能确认，
+        // 保守判"不复用"
+        return false;
+    };
+    same_file_path(Path::new(src), want)
+}
+
 /// 选一个可用的后端端口，返回 `(端口, 是否复用已有服务)`。
 ///
 /// 规则（2026-10-21 公司电脑实测：8765 被内网工具占住，旧版直接失败）：
@@ -83,8 +121,12 @@ fn active_port() -> u16 {
 ///   2. 端口上是**我们自己的**服务（上一版残留）→ 复用，不重开；
 ///   3. 端口被**别的程序**占用 → 试下一个（8766、8767…），最多 `BACKEND_PORT_TRIES` 个。
 ///
+/// `wanted` 是"现在该服务哪张影像"。身份对但影像不对的残留服务**不复用**
+/// （理由见 `should_reuse_service`）。
+///
 /// ⚠️ 绝不 kill 占用者：那可能是用户的浏览器调试代理、别的业务系统。
-fn pick_backend_port() -> Result<(u16, bool), String> {
+///    连"是我们自己的但影像不对"也不 kill —— 它可能是另一个窗口正在用的。
+fn pick_backend_port(wanted: Option<&Path>) -> Result<(u16, bool), String> {
     let mut reasons: Vec<String> = Vec::new();
     for offset in 0..BACKEND_PORT_TRIES {
         let port = BACKEND_PORT.saturating_add(offset);
@@ -95,12 +137,20 @@ fn pick_backend_port() -> Result<(u16, bool), String> {
         // `/meta` 慢一两秒正常 → 给 3 次机会，别一次就下结论。
         for _ in 0..3 {
             match http_get_meta(port) {
-                Ok(body) if is_our_meta(&body) => return Ok((port, true)),
-                Ok(_) => break, // 别人的服务，不用再等
+                Ok(body) if should_reuse_service(&body, wanted) => return Ok((port, true)),
+                Ok(body) => {
+                    // 是我们自己的但服务着别的影像：不是"被别的程序占用"，
+                    // 记的 reason 必须能区分开，否则排障时会被误导成端口冲突
+                    reasons.push(if is_our_meta(&body) {
+                        format!("{port} 上的瓦片服务指向别的影像，不复用")
+                    } else {
+                        format!("{port} 被其它程序占用")
+                    });
+                    break; // 身份已明确，不用再等
+                }
                 Err(_) => std::thread::sleep(Duration::from_millis(400)),
             }
         }
-        reasons.push(format!("{port} 被其它程序占用"));
     }
     Err(format!(
         "端口 {BACKEND_PORT}~{} 全部不可用（{}）。请关掉占用这些端口的程序后重试。",
@@ -140,6 +190,22 @@ static TILE_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TILE_EXIT: Mutex<Option<i32>> = Mutex::new(None);
 /// 最近一次启动/复用判定的失败原因，前端直接拿去展示。
 static TILE_START_ERR: Mutex<String> = Mutex::new(String::new());
+
+/// 是否正在建金字塔。
+///
+/// 为什么要这个互斥：建一次要 2~3 分钟，用户很容易连点两下按钮。两个进程会写
+/// **同一个** `output/.tile-cache/<名>.tif.part`（原子写入用的是固定名），
+/// 互相覆盖成坏文件。前端下一轮会禁用按钮，但后端不能把正确性寄托在 UI 上。
+static OVERVIEW_BUILDING: AtomicBool = AtomicBool::new(false);
+
+/// 离开作用域时复位 `OVERVIEW_BUILDING` —— 提前 `return`、`?` 传播、panic 都能覆盖到。
+struct OverviewBuildGuard;
+
+impl Drop for OverviewBuildGuard {
+    fn drop(&mut self) {
+        OVERVIEW_BUILDING.store(false, Ordering::SeqCst);
+    }
+}
 
 /// 按字符边界截断（不能按字节切，否则中文/emoji 会切出半个 UTF-8 序列）。
 fn clip_chars(s: &str, max: usize) -> String {
@@ -477,6 +543,15 @@ struct AppConfig {
     image: Option<String>,
     /// 检测结果路径（.geojson）；为空时瓦片服务会自己找默认位置
     gaps: Option<String>,
+    /// 建金字塔时若产生了副本，瓦片服务改用它（检测仍用原图，像素完全相同）。
+    /// 为空表示直接用 image。
+    ///
+    /// ⚠️ `#[serde(default)]` **不能省**：`load_config()` 是
+    /// `serde_json::from_str(&text).unwrap_or_default()`，旧版 settings.json
+    /// 没有这个字段 → 反序列化失败 → 静默返回 default → **用户的影像/结果路径
+    /// 全被抹掉**，表现为"升级后软件又让我选一次影像"。加 default 后缺字段即 None。
+    #[serde(default)]
+    tile_source: Option<String>,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -554,6 +629,23 @@ fn resolve_image(app: &tauri::AppHandle) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// 瓦片服务该用哪张影像：建金字塔时若产生了副本（cfg.tile_source），优先用它。
+/// 副本不存在（被清理了）就回落到原图 —— 绝不因为一个缓存文件缺失而打不开。
+///
+/// ⚠️ **只给瓦片服务用**。检测链路必须继续走 `resolve_image`：
+///    副本的像素与原图完全相同，但它的路径不在检测参数指纹里，
+///    换过去会让"同一张影像"算出两套缓存。
+fn resolve_tile_source(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let cfg = load_config();
+    if let Some(p) = cfg.tile_source {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return Some(pb);
+        }
+    }
+    resolve_image(app)
 }
 
 /// 在**一个目录**里找名字含 `gaps` 的 geojson，按 mtime 取最新。
@@ -691,7 +783,12 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     // 端口选择：8765 空闲就用；被**别的程序**占住就往后找；是我们自己的服务就复用。
     // 这一步替代了旧逻辑里"8765 有人听就报错"的行为 —— 后者在公司电脑上直接
     // 让整个功能不可用（8765 是很多内网工具/调试器的默认端口）。
-    let (port, reuse) = match pick_backend_port() {
+    //
+    // `wanted` 用**配置里的原图**而不是 tile_source：复用判定问的是
+    // "这个服务服务的影像，是不是我现在要的那张"。副本只是原图的等价替身，
+    // 拿副本去比会在"副本刚被清理"时误判成不一致，白重启一次。
+    let wanted = resolve_image(app);
+    let (port, reuse) = match pick_backend_port(wanted.as_deref()) {
         Ok(v) => v,
         Err(e) => {
             set_start_err(&e);
@@ -723,7 +820,9 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     //             （打包版没有仓库根，必须显式给影像与结果的绝对路径）
     // 影像：配置优先 → 数据根默认探测。**没有影像就不启服务**，
     // 让前端显示「选择影像」引导（而不是给用户看一句开发者才懂的命令）。
-    let image = resolve_image(app);
+    // 这里用 resolve_tile_source：建过金字塔的副本优先（像素相同、但带 overviews），
+    // 没有副本时自动回落到原图 —— 与 `wanted` 的差别只在"有没有替身"。
+    let image = resolve_tile_source(app);
     let gaps = resolve_gaps(app);
     // 结果文件找不到时界面只会显示"没有空地" —— 这一行是唯一的排障线索
     match &gaps {
@@ -1823,6 +1922,13 @@ fn set_data_paths(
     //    继续挂着会让前端认为"检测已完成"直接跳到「复核结果」，
     //    同时弹出"结果没读到"（2026-10-21 公司电脑实测）。
     //    判定条件抽在 should_clear_gaps 里（有单测）。
+    //
+    // 换影像时 `tile_source`（金字塔副本）也必须一起清：副本属于上一张影像，
+    // 留着会让瓦片服务继续显示**旧影像**，而界面上完全看不出来 ——
+    // 这比"换影像跳复核"更难发现。下次建金字塔时自然会重新写。
+    if cfg.image != old_image {
+        cfg.tile_source = None;
+    }
     if should_clear_gaps(&old_image, &cfg.image, gaps.is_some()) {
         cfg.gaps = None;
     }
@@ -1967,6 +2073,223 @@ fn is_our_service() -> bool {
             .unwrap_or(false)
 }
 
+/// 「建金字塔」的结果，直接给界面展示。
+#[derive(serde::Serialize)]
+struct OverviewBuildResult {
+    ok: bool,
+    /// 人类可读说明（已建好 / 复用副本 / 原本就有）
+    note: String,
+    /// 瓦片服务最终该用的影像（可能与原图不同 —— copy 模式是副本）
+    served: String,
+    /// 实际耗时（秒）。大影像 2~3 分钟，界面要能显示"已经等了多久"
+    elapsed_s: f64,
+}
+
+/// 给影像建金字塔（可等 2~3 分钟，**必须 async + spawn_blocking**）。
+///
+/// 为什么不做成同步命令：Tauri 的同步命令跑在**主线程**上，阻塞 3 分钟 =
+/// 窗口假死、转圈都转不动，用户只会认为程序崩了然后强杀 ——
+/// 而强杀正好会打断写盘（`.part` 原子写入就是为这个场景准备的）。
+///
+/// 参数 `mode` 只认四个值：`auto` / `copy` / `gdal` / `inplace`。
+/// 其它值一律拒绝 —— 这个字符串会被拼进命令行，不能信前端传什么就给什么。
+#[tauri::command]
+async fn build_overviews(
+    app: tauri::AppHandle,
+    mode: String,
+) -> Result<OverviewBuildResult, String> {
+    if !matches!(mode.as_str(), "auto" | "copy" | "gdal" | "inplace") {
+        return Err(format!(
+            "不支持的建金字塔方式「{mode}」（只能是 auto / copy / gdal / inplace）"
+        ));
+    }
+    // 防重入：连点两下会起两个进程写同一个 .part（理由见 OVERVIEW_BUILDING 注释）
+    if OVERVIEW_BUILDING.swap(true, Ordering::SeqCst) {
+        return Err("正在建金字塔，请等它完成（大影像需要 2~3 分钟）".into());
+    }
+    let _guard = OverviewBuildGuard;
+    // AppHandle 是 Send + 'static，可以搬进阻塞线程；State 不行（借用视图）
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || build_overviews_blocking(&app2, &mode))
+        .await
+        .map_err(|e| format!("建金字塔任务异常结束：{e}"))?
+}
+
+/// `build_overviews` 的阻塞主体：起子进程 → 收事件 → 记住副本 → 重启服务。
+fn build_overviews_blocking(
+    app: &tauri::AppHandle,
+    mode: &str,
+) -> Result<OverviewBuildResult, String> {
+    let image = resolve_image(app).ok_or("还没有选择正射影像，无法建金字塔")?;
+    let backend = resolve_backend(app).ok_or(
+        "找不到后端：请先跑 scripts/build_desktop_runtime.ps1 打包，或配置好 .venv",
+    )?;
+
+    // 参数照抄 start_tile_server 的两种形态：dev 是 `python <脚本>`，
+    // bundled 是 `desktop_entry.exe --run-tile-server`（同一个入口，多一个开关）。
+    let mut args: Vec<String> = Vec::new();
+    match &backend {
+        Backend::Dev { root, .. } => {
+            let script = root.join("scripts").join("tile_server.py");
+            if !script.exists() {
+                return Err(format!("找不到 {}", script.display()));
+            }
+            args.push(script.to_string_lossy().to_string());
+        }
+        Backend::Bundled(_) => args.push("--run-tile-server".into()),
+    }
+    args.push("--overviews-only".into());
+    args.push("--source".into());
+    args.push(image.to_string_lossy().to_string());
+    args.push("--ovr-mode".into());
+    args.push(mode.to_string());
+
+    let data_root = bundled_data_root(app);
+    let mut cmd = build_command(&backend, &args, &data_root);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    log_line(&format!(
+        "开始建金字塔（mode={mode}，影像 {}）",
+        image.display()
+    ));
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("启动建金字塔进程失败：{e}（{}）", backend.describe()))?;
+
+    let stdout = child.stdout.take().ok_or("拿不到 stdout")?;
+    let stderr = child.stderr.take().ok_or("拿不到 stderr")?;
+
+    // ⚠️ stdout / stderr **必须各起一个读线程**。管道缓冲区在 Windows 上只有
+    //    64 KB：只读其中一个、另一个写满时，子进程会阻塞在 write 上，
+    //    而我们又阻塞在 wait 上 —— 两边互等，表现为"建金字塔永远不结束"。
+    //    这个坑本项目在 sidecar 上踩过一次。
+    let out_thread = std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut buf: Vec<u8> = Vec::new();
+        let mut last_done: Option<serde_json::Value> = None;
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    // 同 start_tile_server：不能用 lines().map_while(ok)，
+                    // 一行非 UTF-8 会让整个迭代器停住，后面的 done 事件就丢了
+                    let text = String::from_utf8_lossy(&buf);
+                    let line = text.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                        if v.get("event").and_then(|e| e.as_str()) == Some("done") {
+                            last_done = Some(v);
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        last_done
+    });
+
+    let err_thread = std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut buf: Vec<u8> = Vec::new();
+        let mut acc = String::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let text = String::from_utf8_lossy(&buf);
+                    let line = text.trim_end_matches(['\r', '\n']);
+                    if line.is_empty() {
+                        continue;
+                    }
+                    // 落 app.log：release 没有控制台，这是失败时唯一的现场
+                    log_line(&format!("[overviews] {line}"));
+                    if acc.len() < 8_000 {
+                        acc.push_str(line);
+                        acc.push('\n');
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        acc
+    });
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("等待建金字塔进程失败：{e}"))?;
+    let done = out_thread.join().unwrap_or(None);
+    let err_text = err_thread.join().unwrap_or_default();
+
+    // ⚠️ 先看 `done` 事件、再看退出码。python 侧"找不到 gdaladdo"这类错误是
+    //    `done{ok:false,error:"找不到 gdaladdo…"}` + 退出码 3 **一起**给出的：
+    //    若先按退出码报错，用户只会看到"没有输出"，真正的原因（缺 GDAL）被丢掉。
+    let fail_tail = || {
+        let t = clip_chars(err_text.trim(), 500);
+        if t.is_empty() {
+            "没有输出".to_string()
+        } else {
+            t
+        }
+    };
+    let done = match done {
+        Some(v) if v.get("ok").and_then(|x| x.as_bool()) == Some(true) => v,
+        Some(v) => {
+            let why = v.get("error").and_then(|x| x.as_str()).unwrap_or("未知原因");
+            return Err(format!("建金字塔失败：{why}"));
+        }
+        None if !status.success() => {
+            return Err(format!(
+                "建金字塔失败（退出码 {:?}）：{}",
+                status.code(),
+                fail_tail()
+            ));
+        }
+        None => {
+            return Err(format!(
+                "建金字塔进程没有报告结果（可能被中断）：{}",
+                fail_tail()
+            ));
+        }
+    };
+
+    let served = done
+        .get("served")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let note = done
+        .get("note")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let elapsed_s = done.get("elapsed_s").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+    // 产生了副本（served 与原图不同）→ 记住它，否则下次启动又用回没金字塔的原图，
+    // 用户会以为"建了一次白建"。
+    if !served.is_empty() && !same_file_path(Path::new(&served), &image) {
+        let mut cfg = load_config();
+        cfg.tile_source = Some(served.clone());
+        save_config(&cfg)?;
+        log_line(&format!("瓦片服务改用带金字塔的副本：{served}"));
+    }
+
+    // 让服务用上新影像。**失败不吞**：金字塔建好了但地图还是慢，必须让用户知道。
+    // 只在这条成功路径上重启 —— 失败路径绝不重启，避免把本来好的服务弄坏。
+    let services = app.state::<Services>();
+    restart_tile_server(app.clone(), services)
+        .map_err(|e| format!("金字塔已建好，但瓦片服务重启失败：{e}"))?;
+
+    Ok(OverviewBuildResult {
+        ok: true,
+        note,
+        served,
+        elapsed_s,
+    })
+}
+
 /// 前端按钮「重新拉起服务」用（服务崩了不必重启整个 App）
 #[tauri::command]
 fn restart_tile_server(
@@ -2008,7 +2331,8 @@ pub fn run() {
             cancel_detect,
             detect_status,
             get_status,
-            set_data_paths
+            set_data_paths,
+            build_overviews
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -2725,6 +3049,42 @@ mod tests {
         let port = spawn_fake_http("500 Internal Server Error", r#"{"ok":false}"#);
         let err = http_get_meta(port).unwrap_err();
         assert!(err.contains("500"), "错误里要带状态码，便于排障：{err}");
+    }
+
+    // ---- 端口复用必须校验"服务的是不是这张影像" ----
+    //
+    // 这组测试守的是一个**看不见**的故障：上次异常退出留下指向旧影像的僵尸服务，
+    // 身份校验通过 → 直接复用 → 地图显示旧影像、检测用新影像，
+    // 界面上没有任何提示（比"换影像跳复核"更难发现）。
+
+    #[test]
+    fn reuse_only_when_source_matches() {
+        let ours = r#"{"app":"fgd-tile-server","source":"D:/a/WGR17-002.tif"}"#;
+        // 身份对 + 影像一致 → 复用
+        assert!(should_reuse_service(ours, Some(Path::new("D:/a/WGR17-002.tif"))));
+        // 身份对 + 影像不同 → 不复用（僵尸服务指向旧影像）
+        assert!(!should_reuse_service(ours, Some(Path::new("D:/a/OTHER.tif"))));
+        // 没有期望影像（还没选）→ 只看身份
+        assert!(should_reuse_service(ours, None));
+        // 别人的服务 → 不复用
+        assert!(!should_reuse_service(r#"{"ok":true}"#, None));
+        // 是我们的但 meta 里没有 source → 无法确认，保守不复用
+        assert!(!should_reuse_service(r#"{"app":"fgd-tile-server"}"#, Some(Path::new("D:/a/x.tif"))));
+    }
+
+    /// 两个都不存在的路径：不能因为"都 canonicalize 失败"就判成一致
+    /// （否则指向已删除旧影像的僵尸服务会被复用）。
+    #[test]
+    fn missing_paths_are_not_assumed_equal() {
+        assert!(same_file_path(Path::new("D:/no/such/a.tif"), Path::new("D:/no/such/a.tif")));
+        assert!(!same_file_path(Path::new("D:/no/such/a.tif"), Path::new("D:/no/such/b.tif")));
+        // 真实存在的路径走 canonicalize：同一文件的不同写法应判一致
+        let base = scratch("same-path");
+        let f = base.join("a.tif");
+        touch(&f, 8);
+        assert!(same_file_path(&f, &f));
+        assert!(same_file_path(&base.join(".").join("a.tif"), &f));
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

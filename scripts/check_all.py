@@ -21,7 +21,7 @@
 | `npm test` | 561 项前端断言（纯函数 / store / 一致性） | ~6 s |
 | `ruff` | Python 语法错误 + **完全未定义**的名字 | ~0.2 s |
 | **`--help` 冒烟** | **CLI 构造期的异常**（argparse 配置错、模块级 NameError） | ~2 s |
-| `cargo test` | 42 项 Rust 单测（预检 + 瓦片服务探活） | ~10 s |
+| `cargo test` | 44 项 Rust 单测（预检 + 瓦片服务探活） | ~10 s |
 | **仓库卫生** | `.gitkeep` 是否仍被 git 跟踪（CI 编译期硬依赖） | ~0.1 s |
 | 契约测试 | 95 项 sidecar 契约 | ~60 s |
 
@@ -174,7 +174,7 @@ def main() -> int:
     #    否则会与打包脚本争用同一份 target（踩过：两份 target + 锁文件警告）
     env_cmd = ["env", "-u", "CARGO_TARGET_DIR", "cargo", "test",
                "--message-format=short"]
-    ok, dt = run(env_cmd, ROOT / "desktop" / "src-tauri", "cargo test（42 项）")
+    ok, dt = run(env_cmd, ROOT / "desktop" / "src-tauri", "cargo test（44 项）")
     rec("cargo test", ok, dt)
 
     # ---- 6. 过期判定（纯逻辑，秒级）----
