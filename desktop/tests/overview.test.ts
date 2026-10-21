@@ -8,12 +8,14 @@
  *
  * 这三类错误**都不会抛异常**，所以只能靠断言钉住。
  */
+import { readFileSync } from 'node:fs'
 import {
   canStartBuild,
   describeAction,
   describeEstimate,
   describeSpace,
   estimateBuildSeconds,
+  explainBuildError,
   shouldShowOverviewNotice,
   type OverviewPlan,
 } from '../src/lib/overview'
@@ -140,9 +142,121 @@ console.log('\nE. 按钮文案：不能出现 gdaladdo / ovr / copy / inplace')
     check(!describeAction(p).includes('**'), `${name} 的文案不含 Markdown 星号`)
   }
 
-  // error 情形：后端给的真实原因必须透出来（不能只说"失败了"）
-  const errText = describeAction(plan({ action: 'error', why: '找不到 gdaladdo，无法生成外置 .ovr' }))
-  check(errText.includes('找不到 gdaladdo'), '★ error 要把后端原文带出来（便于排障）', errText)
+  // error 情形：**不能**把后端原文当按钮文案（原文里有 gdaladdo / 外置 .ovr）。
+  // 原文仍然保留 —— 但它在组件的 <pre> 里，不在 describeAction 的返回值里。
+  const errPlan = plan({ action: 'error', why: '找不到 gdaladdo，无法生成外置 .ovr' })
+  const errText = describeAction(errPlan)
+  const errHit = banned.filter((w) => errText.toLowerCase().includes(w))
+  check(errHit.length === 0, '★ error 分支的文案也不含实现细节', errHit.length ? errHit.join(',') : errText)
+  check(
+    errText === explainBuildError(errPlan.why).title,
+    'error 分支直接复用 explainBuildError 的标题（只有一处文案来源）',
+    errText,
+  )
+}
+
+// ---------- F. 失败原因翻译成人话 ----------
+//
+// 这一组是补上"上一轮漏掉的路径"：上一轮只断言了 5 个纯函数不含术语，
+// 但**后端原文透传**那条路没测，结果 `gdaladdo` 从 UI 里漏了出来。
+const BANNED = ['gdaladdo', 'ovr', 'copy', 'inplace', 'gdal']
+
+/** 断言一段文案不含任何技术名词 */
+function clean(text: string): string[] {
+  const low = text.toLowerCase()
+  return BANNED.filter((w) => low.includes(w))
+}
+
+console.log('\nF. 失败原因翻译：5 条映射 + 人话里不许有术语')
+{
+  const cases: Array<[string, string, string]> = [
+    [
+      '找不到 gdaladdo，无法生成外置 .ovr',
+      '这台电脑缺少一个可选的加速组件',
+      'gdaladdo',
+    ],
+    ['磁盘空间不足：需要约 9.4 GB', '磁盘剩余空间不够', '磁盘'],
+    ['PermissionError: [WinError 5] 拒绝访问', '没有写入这个位置的权限', 'PermissionError'],
+    ['处理被中断了：KeyboardInterrupt', '处理被中断了', 'KeyboardInterrupt'],
+    ['something exploded at 0xDEADBEEF', '没能建立加速结构', 'unknown'],
+  ]
+
+  for (const [raw, wantTitle, tag] of cases) {
+    const a = explainBuildError(raw)
+    check(a.title === wantTitle, `${tag} → 命中「${wantTitle}」`, a.title)
+    check(a.hint.length > 0, `${tag} → 给出下一步建议`)
+  }
+
+  // ★ 反向断言：**每一条**的 title 与 hint 都不许出现技术名词。
+  //   这是这次真正的教训 —— 测"函数干净"不够，要测"用户看到的那句话干净"。
+  for (const [raw, , tag] of cases) {
+    const a = explainBuildError(raw)
+    const hitT = clean(a.title)
+    const hitH = clean(a.hint)
+    check(hitT.length === 0, `★ ${tag} 的 title 不含技术名词`, hitT.join(','))
+    check(hitH.length === 0, `★ ${tag} 的 hint 不含技术名词`, hitH.join(','))
+  }
+
+  // 顺序有意义：一句话里同时出现两类关键词时，按表里的先后命中（gdaladdo 在前）。
+  // 实测后端不会这么报（磁盘报错只说磁盘），这里钉住的是"顺序不要被后人调乱"。
+  const mixed = explainBuildError('磁盘空间不足，gdaladdo 需要 9 GB')
+  check(mixed.title === '这台电脑缺少一个可选的加速组件', '关键词按顺序命中第一条（gdaladdo 优先）', mixed.title)
+
+  // 空 / 脏输入不能崩
+  check(explainBuildError('').title.length > 0, '空字符串也给一个标题')
+  check(explainBuildError(null as unknown as string).title.length > 0, 'null 也不崩（后端可能给空）')
+}
+
+// ---------- G. 源码级守卫：组件里不许出现技术名词 ----------
+//
+// 这一条是**上一轮漏检的直接补救**。上一轮只断言了 5 个纯函数干净，
+// 结果 `OverviewNotice.tsx` 里手写的 JSX 文案（"装了 GDAL 可以只占约 1/3 磁盘"）
+// 和「瓦片」这种 GIS 词照样漏到了用户面前 —— 纯函数测不到它们。
+//
+// 做法：把这个组件的源码读进来，剥掉注释后扫一遍。注释里出现 gdaladdo 是合法的
+// （那是写给维护者看的），所以必须先剥注释再扫。
+console.log('\nG. 源码守卫：OverviewNotice.tsx 的可见文案不含技术名词')
+{
+  const src = readFileSync('src/components/OverviewNotice.tsx', 'utf8')
+  const code = src
+    // JSX 注释 {/* ... */}
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    // 块注释 /* ... */
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    // 行注释 // ...
+    .replace(/\/\/[^\n]*/g, '')
+    // className：**必须剥**。JSX 里最常见的写法是
+    //   <div className="ovr-note">不会修改你的原图。</div>
+    // 类名（ovr-*）和中文文案在同一行 —— 不剥就会把类名当成"用户可见文案"，
+    // 报出一条纯属虚构的命中。实测就是这么误报的（2026-10-21）。
+    .replace(/className=(\{[^}]*\}|"[^"]*"|'[^']*')/g, '')
+
+  // 只扫**含中文的行**：用户看到的文案一定是中文；而代码里的枚举比较
+  // （`action === 'inplace'`）、URL 参数（`.get('ovr')`）都是纯 ASCII。
+  // 不过滤就会得到一堆假阳性，那样这条断言很快就会被人注释掉 —— 比没有更糟。
+  const visible = (code.match(/[^\n]*[\u4e00-\u9fff][^\n]*/g) ?? []).join('\n')
+
+  const hit = BANNED.filter((w) => visible.toLowerCase().includes(w))
+  check(
+    hit.length === 0,
+    '★ 组件里"给用户看的中文文案"不含 gdaladdo / ovr / copy / inplace / GDAL',
+    hit.length ? `命中：${hit.join(',')}` : '干净',
+  )
+  // 反向确认：这条守卫不是"因为文件读不到所以永远通过"
+  check(visible.includes('加速结构'), '守卫确实读到了组件里的中文文案（否则上面的通过没有意义）')
+  // 横幅里不许有"瓦片"（GIS 术语，用户不懂）
+  check(!visible.includes('瓦片'), '★ 用户可见文案里没有"瓦片"二字')
+
+  // ★ 守卫自身的有效性：喂一条**故意违规**的文案，它必须报出来。
+  //   没有这一条，上面所有"干净"都可能只是"扫描器坏了"。
+  //   （上一轮 `装了 GDAL 可以只占约 1/3 磁盘` 就是这么漏出去的。）
+  const probe = '装了 GDAL 可以只占约 1/3 磁盘，但当前环境没有'
+  const probeHit = BANNED.filter((w) => probe.toLowerCase().includes(w))
+  check(
+    probeHit.length > 0,
+    '★ 守卫自检：故意违规的样例必须被抓到（证明扫描器没坏）',
+    probeHit.join(','),
+  )
 }
 
 // ---------- 汇总 ----------

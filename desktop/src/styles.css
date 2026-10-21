@@ -2465,3 +2465,16 @@ kbd {
   /* 必须可选：默认某些容器会被设置成 user-select:none */
   user-select: text;
 }
+
+/* 失败态：人话原因 + 下一步（原文在下面当"技术细节"） */
+.ovr-advice-hint {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text);
+}
+.ovr-raw-label {
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--dim);
+}

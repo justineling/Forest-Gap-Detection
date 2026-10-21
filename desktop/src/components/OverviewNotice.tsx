@@ -3,11 +3,13 @@ import { buildOverviews, overviewPlan } from '../api/backend'
 import { useAppStore } from '../store/useAppStore'
 import {
   canStartBuild,
+  DEMO_FAIL_RAW,
   DEMO_PLAN,
   describeAction,
   describeEstimate,
   describeSpace,
   estimateBuildSeconds,
+  explainBuildError,
   type OverviewPlan,
 } from '../lib/overview'
 
@@ -50,7 +52,6 @@ function previewParam(): string {
 }
 
 const PREVIEW = previewParam()
-const PREVIEW_FAIL_TEXT = '建立加速结构失败：找不到 gdaladdo，无法生成外置 .ovr'
 
 export default function OverviewNotice({
   onDone,
@@ -69,7 +70,7 @@ export default function OverviewNotice({
     PREVIEW === 'dialog' ? DEMO_PLAN : null,
   )
   const [err, setErr] = useState<string | null>(() =>
-    PREVIEW === 'fail' ? PREVIEW_FAIL_TEXT : null,
+    PREVIEW === 'fail' ? DEMO_FAIL_RAW : null,
   )
   /** 已用秒数：只在 building 时由定时器递增 */
   const [elapsed, setElapsed] = useState(0)
@@ -129,7 +130,7 @@ export default function OverviewNotice({
         </span>
         <div className="ovr-banner-text">
           <b>这张影像没有加速结构</b>
-          <span className="dim">缩放到远处会很慢（实测单张瓦片约 100 秒）</span>
+          <span className="dim">缩放到远处会很慢（一屏可能要等 1 分钟以上）</span>
         </div>
         <div className="ovr-banner-actions">
           <button className="btn tiny primary" onClick={() => void openCheck()}>
@@ -145,6 +146,8 @@ export default function OverviewNotice({
 
   const busy = phase === 'building'
   const canStart = canStartBuild(plan)
+  // 失败态的人话说明（后端原文只在下面当"技术细节"，不当主文案）
+  const advice = explainBuildError(err ?? '')
 
   return (
     <div
@@ -193,12 +196,9 @@ export default function OverviewNotice({
               {!plan.touches_source && (
                 <div className="ovr-note">不会修改你的原图。</div>
               )}
-              {plan.action === 'copy' && plan.gdaladdo === null && (
-                <div className="ovr-note dim">
-                  装了 GDAL 可以只占约 1/3 磁盘，但当前环境没有 ——
-                  所以这次会复制一份副本，建完可以随时删掉。
-                </div>
-              )}
+              {/* 这里刻意**不解释**"为什么这次要复制一份"：
+                  原因（有没有装某个可选组件）是开发者视角，用户既看不懂也没法处理；
+                  他只需要知道"占多少盘、动不动原图"，那两句上面已经说了。 */}
               {plan.action === 'inplace' && (
                 <div className="ovr-note warn">
                   这一项会直接写入原图，中途中断可能损坏文件。建议先备份原图。
@@ -233,12 +233,13 @@ export default function OverviewNotice({
 
           {phase === 'failed' && (
             <div className="ds-err">
-              <b>没能建立加速结构</b>
-              {/* 用 pre 是为了让报错原文可选中复制 —— 用户要拿这句话去问人 */}
+              {/* 第一行必须是**人话**（后端原文里有 gdaladdo / 外置 .ovr 这类词，
+                  直接怼给用户等于什么都没说）。原文降级到下面，仅供复制反馈。 */}
+              <b>{advice.title}</b>
+              <div className="ovr-advice-hint">{advice.hint}</div>
+              <div className="ovr-raw-label">技术细节（反馈问题时可把这段发给技术支持）：</div>
+              {/* 用 pre 是为了让报错原文可选中复制 */}
               <pre className="ovr-err-pre">{err ?? '未知原因'}</pre>
-              <div className="dim" style={{ marginTop: 8 }}>
-                可以把上面这段原文发给技术支持；不影响你继续看图，只是远景会慢。
-              </div>
             </div>
           )}
         </div>

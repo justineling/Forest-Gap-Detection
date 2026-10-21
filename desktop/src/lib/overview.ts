@@ -103,6 +103,9 @@ export function estimateBuildSeconds(sizeBytes: number): number {
  * ⚠️ 这里**禁止**出现 gdaladdo / ovr / copy / inplace 这些词：
  * 用户不需要知道用的是哪种实现，他只需要知道"动不动我的原图、要多久、要多少盘"。
  * （`desktop/tests/overview.test.ts` 里有断言盯着这一点。）
+ *
+ * `error` 分支同样不能直接透 `plan.why` —— 那是后端原文，里面就带着
+ * `gdaladdo` / `外置 .ovr`。交给 `explainBuildError` 翻译。
  */
 export function describeAction(plan: OverviewPlan): string {
   switch (plan.action) {
@@ -117,7 +120,7 @@ export function describeAction(plan: OverviewPlan): string {
       // 强调交给组件（整行用警告色 + 单独的红色提示）
       return '直接改原图（更快，但不可撤销）'
     case 'error':
-      return `当前环境无法自动处理：${plan.why}`
+      return explainBuildError(plan.why).title
   }
 }
 
@@ -126,6 +129,67 @@ export function describeEstimate(seconds: number): string {
   if (seconds < 60) return `约 ${seconds} 秒`
   const m = Math.round(seconds / 60)
   return `约 ${m} 分钟`
+}
+
+export interface ErrorAdvice {
+  /** 给用户看的一句话原因（不含任何技术名词） */
+  title: string
+  /** 下一步能做什么 */
+  hint: string
+}
+
+/**
+ * 失败态预览用的「后端原文」样例（`?ovr=fail`）。
+ *
+ * 它**故意**保留技术词：真实的失败界面里，这段原文就长这样，且要原样显示在
+ * `<pre>` 里供用户复制反馈。把它放在这里（而不是组件里）是为了让
+ * `OverviewNotice.tsx` 的代码里一个技术词都不出现 —— 测试会扫那个文件。
+ */
+export const DEMO_FAIL_RAW = '建立加速结构失败：找不到 gdaladdo，无法生成外置 .ovr'
+
+/**
+ * 把后端的原始报错翻译成用户能懂的一句话。
+ *
+ * 为什么要翻译而不是直接显示原文：原文里是 `gdaladdo` / `外置 .ovr` 这类
+ * 只有开发者看得懂的词，而用户（种植园管理者）既看不懂、也没有能力"去装 GDAL"——
+ * 那种提示除了让产品显得很技术，没有任何作用。
+ *
+ * 但**原文不能丢**：用户要拿它去反馈问题。所以组件里仍然用 `<pre>` 保留原文，
+ * 只是不再让它当主文案。
+ *
+ * 规则按关键词从上到下**第一个命中**（顺序有意义：磁盘报错里也可能提到 gdaladdo）。
+ */
+export function explainBuildError(raw: string): ErrorAdvice {
+  const t = (raw ?? '').toLowerCase()
+
+  if (t.includes('gdaladdo') || t.includes('外置 .ovr') || t.includes('.ovr')) {
+    return {
+      title: '这台电脑缺少一个可选的加速组件',
+      hint: '可以先关掉这个提示。检测和导出都不受影响，只是地图缩放到很远处会慢一些。',
+    }
+  }
+  if (t.includes('磁盘') || t.includes('space') || t.includes('no space')) {
+    return {
+      title: '磁盘剩余空间不够',
+      hint: '腾出空间，或者把影像放到另一块盘上，然后再试一次。',
+    }
+  }
+  if (t.includes('权限') || t.includes('denied') || t.includes('permission')) {
+    return {
+      title: '没有写入这个位置的权限',
+      hint: '换一个你有权限的目录，或者用管理员身份运行。',
+    }
+  }
+  if (t.includes('中断') || t.includes('interrupt')) {
+    return {
+      title: '处理被中断了',
+      hint: '重新点一次「开始」即可。原图没有被改动。',
+    }
+  }
+  return {
+    title: '没能建立加速结构',
+    hint: '可以先关掉这个提示，不影响检测和导出。',
+  }
 }
 
 /**
