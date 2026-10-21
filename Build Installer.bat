@@ -39,7 +39,7 @@ goto :stage2_ready
 :need_setup
 call "%~dp0_环境准备.bat" stage_begin 2 5 "Install missing components"
 echo.
-echo   The environment is incomplete; launching the bundled one-click setup wizard (about 5-15 minutes).
+echo   The environment is incomplete; installing the missing components directly (about 5-15 minutes).
 echo.
 call "%~dp0_环境准备.bat" start_heartbeat "Still configuring the environment" 40
 call "%~dp0_环境准备.bat" ensure_python_env
@@ -66,6 +66,11 @@ goto :stage3
 rem ============================================================
 rem  Stage 3/5: build the frontend bundle (dist/)
 rem ============================================================
+rem Hard gate: without MSVC the Tauri link step fails, so stop here and
+rem point the user at the download page instead of burning minutes on a
+rem build that cannot succeed.
+call "%~dp0_环境准备.bat" ensure_msvc
+if errorlevel 1 goto :msvc_fail
 call "%~dp0_环境准备.bat" stage_begin 3 5 "Build frontend bundle"
 echo   Building the frontend (tsc type check + vite build, about 10-30 seconds)...
 call "%~dp0_环境准备.bat" start_heartbeat "Still building the frontend" 10
@@ -184,6 +189,19 @@ pause
 exit /b 1
 
 
+:msvc_fail
+call "%~dp0_环境准备.bat" stop_heartbeat
+echo  ====================================================
+echo   Build aborted: Microsoft C++ Build Tools are missing
+echo  ====================================================
+echo   Install "Desktop development with C++" as described above, then
+echo   double-click this script again. Python, Rust and the frontend
+echo   dependencies are already set up, so they will be skipped.
+echo.
+pause
+exit /b 1
+
+
 :build_front_fail
 call "%~dp0_环境准备.bat" stop_heartbeat
 echo.
@@ -225,6 +243,8 @@ echo  ====================================================
 echo   [ERROR] Installer build failed (npm run tauri:build)
 echo  ====================================================
 call "%~dp0_环境准备.bat" why_tauri
+echo    - If the error contains "panicked at" with rust.rs or "missing manifest in toolchain",
+echo      the Rust toolchain is broken - repair it with: rustup toolchain install stable
 echo    - NSIS / WiX download failed: the packaging tools are downloaded on first use;
 echo      the build fails when the network is unreachable or a proxy is required.
 echo    - Not enough disk space: the build produces many intermediate files (keep 10 GB free).

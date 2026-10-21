@@ -371,8 +371,8 @@ if (Test-Cmd 'rustc') {
     if ($rv -match '^rustc \d') {
         Ok "Rust：$rv"; Add-Result 'Rust' '已安装' $rv '桌面端必需'; $rustOK = $true
     } else {
-        Warn 'Rust 已安装，但 rustup 未设置默认工具链（rustc 无法运行）'
-        Add-Result 'Rust' '需修复' 'rustup 未设置默认工具链，脚本会自动修复' '桌面端必需'
+        Warn 'Rust 工具链不完整：cargo 能跑但 rustc 无法运行（常见于安装被中断）'
+        Add-Result 'Rust' '需修复' '工具链不完整，脚本会自动重装组件' '桌面端必需'
         $rustNeedRepair = $true
     }
 } else {
@@ -526,13 +526,28 @@ if (-not (Test-Cmd 'node') -and -not $SkipNode) {
 
 # --- Rust：已装但缺默认工具链 → 先修复 ---
 if (-not $rustOK -and $rustNeedRepair -and -not $SkipRust) {
-    Act 'Rust 已安装但缺少默认工具链，执行 rustup default stable（会自动下载，请耐心等待）'
-    $r = Invoke-Heartbeat -Name 'rustup default stable' -Script {
+    # ⚠️ 只跑 rustup default stable 不够：工具链下载中断时（cargo 能跑、rustc 报
+    #    "missing manifest in toolchain"），default 只是设默认，不会补文件。
+    #    必须先重装组件（2026-10-21 公司电脑实测：向导说修好了，tauri build 仍 panic）。
+    Say ''
+    Say '  ************************************************************' Yellow
+    Say '   * [提示] Rust 下载很慢？把这个目录加入杀毒软件排除项：' Yellow
+    Say "   *        $InstallRoot" White
+    Say '   *        路径：Windows 安全中心 - 病毒和威胁防护 - 管理设置' Yellow
+    Say '   *              - 排除项 - 添加文件夹' Yellow
+    Say '   *        效果：rustup / pip / npm / PyInstaller 全部提速' Yellow
+    Say '  ************************************************************' Yellow
+    Say ''
+    Act 'Rust 工具链不完整（rustc 无法运行），执行 rustup toolchain install stable 重装（会自动下载，请耐心等待）'
+    $r = Invoke-Heartbeat -Name 'rustup toolchain install stable' -Script {
+        & rustup toolchain install stable 2>&1 | Out-String
         & rustup default stable 2>&1 | Out-String
     } -Arguments @() -IntervalSeconds 30
     $rv2 = ((& (Get-CmdPath 'rustc') --version 2>&1) -join ' ').Trim()
     if ($rv2 -match '^rustc \d') { Ok "Rust 修复成功：$rv2"; $rustOK = $true }
-    else { Warn 'Rust 修复未成功，请手动执行： rustup default stable' }
+    else {
+        Warn 'Rust 修复未成功。请手动执行两条： rustup toolchain uninstall stable / rustup toolchain install stable'
+    }
 }
 
 # --- Rust 工具链（rustup 用户级全新安装，免管理员）---

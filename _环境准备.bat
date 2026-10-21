@@ -188,11 +188,12 @@ rem ============================================================================
 rem  前置条件检测
 rem ============================================================================
 :check_runtime
-rem 检测三项运行时前置：.venv（Python）、node_modules、cargo。
+rem 检测运行时前置：.venv（Python）、node_modules、cargo、MSVC。
 rem 缺失的置 FG_NEED_* 标志并逐项打印。
 set "FG_NEED_PY="
 set "FG_NEED_NPM="
 set "FG_NEED_RUST="
+set "FG_NEED_MSVC="
 
 if exist "%~dp0.venv\Scripts\python.exe" (
     if "%FG_LANG%"=="en" (echo   [ready]   Python virtual environment .venv) else (echo   [已就绪] Python 虚拟环境 .venv)
@@ -217,6 +218,12 @@ rem    必须真跑一次 --version 才算就绪，否则会被误判为"环境�
 rem    跳过自动安装，然后在 tauri build 阶段才失败。
 cargo --version >nul 2>nul
 if errorlevel 1 goto :cr_rust_missing
+rem ⚠️ 还要查 rustc：toolchain 下载中断时 cargo 仍能跑（shim + 已解压的部分），
+rem    但 rustc 会报 "missing manifest in toolchain"，tauri build 里
+rem    tauri-cli 直接 panic（rust.rs:1145）—— 报错信息完全指不到 Rust
+rem    （2026-10-21 公司电脑实测：脚本说"Rust 已就绪"，构建却 panic）。
+rustc --version >nul 2>nul
+if errorlevel 1 goto :cr_rust_missing
 if "%FG_LANG%"=="en" (echo   [ready]   Rust toolchain) else (echo   [已就绪] Rust 工具链)
 goto :cr_rust_done
 
@@ -228,23 +235,76 @@ if "%FG_LANG%"=="en" (echo   [missing] Rust toolchain - cargo exists but cannot 
 rem ---- MSVC（Tauri 打包的唯一支持目标）----
 rem Tauri v2 在 Windows 上只支持 MSVC：tauri / windows crate 的 WebView2 loader
 rem 要链接 MSVC 的 .lib。GNU 工具链能编普通 Rust，但 tauri build 会链接失败。
-rem 这里只**提示**不阻断（装 VS 生成工具需管理员 + 2~6 GB，脚本不代劳），
-rem 目的是让用户在阶段 1 就知道，而不是等编译几分钟后才看到 link.exe 报错。
+rem 这里只**标记**，真正的阻断在入口的阶段 3 之前（ensure_msvc）。
+call :detect_msvc
+if defined FG_MSVC (
+    if "%FG_LANG%"=="en" (echo   [ready]   MSVC C++ build tools) else (echo   [已就绪] MSVC C++ 生成工具)
+) else (
+    set "FG_NEED_MSVC=1"
+    if "%FG_LANG%"=="en" (echo   [missing] MSVC C++ build tools - required for tauri build, must be installed manually) else (echo   [缺失]   MSVC C++ 生成工具 —— 打包必需，需手动安装)
+)
+exit /b 0
+
+
+rem ============================================================================
+rem  MSVC 检测（供 check_runtime 与 ensure_msvc 共用）
+rem ============================================================================
+:detect_msvc
+rem 只认 vswhere 的结果。
+rem ⚠️ 不要用 `where link` 兜底：MSYS/Git Bash 自带 /usr/bin/link（coreutils 的
+rem    硬链接工具），MinGW 也可能放一个同名 exe → 会把"没装 MSVC"误判成已装
+rem    （2026-10-21 实测踩过）。
 set "FG_MSVC="
-rem ⚠️ 只用 vswhere 判定，**不要**用 `where link` 兜底：MSYS/Git Bash 自带
-rem    /usr/bin/link（coreutils 的硬链接工具），MinGW 也可能放一个同名 exe，
-rem    `where link` 会误判成"MSVC 已装"（2026-10-21 实测踩过）。
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if exist "%VSWHERE%" (
     for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "FG_MSVC=%%i"
 )
-if defined FG_MSVC (
-    if "%FG_LANG%"=="en" (echo   [ready]   MSVC C++ build tools) else (echo   [已就绪] MSVC C++ 生成工具)
-) else (
-    if "%FG_LANG%"=="en" (echo   [warn]    MSVC C++ build tools not found - tauri build will fail) else (echo   [警告]   MSVC C++ 生成工具未找到 —— tauri build 会失败)
-    if "%FG_LANG%"=="en" (echo             Install "Visual Studio 2022 Build Tools" with "Desktop development with C++") else (echo             需装「Visual Studio 2022 生成工具」并勾选「使用 C++ 的桌面开发」)
-)
 exit /b 0
+
+
+rem ============================================================================
+rem  打包前的硬门槛：MSVC 缺失就**明确阻断**并给出下载地址
+rem  ---------------------------------------------------------------------------
+rem  为什么必须阻断：缺 MSVC 时 tauri build 会在链接阶段失败（link.exe not found），
+rem  用户要白等几分钟编译才发现。而这一项**无法自动装**（要管理员 + 2~6 GB
+rem  GUI 安装），所以只能把下载地址、勾选项、体积都写清楚，让用户手动装。
+rem ============================================================================
+:ensure_msvc
+call :detect_msvc
+if defined FG_MSVC exit /b 0
+if "%FG_LANG%"=="en" goto :emsvc_en
+
+echo.
+echo  ====================================================
+echo   [错误] 打包安装包需要 Microsoft C++ 生成工具
+echo  ====================================================
+echo   Windows 上的 Rust 需要 MSVC 作为链接器；GNU 工具链无法构建 Tauri 应用。
+echo   这一项无法自动安装：需要管理员权限，且约 2~6 GB 磁盘空间。
+echo.
+echo   手动安装步骤：
+echo     1. 打开 https://visualstudio.microsoft.com/visual-cpp-build-tools/
+echo     2. 点「下载 Build Tools」，运行安装程序
+echo     3. 勾选「使用 C++ 的桌面开发」，点安装（约 2~6 GB）
+echo     4. 装完如提示重启则重启，然后重新双击本脚本
+echo.
+exit /b 1
+
+:emsvc_en
+echo.
+echo  ====================================================
+echo   [ERROR] Microsoft C++ Build Tools are required to build the installer
+echo  ====================================================
+echo   Rust on Windows uses MSVC as its linker; the GNU toolchain cannot
+echo   build Tauri apps. This cannot be installed automatically: it needs
+echo   administrator rights and about 2-6 GB of disk space.
+echo.
+echo   Steps:
+echo     1. Open https://visualstudio.microsoft.com/visual-cpp-build-tools/
+echo     2. Click "Download Build Tools" and run the installer
+echo     3. Tick "Desktop development with C++", then install - about 2-6 GB
+echo     4. Reboot if asked, then double-click this script again
+echo.
+exit /b 1
 
 
 :ensure_python_env
@@ -279,28 +339,53 @@ rem  rustup / pip / npm 自身的输出都是英文，所以整条路径不会�
 rem ============================================================================
 :ensure_env_en
 set "FG_EN_RC=0"
+if not defined FG_TOOLS_ROOT (
+    if exist "D:\" (set "FG_TOOLS_ROOT=D:\forest-gap-tools") else (set "FG_TOOLS_ROOT=%LOCALAPPDATA%\forest-gap-tools")
+)
 
 rem ---- 1) Rust ----
 where cargo >nul 2>nul
 if errorlevel 1 goto :en_rust_absent
 cargo --version >nul 2>nul
+if errorlevel 1 goto :en_rust_repair
+rustc --version >nul 2>nul
 if not errorlevel 1 goto :en_rust_ok
-echo   Rust is installed but no default toolchain is configured.
-echo   Running: rustup default stable   [downloads about 300 MB, takes several minutes]
+
+:en_rust_repair
+rem 工具链下载中断的典型症状：cargo 能跑、rustc 报 missing manifest。
+rem 这时 rustup default stable 没用（它只设默认，不补文件），必须重装组件。
+echo   The Rust toolchain is incomplete - cargo runs but rustc cannot.
+echo   This usually means the install was interrupted.
+echo.
+echo  ************************************************************
+echo   * [TIP] Rust downloads slowly? Add this folder to your antivirus
+echo   *       exclusion list - rustup / pip / npm / PyInstaller all speed up:
+echo   *         %FG_TOOLS_ROOT%
+echo   *       Windows Security - Virus and threat protection
+echo   *         - Manage settings - Exclusions - Add an exclusion - Folder
+echo  ************************************************************
+echo.
+echo   Repairing: rustup toolchain install stable   [downloads about 300 MB, several minutes]
 where rustup >nul 2>nul
 if errorlevel 1 (
     echo   [ERROR] rustup not found. Install Rust from https://rustup.rs and re-run this script.
     set "FG_EN_RC=1"
     goto :en_rust_done
 )
+rustup toolchain install stable
 rustup default stable
 cargo --version >nul 2>nul
-if errorlevel 1 (
-    echo   [ERROR] rustup default stable finished but cargo still cannot run. See the messages above.
-    set "FG_EN_RC=1"
-) else (
-    echo   [ready] Rust toolchain is now available.
-)
+if errorlevel 1 goto :en_rust_still_bad
+rustc --version >nul 2>nul
+if errorlevel 1 goto :en_rust_still_bad
+echo   [ready] Rust toolchain repaired.
+goto :en_rust_done
+
+:en_rust_still_bad
+echo   [ERROR] Rust is still broken after the repair attempt. Run these manually:
+echo           rustup toolchain uninstall stable
+echo           rustup toolchain install stable
+set "FG_EN_RC=1"
 goto :en_rust_done
 
 :en_rust_absent
@@ -323,12 +408,22 @@ if defined FG_PY goto :en_py_found
 where python >nul 2>nul
 if not errorlevel 1 set "FG_PY=python"
 :en_py_found
-if not defined FG_PY (
-    echo   [ERROR] Python 3.11+ not found. Install it from https://www.python.org/downloads/
-    echo           Tick "Add python.exe to PATH" during setup, then re-run this script.
-    set "FG_EN_RC=1"
-    goto :en_venv_done
-)
+if defined FG_PY goto :en_py_ready
+echo   Python 3.11+ not found - installing Python 3.12 automatically.
+call :install_tools_en python
+if errorlevel 1 goto :en_py_failed
+set "FG_PY=%FG_TOOLS_ROOT%\python312\python.exe"
+if not exist "%FG_PY%" goto :en_py_failed
+goto :en_py_ready
+
+:en_py_failed
+echo   [ERROR] Could not install Python automatically.
+echo           Install it manually from https://www.python.org/downloads/ and tick
+echo           "Add python.exe to PATH", then re-run this script.
+set "FG_EN_RC=1"
+goto :en_venv_done
+
+:en_py_ready
 %FG_PY% -m venv "%~dp0.venv"
 if errorlevel 1 (
     echo   [ERROR] Failed to create .venv - check free disk space and folder permissions.
@@ -350,26 +445,58 @@ echo   [ready] Python virtual environment already present.
 
 :en_venv_done
 
-rem ---- 3) node_modules ----
+rem ---- 3) Node.js + node_modules ----
+where npm >nul 2>nul
+if not errorlevel 1 goto :en_npm_ready
+echo   Node.js not found - installing Node.js 20 portable automatically.
+call :install_tools_en node
+where npm >nul 2>nul
+if not errorlevel 1 goto :en_npm_ready
+echo   [ERROR] Could not install Node.js automatically.
+echo           Install the LTS version from https://nodejs.org/ then re-run this script.
+set "FG_EN_RC=1"
+goto :en_npm_done
+
+:en_npm_ready
 call :ensure_npm
 if errorlevel 1 set "FG_EN_RC=1"
+:en_npm_done
 exit /b %FG_EN_RC%
+
+
+:install_tools_en
+rem 参数：python | node | all
+rem 英文路径的工具安装（Python / Node.js）：用户级、免管理员、英文输出。
+rem 装到 FG_TOOLS_ROOT（默认 D:\forest-gap-tools，与中文向导同一约定）。
+if not defined FG_TOOLS_ROOT (
+    if exist "D:\" (set "FG_TOOLS_ROOT=D:\forest-gap-tools") else (set "FG_TOOLS_ROOT=%LOCALAPPDATA%\forest-gap-tools")
+)
+set "FGD_TOOLS_ROOT=%FG_TOOLS_ROOT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install_prereqs_en.ps1" -Tool %~1
+set "FG_TOOL_RC=%ERRORLEVEL%"
+rem 新装的工具不在当前进程的 PATH 里 —— 手动补上，本进程立刻可用
+if exist "%FG_TOOLS_ROOT%\python312\python.exe" set "PATH=%FG_TOOLS_ROOT%\python312;%FG_TOOLS_ROOT%\python312\Scripts;%PATH%"
+if exist "%FG_TOOLS_ROOT%\node-v20.18.1-win-x64\node.exe" set "PATH=%FG_TOOLS_ROOT%\node-v20.18.1-win-x64;%PATH%"
+exit /b %FG_TOOL_RC%
 
 
 :ensure_npm
 if exist "%~dp0desktop\node_modules" exit /b 0
-if "%FG_LANG%"=="en" (
-    echo   Downloading frontend dependencies - first run takes about 1-3 minutes...
-    call :start_heartbeat "Still downloading frontend dependencies" 30
-) else (
-    echo   正在下载前端依赖（首次约 1~3 分钟）...
-    call :start_heartbeat "仍在下载前端依赖" 30
+rem ⚠️ 外层（阶段 2）可能已经起了心跳。start_heartbeat 会覆盖 FG_HB_SENT，
+rem    导致外层那个永远停不掉 —— 实测构建完成后日志还在刷"仍在配置环境 40"，
+rem    用户以为还没结束。已有心跳就复用，别再起第二个。
+if "%FG_LANG%"=="en" (echo   Downloading frontend dependencies - first run takes about 1-3 minutes...) else (echo   正在下载前端依赖（首次约 1~3 分钟）...)
+set "FG_NPM_HB="
+if not defined FG_HB_SENT (
+    set "FG_NPM_HB=1"
+    if "%FG_LANG%"=="en" (call :start_heartbeat "Still downloading frontend dependencies" 30) else (call :start_heartbeat "仍在下载前端依赖" 30)
 )
 pushd "%~dp0desktop"
 call npm install
 set "FG_RC=%ERRORLEVEL%"
 popd
-call :stop_heartbeat
+rem 只停自己起的那个；外层的由调用方自己停
+if defined FG_NPM_HB call :stop_heartbeat
 if not "%FG_RC%"=="0" exit /b 1
 exit /b 0
 

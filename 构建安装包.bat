@@ -62,6 +62,10 @@ goto :stage3
 rem ============================================================
 rem  阶段 3/5：生成前端产物（dist/）
 rem ============================================================
+rem ⚠️ 硬门槛：缺 MSVC 一定打不出安装包（GNU 工具链编不了 Tauri）。
+rem    在这里提前阻断并给出下载地址，别让用户等编译几分钟才看到 link.exe 报错。
+call "%~dp0_环境准备.bat" ensure_msvc
+if errorlevel 1 goto :msvc_fail
 call "%~dp0_环境准备.bat" stage_begin 3 5 "生成前端产物"
 echo   正在构建前端（tsc 类型检查 + vite build，约 10~30 秒）...
 call "%~dp0_环境准备.bat" start_heartbeat "仍在构建前端" 10
@@ -179,6 +183,18 @@ pause
 exit /b 1
 
 
+:msvc_fail
+call "%~dp0_环境准备.bat" stop_heartbeat
+echo  ====================================================
+echo   构建已中止：缺少 MSVC C++ 生成工具
+echo  ====================================================
+echo   按上面给出的步骤装好「使用 C++ 的桌面开发」后，重新双击本脚本即可。
+echo   Python / Rust / 前端依赖已经配好，重跑会自动跳过它们。
+echo.
+pause
+exit /b 1
+
+
 :build_front_fail
 call "%~dp0_环境准备.bat" stop_heartbeat
 echo.
@@ -218,6 +234,9 @@ echo  ====================================================
 echo   [错误] 构建安装包失败（npm run tauri:build）
 echo  ====================================================
 call "%~dp0_环境准备.bat" why_tauri
+echo    · 报错含 "panicked at" 且提到 rust.rs 或 "missing manifest in toolchain"：
+echo      说明 Rust 工具链损坏（安装被中断过），执行这条重装后重试：
+echo          rustup toolchain install stable
 echo    · NSIS / WiX 下载失败：安装包打包工具首次使用时需要联网下载，
 echo      网络不通或需要代理时会失败。
 echo    · 磁盘空间不足：构建会产生大量中间文件（建议留 10 GB）。
