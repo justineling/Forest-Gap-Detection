@@ -773,9 +773,17 @@ def ensure_overviews(
     #    要么是完整的。os.replace 在同一分区上是原子的。
     cache_dir.mkdir(parents=True, exist_ok=True)
     copy_path = cache_dir / source.name
+    part_path = copy_path.with_suffix(copy_path.suffix + ".part")
     if copy_path.exists():
         with rasterio.open(copy_path) as ds:
             if ds.overviews(1):
+                # 复用分支也要清 `.part`：否则"副本已建好 + 某次中断留下半截 .part"
+                # 这个组合会把一份完整副本大小的垃圾永久留在用户盘上（真机可能 4.7 GB）。
+                # 只有走到这里才可能同时存在两者 —— 见 test_overviews.py 用例 C。
+                try:
+                    part_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 return copy_path, "复用已有副本（源文件未改动）"
 
     # 门槛与预检共用 OVR_SPACE_FACTOR：副本(1x) + 写进副本的 overviews(0.34x)，取 1.5x 留余量
@@ -787,7 +795,6 @@ def ensure_overviews(
             f"可改用 --ovr-mode gdal（需安装 GDAL）或自行腾出空间。"
         )
 
-    part_path = copy_path.with_suffix(copy_path.suffix + ".part")
     # 上一次被打断留下的半截副本：先清掉，否则 copy2 会覆盖但残留大小可能不对
     if part_path.exists():
         try:

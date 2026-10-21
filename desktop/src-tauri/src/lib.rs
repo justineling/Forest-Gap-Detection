@@ -53,6 +53,17 @@ struct Services {
     /// 但**语义不同** —— 检测可以取消（半成品无害），生成中途杀掉会留下**半个 CHM**
     /// （比没有更糟：检测会读到它而不报错）。分开放，将来给 derive 加"不可取消"更清楚。
     derive: Mutex<Option<Child>>,
+    /// 正在建金字塔的子进程（`tile_server.py --overviews-only`）。
+    ///
+    /// 为什么必须纳管：`OVERVIEW_BUILDING` 那个 AtomicBool **只活在本进程内存里**。
+    /// 真实场景：用户点了「开始」，觉得慢，直接关窗；又双击重开，看到横幅还在，
+    /// 再点一次「开始」。新进程的 AtomicBool 是全新的 false（放行），
+    /// 而上一轮留下的孤儿进程还在往**同一个** `.part` 里写 4.7 GB ——
+    /// Windows 下两边必撞 `PermissionError: [WinError 32] 另一个程序正在使用此文件`。
+    ///
+    /// 所以：① 启动前先杀掉上一轮的；② 退出钩子统一 kill；③ AtomicBool 仍保留，
+    /// 它防的是"同一进程内连点"，两者互补而不是重复。
+    overviews: Mutex<Option<Child>>,
 }
 
 #[derive(Serialize)]
@@ -2120,6 +2131,33 @@ impl OverviewRun {
 ///
 /// 为什么体检与建金字塔共用一个函数：两者只差一个 `--dry-run` 开关，
 /// 参数拼法、两个读线程、事件解析完全一样。抄两份的下场是"改了一处忘了另一处"。
+/// 轮询等待建金字塔进程结束。
+///
+/// 为什么不用 `child.wait()`：句柄已经交给 `Services`，退出钩子随时可能把它 kill
+/// 掉；而 `wait()` 期间我们拿着独占句柄，钩子反而杀不到 —— 那就退化成孤儿了。
+/// 轮询 `try_wait()` 的代价是 200ms 一次，对 2~3 分钟的操作可以忽略。
+fn poll_overviews_child(
+    app: &tauri::AppHandle,
+) -> Result<std::process::ExitStatus, String> {
+    loop {
+        {
+            let state = app.try_state::<Services>().ok_or("拿不到 Services")?;
+            let mut guard = state.overviews.lock().map_err(|e| e.to_string())?;
+            match guard.as_mut() {
+                Some(c) => {
+                    if let Some(st) = c.try_wait().map_err(|e| e.to_string())? {
+                        guard.take(); // 收尸：别留僵尸句柄，也避免下次误 kill 一个已结束的 pid
+                        return Ok(st);
+                    }
+                }
+                // 槽位被退出钩子清空了 —— 应用正在退出
+                None => return Err("建立加速结构被中断（应用正在退出）".into()),
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 fn run_overviews_child(
     app: &tauri::AppHandle,
     mode: &str,
@@ -2164,12 +2202,47 @@ fn run_overviews_child(
         },
         image.display()
     ));
+    // ⚠️ 启动前先杀掉上一轮可能还在跑的建金字塔进程。
+    //
+    // 这是解决"两个进程同时写同一个 .part"的**关键**：Python 侧开头会删残留
+    // `.part`，但那是"清理垃圾"，不是"消除竞争" —— 如果旧进程还活着，
+    // 删了它正在写的文件只会让它继续往已删除的 inode 写，或者直接撞
+    // `PermissionError: [WinError 32]`。让旧的先死，竞争才真的没了。
+    //
+    // 触发场景（不是理论）：用户点「开始」→ 嫌慢 → 关窗 → 重开 → 再点一次。
+    // 新进程的 `OVERVIEW_BUILDING` 是全新的 false，挡不住上一轮的孤儿。
+    //
+    // dry_run 不参与：它几百毫秒就结束，且不应该打断正在进行的正式构建。
+    if !dry_run {
+        if let Some(state) = app.try_state::<Services>() {
+            if let Ok(mut guard) = state.overviews.lock() {
+                if let Some(mut old) = guard.take() {
+                    log_line("上一轮建金字塔进程仍在运行，先终止它再重新开始");
+                    let _ = old.kill();
+                    let _ = old.wait();
+                }
+            }
+        }
+    }
+
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("启动加速结构进程失败：{e}（{}）", backend.describe()))?;
 
     let stdout = child.stdout.take().ok_or("拿不到 stdout")?;
     let stderr = child.stderr.take().ok_or("拿不到 stderr")?;
+
+    // 正式构建才纳管：退出钩子要能 kill 掉它，否则关窗后它还在后台写几个 GB。
+    // 顺序必须是 spawn → take pipes → 放槽位，否则读线程拿不到管道。
+    // 用 Option 承接：交出去之后本地就没有句柄了，下面据此决定怎么等。
+    let mut child = Some(child);
+    if !dry_run {
+        if let Some(state) = app.try_state::<Services>() {
+            if let Ok(mut guard) = state.overviews.lock() {
+                *guard = child.take();
+            }
+        }
+    }
 
     // ⚠️ stdout / stderr **必须各起一个读线程**。管道缓冲区在 Windows 上只有
     //    64 KB：只读其中一个、另一个写满时，子进程会阻塞在 write 上，
@@ -2228,9 +2301,14 @@ fn run_overviews_child(
         acc
     });
 
-    let status = child
-        .wait()
-        .map_err(|e| format!("等待加速结构进程失败：{e}"))?;
+    // 正式构建时句柄已经交给 `Services`（退出钩子要能 kill），这里只能轮询；
+    // dry_run 的句柄还在本地，直接 wait 更简单。
+    let status = match child {
+        Some(mut c) => c
+            .wait()
+            .map_err(|e| format!("等待加速结构进程失败：{e}"))?,
+        None => poll_overviews_child(app)?,
+    };
     Ok(OverviewRun {
         events: out_thread.join().unwrap_or_default(),
         stderr: err_thread.join().unwrap_or_default(),
@@ -2462,6 +2540,19 @@ pub fn run() {
                             let _ = child.wait();
                         }
                     }
+                    // 建金字塔进程必须杀：`.part` 机制保证半成品下次会被清掉，
+                    // 杀掉是安全的；不杀则关窗后它还在写几个 GB，而且下次启动
+                    // 再点「开始」会两个进程抢同一个 `.part`（WinError 32）。
+                    if let Ok(mut guard) = state.overviews.lock() {
+                        if let Some(mut child) = guard.take() {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
+                    }
+                    // `derive`（生成 CHM/掩膜）刻意**不杀**：它正在写的是一份有用的
+                    // 产物，让它跑完比留半个 CHM 更好（检测读到半截 CHM 不报错，
+                    // 那才是灾难）。代价是关窗后它会自己跑完再退出 ——
+                    // 这是权衡后的选择，不是遗漏。
                 }
             }
         });
