@@ -170,7 +170,7 @@ echo.
 echo  ====================================================
 echo   Components installed but still not detected
 echo  ====================================================
-echo   Fix: close this window and double-click "Build Installer.bat" again.
+echo   Fix: close this window and double-click "3. Build Installer.bat" again.
 echo   (this session's PATH is still the snapshot from startup)
 echo.
 pause

@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 rem ============================================================================
-rem  Forest Gap Detection - 共享环境工具（被「启动桌面端.bat」「构建安装包.bat」调用）
+rem  Forest Gap Detection - 共享环境工具（被「1. 启动桌面端.bat」「2. 构建安装包.bat」调用）
 rem  ⚠️ 本文件与两个入口脚本都放在**项目根目录**，前端工程在 desktop\ 下。
 rem
 rem  用法：call "%~dp0_环境准备.bat" <函数名> [参数...]
@@ -538,7 +538,7 @@ rem ============================================================================
 rem  构建产物路径（尊重 CARGO_TARGET_DIR）
 rem  ---------------------------------------------------------------------------
 rem  本机把 CARGO_TARGET_DIR 指到了 D:\forest-gap-tools\rust\target（省 C 盘）。
-rem  写死 src-tauri\target 会让「构建安装包.bat」找不到产物，所以统一走这个函数。
+rem  写死 src-tauri\target 会让「2. 构建安装包.bat」找不到产物，所以统一走这个函数。
 rem ============================================================================
 :resolve_target_dir
 rem 编译产物**固定在项目内**（`desktop\src-tauri\target`），与其他项目保持一致。
@@ -703,9 +703,9 @@ if "%FG_LANG%"=="en" (
 ) else (
     echo  可能的原因与对应处理：
     echo    · 缺少 MSVC 生成工具：若报错含 link.exe not found 或 LINK : fatal error，
-    echo      说明 C++ 编译工具没装好。请重新运行「启动桌面端.bat」自动安装，
+    echo      说明 C++ 编译工具没装好。请重新运行「1. 启动桌面端.bat」自动安装，
     echo      或手动安装「Visual Studio 2022 生成工具」并勾选「使用 C++ 的桌面开发」。
-    echo    · 缺少 WebView2 运行时：重新运行「启动桌面端.bat」自动安装。
+    echo    · 缺少 WebView2 运行时：重新运行「1. 启动桌面端.bat」自动安装。
     echo    · 端口被占用：脚本会自动换端口；若仍失败，见上方端口占用提示。
     echo    · 杀毒软件拦截：把本文件夹加入信任后重试。
     echo    · 首次编译较慢：首次约 10~20 分钟属正常。
