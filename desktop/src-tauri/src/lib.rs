@@ -2073,54 +2073,59 @@ fn is_our_service() -> bool {
             .unwrap_or(false)
 }
 
-/// 「建金字塔」的结果，直接给界面展示。
-#[derive(serde::Serialize)]
-struct OverviewBuildResult {
-    ok: bool,
-    /// 人类可读说明（已建好 / 复用副本 / 原本就有）
-    note: String,
-    /// 瓦片服务最终该用的影像（可能与原图不同 —— copy 模式是副本）
-    served: String,
-    /// 实际耗时（秒）。大影像 2~3 分钟，界面要能显示"已经等了多久"
-    elapsed_s: f64,
+/// 影像的「加速结构体检」结果（`--overviews-only --dry-run` 的 plan 事件）。
+///
+/// 字段名与 `scripts/tile_server.py::overview_plan()` 返回的键**逐字一致** ——
+/// 这里派生 `Deserialize`，改一个名字就会立刻报"字段不完整"，
+/// 比手工逐个 `get()` 更能防住两边悄悄分叉。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct OverviewPlan {
+    /// none | ovr | copy | inplace | error
+    action: String,
+    /// 给用户看的一句话（"已有金字塔，无需处理" 等）
+    why: String,
+    has_overviews: bool,
+    size_bytes: u64,
+    need_bytes: u64,
+    free_bytes: u64,
+    enough_space: bool,
+    /// 额外文件会落在哪个目录（copy 是 output/.tile-cache，其余是影像旁边）
+    target_dir: String,
+    /// 有没有 gdaladdo（有它就能只占 1/3 磁盘）。python 侧是 `str | null`
+    gdaladdo: Option<String>,
+    /// 会不会改动用户的原始文件（只有 inplace 是 true）
+    touches_source: bool,
 }
 
-/// 给影像建金字塔（可等 2~3 分钟，**必须 async + spawn_blocking**）。
-///
-/// 为什么不做成同步命令：Tauri 的同步命令跑在**主线程**上，阻塞 3 分钟 =
-/// 窗口假死、转圈都转不动，用户只会认为程序崩了然后强杀 ——
-/// 而强杀正好会打断写盘（`.part` 原子写入就是为这个场景准备的）。
-///
-/// 参数 `mode` 只认四个值：`auto` / `copy` / `gdal` / `inplace`。
-/// 其它值一律拒绝 —— 这个字符串会被拼进命令行，不能信前端传什么就给什么。
-#[tauri::command]
-async fn build_overviews(
-    app: tauri::AppHandle,
-    mode: String,
-) -> Result<OverviewBuildResult, String> {
-    if !matches!(mode.as_str(), "auto" | "copy" | "gdal" | "inplace") {
-        return Err(format!(
-            "不支持的建金字塔方式「{mode}」（只能是 auto / copy / gdal / inplace）"
-        ));
-    }
-    // 防重入：连点两下会起两个进程写同一个 .part（理由见 OVERVIEW_BUILDING 注释）
-    if OVERVIEW_BUILDING.swap(true, Ordering::SeqCst) {
-        return Err("正在建金字塔，请等它完成（大影像需要 2~3 分钟）".into());
-    }
-    let _guard = OverviewBuildGuard;
-    // AppHandle 是 Send + 'static，可以搬进阻塞线程；State 不行（借用视图）
-    let app2 = app.clone();
-    tauri::async_runtime::spawn_blocking(move || build_overviews_blocking(&app2, &mode))
-        .await
-        .map_err(|e| format!("建金字塔任务异常结束：{e}"))?
+/// 一次 `--overviews-only` 子进程跑完的产物。
+struct OverviewRun {
+    /// stdout 上解析出来的所有 JSON 事件（plan / done）
+    events: Vec<serde_json::Value>,
+    stderr: String,
+    success: bool,
+    code: Option<i32>,
 }
 
-/// `build_overviews` 的阻塞主体：起子进程 → 收事件 → 记住副本 → 重启服务。
-fn build_overviews_blocking(
+impl OverviewRun {
+    /// 取最后一个指定名字的事件（中途可能有多条，只关心最后一条）
+    fn last(&self, name: &str) -> Option<&serde_json::Value> {
+        self.events
+            .iter()
+            .rev()
+            .find(|v| v.get("event").and_then(|e| e.as_str()) == Some(name))
+    }
+}
+
+/// 跑一次 `--overviews-only`（`dry_run` 时加 `--dry-run`），把事件与 stderr 收回来。
+///
+/// 为什么体检与建金字塔共用一个函数：两者只差一个 `--dry-run` 开关，
+/// 参数拼法、两个读线程、事件解析完全一样。抄两份的下场是"改了一处忘了另一处"。
+fn run_overviews_child(
     app: &tauri::AppHandle,
     mode: &str,
-) -> Result<OverviewBuildResult, String> {
-    let image = resolve_image(app).ok_or("还没有选择正射影像，无法建金字塔")?;
+    dry_run: bool,
+) -> Result<OverviewRun, String> {
+    let image = resolve_image(app).ok_or("还没有选择正射影像")?;
     let backend = resolve_backend(app).ok_or(
         "找不到后端：请先跑 scripts/build_desktop_runtime.ps1 打包，或配置好 .venv",
     )?;
@@ -2143,29 +2148,37 @@ fn build_overviews_blocking(
     args.push(image.to_string_lossy().to_string());
     args.push("--ovr-mode".into());
     args.push(mode.to_string());
+    if dry_run {
+        args.push("--dry-run".into());
+    }
 
     let data_root = bundled_data_root(app);
     let mut cmd = build_command(&backend, &args, &data_root);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     log_line(&format!(
-        "开始建金字塔（mode={mode}，影像 {}）",
+        "{}（mode={mode}，影像 {}）",
+        if dry_run {
+            "检查加速结构"
+        } else {
+            "开始建立加速结构"
+        },
         image.display()
     ));
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("启动建金字塔进程失败：{e}（{}）", backend.describe()))?;
+        .map_err(|e| format!("启动加速结构进程失败：{e}（{}）", backend.describe()))?;
 
     let stdout = child.stdout.take().ok_or("拿不到 stdout")?;
     let stderr = child.stderr.take().ok_or("拿不到 stderr")?;
 
     // ⚠️ stdout / stderr **必须各起一个读线程**。管道缓冲区在 Windows 上只有
     //    64 KB：只读其中一个、另一个写满时，子进程会阻塞在 write 上，
-    //    而我们又阻塞在 wait 上 —— 两边互等，表现为"建金字塔永远不结束"。
+    //    而我们又阻塞在 wait 上 —— 两边互等，表现为"永远不结束"。
     //    这个坑本项目在 sidecar 上踩过一次。
     let out_thread = std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         let mut buf: Vec<u8> = Vec::new();
-        let mut last_done: Option<serde_json::Value> = None;
+        let mut events: Vec<serde_json::Value> = Vec::new();
         loop {
             buf.clear();
             match reader.read_until(b'\n', &mut buf) {
@@ -2179,15 +2192,13 @@ fn build_overviews_blocking(
                         continue;
                     }
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                        if v.get("event").and_then(|e| e.as_str()) == Some("done") {
-                            last_done = Some(v);
-                        }
+                        events.push(v);
                     }
                 }
                 Err(_) => break,
             }
         }
-        last_done
+        events
     });
 
     let err_thread = std::thread::spawn(move || {
@@ -2219,15 +2230,99 @@ fn build_overviews_blocking(
 
     let status = child
         .wait()
-        .map_err(|e| format!("等待建金字塔进程失败：{e}"))?;
-    let done = out_thread.join().unwrap_or(None);
-    let err_text = err_thread.join().unwrap_or_default();
+        .map_err(|e| format!("等待加速结构进程失败：{e}"))?;
+    Ok(OverviewRun {
+        events: out_thread.join().unwrap_or_default(),
+        stderr: err_thread.join().unwrap_or_default(),
+        success: status.success(),
+        code: status.code(),
+    })
+}
+
+/// 体检：只问"这张影像要不要处理、要花多少磁盘"，**不写盘、不改配置、不重启服务**。
+///
+/// 同样要 async + spawn_blocking：虽然是干跑，但读大影像的元数据 + 查磁盘
+/// 也可能花上几百毫秒到几秒，卡主线程会让窗口点不动。
+#[tauri::command]
+async fn overview_plan(app: tauri::AppHandle) -> Result<OverviewPlan, String> {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || overview_plan_blocking(&app2))
+        .await
+        .map_err(|e| format!("体检任务异常结束：{e}"))?
+}
+
+fn overview_plan_blocking(app: &tauri::AppHandle) -> Result<OverviewPlan, String> {
+    let run = run_overviews_child(app, "auto", true)?;
+    let Some(plan) = run.last("plan") else {
+        // 拿不到 plan 说明进程根本没走到判断那一步（python 崩了 / 参数不对）。
+        // 这时 stderr 是唯一线索，必须带出去，否则界面只能显示"失败了"。
+        return Err(format!(
+            "没能检查影像：{}",
+            clip_chars(run.stderr.trim(), 500)
+        ));
+    };
+    serde_json::from_value::<OverviewPlan>(plan.clone())
+        .map_err(|e| format!("体检结果字段不完整（前后端版本不一致？）：{e}"))
+}
+
+/// 「建金字塔」的结果，直接给界面展示。
+#[derive(serde::Serialize)]
+struct OverviewBuildResult {
+    ok: bool,
+    /// 人类可读说明（已建好 / 复用副本 / 原本就有）
+    note: String,
+    /// 瓦片服务最终该用的影像（可能与原图不同 —— copy 模式是副本）
+    served: String,
+    /// 实际耗时（秒）。大影像 2~3 分钟，界面要能显示"已经等了多久"
+    elapsed_s: f64,
+}
+
+/// 给影像建金字塔（可等 2~3 分钟，**必须 async + spawn_blocking**）。
+///
+/// 为什么不做成同步命令：Tauri 的同步命令跑在**主线程**上，阻塞 3 分钟 =
+/// 窗口假死、转圈都转不动，用户只会认为程序崩了然后强杀 ——
+/// 而强杀正好会打断写盘（`.part` 原子写入就是为这个场景准备的）。
+///
+/// 参数 `mode` 只认四个值：`auto` / `copy` / `gdal` / `inplace`。
+/// 其它值一律拒绝 —— 这个字符串会被拼进命令行，不能信前端传什么就给什么。
+#[tauri::command]
+async fn build_overviews(
+    app: tauri::AppHandle,
+    mode: String,
+) -> Result<OverviewBuildResult, String> {
+    if !matches!(mode.as_str(), "auto" | "copy" | "gdal" | "inplace") {
+        return Err(format!(
+            "内部错误：不支持的加速结构方式「{mode}」"
+        ));
+    }
+    // 防重入：连点两下会起两个进程写同一个 .part（理由见 OVERVIEW_BUILDING 注释）
+    if OVERVIEW_BUILDING.swap(true, Ordering::SeqCst) {
+        return Err("正在建立加速结构，请等它完成（大影像需要 2~3 分钟）".into());
+    }
+    let _guard = OverviewBuildGuard;
+    // AppHandle 是 Send + 'static，可以搬进阻塞线程；State 不行（借用视图）
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || build_overviews_blocking(&app2, &mode))
+        .await
+        .map_err(|e| format!("建立加速结构任务异常结束：{e}"))?
+}
+
+/// `build_overviews` 的阻塞主体：起子进程 → 收事件 → 记住副本 → 重启服务。
+fn build_overviews_blocking(
+    app: &tauri::AppHandle,
+    mode: &str,
+) -> Result<OverviewBuildResult, String> {
+    let image = resolve_image(app).ok_or("还没有选择正射影像，无法建立加速结构")?;
+    let run = run_overviews_child(app, mode, false)?;
+    let done = run.last("done").cloned();
+    let status = (run.success, run.code);
+    let err_text = run.stderr.trim().to_string();
 
     // ⚠️ 先看 `done` 事件、再看退出码。python 侧"找不到 gdaladdo"这类错误是
     //    `done{ok:false,error:"找不到 gdaladdo…"}` + 退出码 3 **一起**给出的：
     //    若先按退出码报错，用户只会看到"没有输出"，真正的原因（缺 GDAL）被丢掉。
     let fail_tail = || {
-        let t = clip_chars(err_text.trim(), 500);
+        let t = clip_chars(&err_text, 500);
         if t.is_empty() {
             "没有输出".to_string()
         } else {
@@ -2238,18 +2333,18 @@ fn build_overviews_blocking(
         Some(v) if v.get("ok").and_then(|x| x.as_bool()) == Some(true) => v,
         Some(v) => {
             let why = v.get("error").and_then(|x| x.as_str()).unwrap_or("未知原因");
-            return Err(format!("建金字塔失败：{why}"));
+            return Err(format!("建立加速结构失败：{why}"));
         }
-        None if !status.success() => {
+        None if !status.0 => {
             return Err(format!(
-                "建金字塔失败（退出码 {:?}）：{}",
-                status.code(),
+                "建立加速结构失败（退出码 {:?}）：{}",
+                status.1,
                 fail_tail()
             ));
         }
         None => {
             return Err(format!(
-                "建金字塔进程没有报告结果（可能被中断）：{}",
+                "加速结构进程没有报告结果（可能被中断）：{}",
                 fail_tail()
             ));
         }
@@ -2332,7 +2427,8 @@ pub fn run() {
             detect_status,
             get_status,
             set_data_paths,
-            build_overviews
+            build_overviews,
+            overview_plan
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -3085,6 +3181,37 @@ mod tests {
         assert!(same_file_path(&f, &f));
         assert!(same_file_path(&base.join(".").join("a.tif"), &f));
         fs::remove_dir_all(&base).ok();
+    }
+
+    /// 用 `tile_server.py --overviews-only --dry-run` 的**真实输出**钉住字段名。
+    ///
+    /// 为什么值得有：`OverviewPlan` 与 python 的 `overview_plan()` 靠**字符串键名**
+    /// 对齐，改名不会有任何编译错误，只会在运行时变成"体检结果字段不完整"——
+    /// 而那行错误用户看不懂、我们也容易当成偶发。这里贴一段真输出，
+    /// 谁改键名谁立刻红。
+    #[test]
+    fn overview_plan_deserializes_python_output() {
+        let real = r#"{"event":"plan","elapsed_s":0.0,"source":"output\\_tests\\no-ovr.tif",
+            "has_overviews":false,"levels":[],"width":600,"height":400,"size_bytes":720978,
+            "extra_bytes":1081467,"gdaladdo":null,"mode":"auto","action":"copy",
+            "why":"无 gdaladdo，复制副本（源文件不动，约占原图 100%）","touches_source":false,
+            "target_dir":"D:\\repo\\output\\.tile-cache","free_bytes":176997703680,
+            "need_bytes":1081467,"enough_space":true}"#;
+        let plan: OverviewPlan = serde_json::from_str(real).expect("字段名必须与 python 一致");
+        assert_eq!(plan.action, "copy");
+        assert!(!plan.has_overviews);
+        assert!(plan.enough_space);
+        assert!(!plan.touches_source);
+        assert_eq!(plan.need_bytes, 1_081_467);
+        assert!(plan.gdaladdo.is_none(), "python 侧是 null，Rust 必须是 None");
+        assert!(plan.target_dir.contains(".tile-cache"));
+
+        // 有 gdaladdo 的情形：字符串要能进 Option<String>
+        let with_gdal = r#"{"event":"plan","action":"ovr","why":"x","has_overviews":false,
+            "size_bytes":1,"need_bytes":1,"free_bytes":2,"enough_space":true,
+            "target_dir":"D:/a","gdaladdo":"C:/GDAL/gdaladdo.exe","touches_source":false}"#;
+        let p2: OverviewPlan = serde_json::from_str(with_gdal).expect("gdaladdo 字符串要能解析");
+        assert_eq!(p2.gdaladdo.as_deref(), Some("C:/GDAL/gdaladdo.exe"));
     }
 
     #[test]

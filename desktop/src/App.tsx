@@ -32,6 +32,8 @@ import {
 } from './api/backend'
 import { toInput, type ActionKind, type StepKey } from './lib/workflow'
 import { decideGapsLoad, shouldClearGapsOnImageChange } from './lib/gapsLoad'
+import { shouldShowOverviewNotice } from './lib/overview'
+import OverviewNotice from './components/OverviewNotice'
 import type { DetectProgress, GapCollection, PreflightResult } from './types'
 
 export default function App() {
@@ -70,6 +72,21 @@ export default function App() {
   const [showDerived, setShowDerived] = useState(false)
   /** 递增即让右面板切到「复核」标签（步进器点第 4 步时用） */
   const [reviewPeek, setReviewPeek] = useState(0)
+  /**
+   * 用户点了「以后再说」。
+   *
+   * 刻意**只存在内存里**，不写 localStorage：这张影像下次启动仍然没有加速结构，
+   * 该提醒还是得提醒 —— 写死了就变成"提示过一次就再也不提，用户永远不知道为什么慢"。
+   */
+  const [overviewDismissed, setOverviewDismissed] = useState(false)
+  /**
+   * 浏览器模式下的预览开关（`?mock=ready&noOvr=1`）。
+   *
+   * 为什么需要它：横幅的渲染条件是 `isTauri()`，而截图回归跑在浏览器里 ——
+   * 不加这个开关就**永远截不到**这张横幅（这类"截图里没有、上线才发现"的漏检
+   * 本项目已经踩过）。它只影响截图，不进打包逻辑。
+   */
+  const [overviewPreview, setOverviewPreview] = useState(false)
   /** 浏览器模式下 `?help=1` 直接预览帮助弹窗（截图 / 回归用，不进打包逻辑） */
   const [demoHelp, setDemoHelp] = useState(false)
 
@@ -292,6 +309,10 @@ export default function App() {
         //    而这个崩溃**不会让截图失败**（页面其余部分照常），于是"截图看起来正常"
         //    变成了一种假象 —— 实测就是这样漏了一轮。
         //    教训：mock 的字段要与 `RasterMeta` 类型逐项对齐，不能只填"看起来够用"的。
+        // `?noOvr=1` 把 has_overviews 翻成 false，用来预览「没有加速结构」的横幅
+        const noOvr = qs.has('noOvr')
+        // `?ovr=dialog|fail` 是同一套预览（看确认框 / 失败态），也要让横幅挂载
+        if (noOvr || qs.has('ovr')) setOverviewPreview(true)
         setBackend({
           online: true,
           meta: {
@@ -307,7 +328,7 @@ export default function App() {
             zoom: 15,
             valid_ratio: 0.57,
             tile_url: '',
-            has_overviews: true,
+            has_overviews: !noOvr,
           } as never,
         })
       }
@@ -732,6 +753,17 @@ export default function App() {
           <ErrorBoundary area="地图">
             <MapCanvas drawIntent={drawIntent} onDrawDone={onDrawDone} />
           </ErrorBoundary>
+          {/* 「这张影像没有加速结构」：挂在地图区顶部，不挡右下角的「下一步」卡片。
+              桌面端才真正显示；浏览器里只有带 `?noOvr=1` / `?ovr=...` 的截图预览才挂载。 */}
+          {shouldShowOverviewNotice(meta?.has_overviews, overviewDismissed) &&
+            (isTauri() || overviewPreview) && (
+              <ErrorBoundary area="加速结构提示">
+                <OverviewNotice
+                  onDone={probeAndLoad}
+                  onDismiss={() => setOverviewDismissed(true)}
+                />
+              </ErrorBoundary>
+            )}
           {/* 「下一步」卡片浮在地图右下角：只给一个主动作，走完自动换内容 */}
           <ErrorBoundary area="下一步提示">
             <NextStepCard

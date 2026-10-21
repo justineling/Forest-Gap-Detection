@@ -2316,3 +2316,152 @@ kbd {
   background: rgba(61, 220, 151, 0.16);
   color: var(--accent);
 }
+
+/* ---------------------------------------------------------------------------
+   「这张影像没有加速结构」横幅 + 建立对话框
+   ---------------------------------------------------------------------------
+   横幅在地图区顶部（.map-cell 是 position:relative），右下角 14px 处是
+   「下一步」卡片 —— 所以横幅只占顶部，宽度用 max-width 限住，窄窗口下不会盖住地图操作。
+   配色只用已有的 --warn（不新造颜色），深色底 + 亮色描边保证可读。
+--------------------------------------------------------------------------- */
+.ovr-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 13;
+  width: min(560px, calc(100% - 28px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  /* 深色底 + 半透明，地图在下面仍然透出来（纯浅底会像一张白纸盖住影像） */
+  background: rgba(28, 36, 41, 0.96);
+  border: 1px solid var(--warn);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+.ovr-banner-icon {
+  font-size: 15px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.ovr-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ovr-banner-text b {
+  font-size: 12.5px;
+  color: var(--warn);
+}
+.ovr-banner-text .dim {
+  font-size: 11.5px;
+  color: var(--dim);
+  /* 窄窗口时这行会被压缩 —— 允许换行，别截断成半句话 */
+  overflow-wrap: anywhere;
+}
+.ovr-banner-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+/* 窄窗口：按钮换到第二行，避免把文字挤成一条竖线 */
+@media (max-width: 900px) {
+  .ovr-banner {
+    flex-wrap: wrap;
+  }
+  .ovr-banner-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+
+/* ---------- 确认 / 进行中 / 失败（复用 help-dialog 外壳） ---------- */
+.ovr-dialog {
+  width: min(560px, 100%);
+}
+.ovr-line {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+}
+.ovr-line.dim {
+  color: var(--dim);
+}
+.ovr-line.warn {
+  color: var(--warn);
+}
+.ovr-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border-left: 2px solid var(--accent);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.ovr-note.dim {
+  border-left-color: var(--line);
+  color: var(--dim);
+}
+.ovr-note.warn {
+  border-left-color: var(--warn);
+  color: var(--warn);
+}
+
+/* 进行中：转圈 + 已用时（**没有**进度条 —— 底层不给进度，画假的会骗人） */
+.ovr-building {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 6px 0 4px;
+}
+.ovr-spinner {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  margin-top: 2px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: ovr-spin 0.9s linear infinite;
+}
+@keyframes ovr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ovr-building-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+.ovr-building-text b {
+  color: var(--accent);
+}
+
+/* 失败：原文可选中复制（用户要拿这句话去问人） */
+.ovr-err-pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* 必须可选：默认某些容器会被设置成 user-select:none */
+  user-select: text;
+}

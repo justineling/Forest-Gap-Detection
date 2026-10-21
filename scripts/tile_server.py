@@ -52,6 +52,21 @@ WEB_MERCATOR = "EPSG:3857"
 WGS84 = "EPSG:4326"
 R_EARTH = 6378137.0
 
+# 建金字塔要多少额外磁盘（相对原图体积的倍数）。
+#
+# 实测：3.48 GB 的影像就地写入 overviews 后变成 4.66 GB —— **涨 34%**。
+# 三条路径按同一个实测比例估算：
+#   ovr     = 0.34x（外置文件，压缩比与内部金字塔同一量级）
+#   inplace = 0.34x（直接写进原图，就是上面那次实测）
+#   copy    = 1.34x（副本 1x + 写进副本的 overviews 0.34x），取 1.5x 留余量
+#
+# 为什么必须估准而不是"写的时候再说"：
+#   - inplace 不可逆，空间不足时写到一半失败会毁掉用户原图；
+#   - copy 空间不足会让用户白等几分钟才发现失败。
+# 预检（overview_plan）与实际执行（ensure_overviews）**必须用同一个常量** ——
+# 两边算法不一致会出现"预检说够、点下去立刻被拦"的错位。
+OVR_SPACE_FACTOR = 1.5
+
 # 原始数据可能在不同机器的不同目录（公司机 D:/WGR、家里机仓库内 drone data/）
 SOURCE_CANDIDATES = [
     ROOT / "drone data" / "WGR17-002.tif",
@@ -763,7 +778,8 @@ def ensure_overviews(
             if ds.overviews(1):
                 return copy_path, "复用已有副本（源文件未改动）"
 
-    need = source.stat().st_size * 2  # 副本 + 金字塔，留余量
+    # 门槛与预检共用 OVR_SPACE_FACTOR：副本(1x) + 写进副本的 overviews(0.34x)，取 1.5x 留余量
+    need = int(source.stat().st_size * OVR_SPACE_FACTOR)
     free = _sh.disk_usage(cache_dir).free
     if free < need:
         raise RuntimeError(
@@ -835,8 +851,15 @@ def overview_plan(source: Path, mode: str = "auto") -> dict:
         else:
             action, why = "copy", "无 gdaladdo，复制副本（源文件不动，约占原图 100%）"
 
-    # 额外磁盘估算：.ovr 约 1/3；副本约 1 倍；就地约 1/4
-    factor = {"none": 0.0, "ovr": 0.34, "copy": 1.0, "inplace": 0.25, "error": 0.0}[action]
+    # 额外磁盘估算（比例见 OVR_SPACE_FACTOR 的注释，同一个实测来源）。
+    # copy 直接用那个常量 —— 与 ensure_overviews 的门槛保持同一个数。
+    factor = {
+        "none": 0.0,
+        "ovr": 0.34,
+        "copy": OVR_SPACE_FACTOR,
+        "inplace": 0.34,
+        "error": 0.0,
+    }[action]
 
     # ---- 磁盘预检 ----
     # 为什么要预检而不是"写到一半再说"：copy 模式要占一倍原图空间（4.7 GB 影像 ≈ 4.7 GB），
@@ -848,11 +871,8 @@ def overview_plan(source: Path, mode: str = "auto") -> dict:
     # "要复制 4.7 GB 副本"误判成"磁盘不够"而拦住用户。
     target_dir = ROOT / "output" / ".tile-cache" if action == "copy" else source.parent
     free = _free_bytes(target_dir)
-    # 留 10% 余量：文件系统元数据、临时块、以及 gdaladdo 自己的中间开销都不在估算里。
-    # ⚠️ 这是"够不够开始"的下限，不是精确需求：`ensure_overviews` 的 copy 分支另有一道
-    #    更严的门槛（要求 size*2，因为副本与金字塔要同时容纳）。预检放行后仍可能被那道
-    #    门槛拦下，但它发生在复制之前 —— 失败是秒级的，不会让用户白等 3 分钟。
-    need = int(size * factor * 1.1)
+    # 比例本身已含余量（copy 的 1.5x 对 1.34x 的实际峰值留了 12%），不再额外乘系数
+    need = int(size * factor)
 
     return {
         "source": str(source),

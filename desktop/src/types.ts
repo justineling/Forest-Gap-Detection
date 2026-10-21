@@ -137,6 +137,14 @@ export interface RasterMeta {
   center: [number, number]
   zoom: number
   valid_ratio?: number
+  /**
+   * 影像是否带金字塔（加速结构）。
+   *
+   * 为什么前端要这个字段：没有金字塔时 z=13 的一张瓦片要 **104 秒**（有则 0.7 秒），
+   * 新用户会以为软件卡死。界面据此弹提示并给一键修复。
+   * 老版本后端没有这个字段（undefined）—— 此时不提示，绝不能当成"没有"。
+   */
+  has_overviews?: boolean
   tile_url: string
 }
 

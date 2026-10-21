@@ -7,6 +7,7 @@
  * 必须走 HTTP 的端点；真正的检测（`detect`）在 Tauri 里由 Rust 通过
  * `scripts/sidecar.py` 的 NDJSON 契约调用，不走 HTTP。
  */
+import type { OverviewPlan } from '../lib/overview'
 import type { GapCollection, PreflightResult, RasterMeta } from '../types'
 
 /**
@@ -678,4 +679,38 @@ export interface ExportResponse {
 
 export async function exportBundle(req: ExportRequest): Promise<ExportResponse> {
   return postJson<ExportResponse>('/export', req)
+}
+
+// ---------------------------------------------------------------------------
+// 加速结构（金字塔）：体检 + 建立
+// ---------------------------------------------------------------------------
+// 为什么要单独体检一次再建：建一次 2~3 分钟、可能占一倍磁盘，用户有权先知道
+// "动不动我的原图、要多少盘"。`overview_plan` 是干跑（不写盘、不改配置）。
+
+/** 体检结果：字段与 `scripts/tile_server.py::overview_plan()` 逐字一致 */
+export async function overviewPlan(): Promise<OverviewPlan> {
+  // 浏览器预览里没有 Tauri IPC，直接给一句人话（而不是 undefined is not a function）
+  if (!isTauri()) throw new Error('浏览器预览模式不能检查影像 —— 请用桌面应用打开')
+  return tauriInvoke<OverviewPlan>('overview_plan')
+}
+
+export interface OverviewBuildResult {
+  ok: boolean
+  /** 人类可读说明（已建好 / 复用副本 / 原本就有） */
+  note: string
+  /** 瓦片服务最终该用的影像（产生副本时与 `/meta` 的 source 不同） */
+  served: string
+  /** 后端实测耗时（秒） */
+  elapsed_s: number
+}
+
+/**
+ * 建立加速结构。**会阻塞 2~3 分钟**（Rust 侧已放到阻塞线程，不卡界面）。
+ *
+ * 成功返回后瓦片服务已经被重启、并切到新影像 —— 调用方只需重新拉一次 `/meta`。
+ */
+export async function buildOverviews(
+  mode: 'auto' | 'copy' | 'gdal' | 'inplace' = 'auto',
+): Promise<OverviewBuildResult> {
+  return tauriInvoke<OverviewBuildResult>('build_overviews', { mode })
 }
