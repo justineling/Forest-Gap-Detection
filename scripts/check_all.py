@@ -4,7 +4,7 @@
 ## 为什么需要它
 
 477 个断言全靠"我记得跑一下" —— 单人项目最大的敌人不是不会写，是**忘了跑**。
-这个脚本就是那条防线：跑一次 80 秒，覆盖 5 层。
+这个脚本就是那条防线：跑一次 80 秒，覆盖 11 层。
 
 ## 用法
 
@@ -22,6 +22,7 @@
 | `ruff` | Python 语法错误 + **完全未定义**的名字 | ~0.2 s |
 | **`--help` 冒烟** | **CLI 构造期的异常**（argparse 配置错、模块级 NameError） | ~2 s |
 | `cargo test` | Rust 单测（预检 + 瓦片服务探活） | ~10 s |
+| **金字塔体检** | **`--overviews-only` 的参数转发链路**（Rust 拼命令 → 入口分发 → argparse） | ~5 s |
 
 > 各层的项数**刻意不写死**：每加一条断言就要来改一遍，忘了就是自检输出里
 > 一个假数字（这比不写更糟 —— 看的人会以为测试没跑全）。项数以 `npm test` /
@@ -194,27 +195,37 @@ def main() -> int:
     )
     rec("eval_validation", ok, dt)
 
-    # ---- 8. 文档合规（HTML 三条红线）----
-    print("\n[8] 文档合规")
+    # ---- 8. 导入期金字塔体检（迷你 tif 真跑一遍 --overviews-only 转发链路）----
+    # 为什么放在这里而不是并进契约测试：它验的是**进程边界上的参数转发**
+    # （Rust 拼命令 → desktop_entry 分发 → tile_server 的 argparse），
+    # 单元测试与 import 级测试都碰不到；而它只要 5 秒，没理由等到全量跑。
+    print("\n[8] 金字塔体检（迷你 tif 真跑转发链路）")
+    # 标签里刻意不写断言条数：用例 5 会随"本机有没有 gdaladdo"在跑/跳过之间切换，
+    # 写死一个数字迟早与现实不符（详见文件头"项数刻意不写死"那段）。
+    ok, dt = run([str(PY), "scripts/test_overviews.py"], ROOT, "test_overviews（转发链路真跑）")
+    rec("overviews", ok, dt)
+
+    # ---- 9. 文档合规（HTML 三条红线）----
+    print("\n[9] 文档合规")
     ok, dt = run([str(PY), "scripts/check_docs.py"], ROOT, "check_docs（6 个 HTML）")
     rec("docs", ok, dt)
 
-    # ---- 9. 批处理括号安全 ----
+    # ---- 10. 批处理括号安全 ----
     # CI 的 frontend job 跑在 ubuntu 上，cmd 的 if 块解析问题它天生抓不到；
     # 这类坑只在真机上炸（2026-10-20 公司电脑：echo 文本里的 (cargo) 让
     # if/else 双双执行、FG_NEED_RUST 没置位，脚本跳过自动安装直到构建才失败）。
     # 所以静态扫描是唯一防线，必须进本清单。
-    print("\n[9] 批处理括号安全")
+    print("\n[10] 批处理括号安全")
     ok, dt = run(
         [str(PY), "scripts/check_bat_safety.py"],
         ROOT, "check_bat_safety（7 个 bat）",
     )
     rec("bat-safety", ok, dt)
 
-    # ---- 10. 仓库卫生：占位文件必须仍在 git 里 ----
+    # ---- 11. 仓库卫生：占位文件必须仍在 git 里 ----
     # 为什么不能用 Test-Path 判：开发机目录里有真产物，文件在不在都能过；
     # 要问的是"**git 跟踪它吗**"，因为 CI 拿到的是干净 clone。
-    print("\n[10] 仓库卫生")
+    print("\n[11] 仓库卫生")
     t0 = time.time()
     keep = "desktop/runtime/desktop_entry/.gitkeep"
     tracked = subprocess.run(
@@ -229,9 +240,9 @@ def main() -> int:
         print("         修法：git checkout <上一个还存在的提交> -- " + keep)
         rec("gitkeep", False, time.time() - t0)
 
-    # ---- 11. 契约测试 ----
+    # ---- 12. 契约测试 ----
     if not args.fast:
-        print("\n[11] 契约测试")
+        print("\n[12] 契约测试")
         ok, dt = run([str(PY), "scripts/test_sidecar_contract.py"], ROOT,
                      "test_sidecar_contract（95 项）")
         rec("contract", ok, dt)
