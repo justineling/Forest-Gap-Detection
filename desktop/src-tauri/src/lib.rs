@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | UI | React（`../src`） | 只做展示与交互，地理计算仅用于即时反馈 |
 //! | 地理内核 | **Python**（`scripts/process_image.py`） | 保证 Stage 14 数字逐位可复现 |
-//! | 瓦片服务 | **Python**（`scripts/tile_server.py`） | HTTP 8765，本文件负责拉起与监督 |
+//! | 瓦片服务 | **Python**（`scripts/tile_server.py`） | HTTP，首选 8765（被占自动往后挪），本文件负责拉起与监督 |
 //! | 算法调用 | stdio NDJSON（`scripts/sidecar.py`） | 契约已冻结（95/95），**不要改成 HTTP** |
 //!
 //! 本文件只做三件事：
@@ -23,12 +23,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, RunEvent};
 
-/// 瓦片 / 辅助服务端口（与 `desktop/src/api/backend.ts` 的 BACKEND_BASE 一致）
+/// 瓦片 / 辅助服务的**首选**端口（与 `desktop/src/api/backend.ts` 的默认值一致）。
+/// 注意：真正在用的端口是 `ACTIVE_PORT` —— 8765 被别的程序占住时会往后挪。
 const BACKEND_PORT: u16 = 8765;
+
+/// 8765 被占时最多往后试这么多个（8765..=8776）。
+/// 公司电脑实测：8765 被内网工具占住时，旧版直接失败并弹一句"请检查影像文件"的猜测。
+const BACKEND_PORT_TRIES: u16 = 12;
+
+/// 本次实际使用的端口。前端通过 `backend_url` 命令取它，**不要**硬编码 8765。
+static ACTIVE_PORT: AtomicU16 = AtomicU16::new(BACKEND_PORT);
 
 /// "还没有选择正射影像"的哨兵错误。前端据此显示引导卡片而不是报错。
 const NEED_IMAGE: &str = "NEED_IMAGE";
@@ -60,6 +69,44 @@ fn port_open(port: u16) -> bool {
         Err(_) => return false,
     };
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+/// 本次实际在用的后端端口（服务未起时是首选端口，前端仍能拿到一个合法地址）。
+fn active_port() -> u16 {
+    ACTIVE_PORT.load(Ordering::Relaxed)
+}
+
+/// 选一个可用的后端端口，返回 `(端口, 是否复用已有服务)`。
+///
+/// 规则（2026-10-21 公司电脑实测：8765 被内网工具占住，旧版直接失败）：
+///   1. 端口空闲 → 用它新起服务；
+///   2. 端口上是**我们自己的**服务（上一版残留）→ 复用，不重开；
+///   3. 端口被**别的程序**占用 → 试下一个（8766、8767…），最多 `BACKEND_PORT_TRIES` 个。
+///
+/// ⚠️ 绝不 kill 占用者：那可能是用户的浏览器调试代理、别的业务系统。
+fn pick_backend_port() -> Result<(u16, bool), String> {
+    let mut reasons: Vec<String> = Vec::new();
+    for offset in 0..BACKEND_PORT_TRIES {
+        let port = BACKEND_PORT.saturating_add(offset);
+        if !port_open(port) {
+            return Ok((port, false));
+        }
+        // 有监听：先问身份。冷启动要打开大影像、必要时还要算降采样，
+        // `/meta` 慢一两秒正常 → 给 3 次机会，别一次就下结论。
+        for _ in 0..3 {
+            match http_get_meta(port) {
+                Ok(body) if is_our_meta(&body) => return Ok((port, true)),
+                Ok(_) => break, // 别人的服务，不用再等
+                Err(_) => std::thread::sleep(Duration::from_millis(400)),
+            }
+        }
+        reasons.push(format!("{port} 被其它程序占用"));
+    }
+    Err(format!(
+        "端口 {BACKEND_PORT}~{} 全部不可用（{}）。请关掉占用这些端口的程序后重试。",
+        BACKEND_PORT + BACKEND_PORT_TRIES - 1,
+        reasons.join("；")
+    ))
 }
 
 // ============================================================================
@@ -210,9 +257,10 @@ struct TileDiag {
 /// 采集一次排障快照。前端在"等服务就绪"失败后调用，用来把兜底文案换成真因。
 #[tauri::command]
 fn tile_diagnose(app: tauri::AppHandle, state: tauri::State<'_, Services>) -> TileDiag {
-    let open = port_open(BACKEND_PORT);
+    let port = active_port();
+    let open = port_open(port);
     let (ours, head, perr) = if open {
-        match http_get_meta(BACKEND_PORT) {
+        match http_get_meta(port) {
             Ok(body) => (is_our_meta(&body), clip_chars(&body, 300), String::new()),
             Err(e) => (false, String::new(), e),
         }
@@ -237,7 +285,7 @@ fn tile_diagnose(app: tauri::AppHandle, state: tauri::State<'_, Services>) -> Ti
     }
 
     TileDiag {
-        port: BACKEND_PORT,
+        port,
         port_open: open,
         ours,
         meta_head: head,
@@ -640,34 +688,28 @@ fn build_command(backend: &Backend, args: &[String], bundled_cwd: &Path) -> Comm
 /// 8765 时，外壳以为服务已就绪，前端却永远拿不到 `/meta`，最后报一个
 /// 完全不相干的三条猜测。宁可**明确失败**，也不静默骗过用户。
 fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, String> {
-    if port_open(BACKEND_PORT) {
-        // 可能是：① 我们自己上一次起的实例 ② 别的程序 ③ 我们的实例还在启动中。
-        // 冷启动要打开 5 GB 影像、必要时还要算窗口降采样，`/meta` 慢一两秒是正常的，
-        // 所以给它 3 次机会再判"不是自己人" —— 一次就下结论会误杀。
-        let mut last_err = String::new();
-        for attempt in 0..3 {
-            match http_get_meta(BACKEND_PORT) {
-                Ok(body) if is_our_meta(&body) => {
-                    set_start_err("");
-                    return Ok(format!(
-                        "端口 {BACKEND_PORT} 上已有本应用的瓦片服务，复用（第 {} 次探测确认）",
-                        attempt + 1
-                    ));
-                }
-                Ok(body) => {
-                    last_err = format!(
-                        "端口 {BACKEND_PORT} 被**其它程序**占用：应答 /meta 的不是本应用（开头：{}）",
-                        clip_chars(&body, 120)
-                    );
-                }
-                Err(e) => last_err = format!("端口 {BACKEND_PORT} 有监听但答不上 /meta：{e}"),
-            }
-            std::thread::sleep(Duration::from_millis(600));
+    // 端口选择：8765 空闲就用；被**别的程序**占住就往后找；是我们自己的服务就复用。
+    // 这一步替代了旧逻辑里"8765 有人听就报错"的行为 —— 后者在公司电脑上直接
+    // 让整个功能不可用（8765 是很多内网工具/调试器的默认端口）。
+    let (port, reuse) = match pick_backend_port() {
+        Ok(v) => v,
+        Err(e) => {
+            set_start_err(&e);
+            log_line(&format!("瓦片服务未启动：{e}"));
+            return Err(e);
         }
-        set_start_err(&last_err);
-        log_line(&format!("瓦片服务未启动：{last_err}"));
-        // ⚠️ 绝不 kill 占用者（可能是用户的浏览器调试代理、别的业务系统）。
-        return Err(last_err);
+    };
+    ACTIVE_PORT.store(port, Ordering::Relaxed);
+    if reuse {
+        set_start_err("");
+        let msg = format!("端口 {port} 上已有本应用的瓦片服务，复用");
+        log_line(&msg);
+        return Ok(msg);
+    }
+    if port != BACKEND_PORT {
+        log_line(&format!(
+            "端口 {BACKEND_PORT} 被其它程序占用，改用 {port}（前端会自动跟随）"
+        ));
     }
 
     let backend = resolve_backend(app).ok_or(
@@ -692,6 +734,9 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     let mut args: Vec<String> = Vec::new();
     if backend.is_bundled() {
         args.push("--run-tile-server".into());
+        // 显式给端口：可能已经从 8765 往后挪了（8765 被别的程序占住时）
+        args.push("--port".into());
+        args.push(port.to_string());
         match &image {
             Some(p) => {
                 args.push("--source".into());
@@ -712,6 +757,9 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
             return Err(format!("找不到 {}", script.display()));
         }
         args.push(script.to_string_lossy().to_string());
+        // 同上：端口可能已从 8765 往后挪
+        args.push("--port".into());
+        args.push(port.to_string());
         // 开发态也尊重用户选过的路径（否则"选了却不生效"很困惑）
         if let Some(p) = &image {
             args.push("--source".into());
@@ -814,7 +862,7 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
     //    内部再记就重复了 —— 实测 app.log 里同一行出现两次，
     //    会让人误以为起了两个瓦片服务。
     Ok(format!(
-        "已用 {} 启动瓦片服务（端口 {BACKEND_PORT}，数据根 {}）",
+        "已用 {} 启动瓦片服务（端口 {port}，数据根 {}）",
         backend.describe(),
         data_root.display()
     ))
@@ -1703,7 +1751,7 @@ fn get_status(app: tauri::AppHandle) -> AppStatus {
     let image = resolve_image(&app);
     AppStatus {
         backend: resolve_backend(&app).map(|b| b.describe()),
-        tile_running: port_open(BACKEND_PORT),
+        tile_running: port_open(active_port()),
         image: image.as_ref().map(|p| p.display().to_string()),
         gaps: cfg
             .gaps
@@ -1752,7 +1800,7 @@ fn set_data_paths(
         let _ = child.wait();
     }
     for _ in 0..40 {
-        if !port_open(BACKEND_PORT) {
+        if !port_open(active_port()) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -1850,13 +1898,13 @@ fn open_path(path: String) -> Result<String, String> {
 
 #[tauri::command]
 fn backend_url() -> String {
-    format!("http://127.0.0.1:{BACKEND_PORT}")
+    format!("http://127.0.0.1:{}", active_port())
 }
 
 #[tauri::command]
 fn service_status(app: tauri::AppHandle) -> ServiceStatus {
     ServiceStatus {
-        backend_url: format!("http://127.0.0.1:{BACKEND_PORT}"),
+        backend_url: format!("http://127.0.0.1:{}", active_port()),
         // 端口有人听 ≠ 我们的服务在跑（别的程序也可能占着 8765）。
         // 这里必须验身份，否则这个"状态"会在最需要它的时候撒谎。
         tile_server_running: is_our_service(),
@@ -1867,8 +1915,9 @@ fn service_status(app: tauri::AppHandle) -> ServiceStatus {
 
 /// 8765 上是否真的是本应用的瓦片服务在跑。
 fn is_our_service() -> bool {
-    port_open(BACKEND_PORT)
-        && http_get_meta(BACKEND_PORT)
+    let port = active_port();
+    port_open(port)
+        && http_get_meta(port)
             .map(|b| is_our_meta(&b))
             .unwrap_or(false)
 }
@@ -1883,7 +1932,7 @@ fn restart_tile_server(
         let _ = child.kill();
         // 给端口一点释放时间
         for _ in 0..20 {
-            if !port_open(BACKEND_PORT) {
+            if !port_open(active_port()) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));

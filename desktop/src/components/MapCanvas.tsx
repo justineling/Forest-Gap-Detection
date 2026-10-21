@@ -5,7 +5,7 @@ import { TerraDraw, TerraDrawPolygonMode, TerraDrawSelectMode } from 'terra-draw
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter'
 import { useAppStore, selectVisibleGaps } from '../store/useAppStore'
 import { classColorExpr } from '../lib/classes'
-import { TILE_URL_TEMPLATE } from '../api/backend'
+import { tileUrlTemplate } from '../api/backend'
 import {
   featureBBox,
   isDegenerateBox,
@@ -228,7 +228,7 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     if (map.getSource('ortho')) return
     map.addSource('ortho', {
       type: 'raster',
-      tiles: [TILE_URL_TEMPLATE],
+      tiles: [tileUrlTemplate()],
       tileSize: 256,
       minzoom: 0,
       maxzoom: 22,

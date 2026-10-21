@@ -9,16 +9,54 @@
  */
 import type { GapCollection, PreflightResult, RasterMeta } from '../types'
 
-/** 本地瓦片/辅助服务地址（原型用 Python 标准库实现，见 scripts/tile_server.py） */
-export const BACKEND_BASE = 'http://127.0.0.1:8765'
+/**
+ * 本地瓦片/辅助服务地址。
+ *
+ * ⚠️ **不要硬编码 8765**：8765 被别的程序占住时，Rust 外壳会自动往后挪
+ * （8766/8767…，见 `lib.rs` 的 `pick_backend_port`），真实端口由 `backend_url`
+ * 命令给出。这里在首次请求前取一次并缓存，之后所有请求都跟随它。
+ */
+const DEFAULT_PORT = 8765
+let backendPort = DEFAULT_PORT
+let portReady: Promise<void> | null = null
 
-export const TILE_URL_TEMPLATE = `${BACKEND_BASE}/tiles/{z}/{x}/{y}.png`
+async function ensurePort(): Promise<void> {
+  if (portReady) return portReady
+  portReady = (async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const url = await invoke<string>('backend_url')
+      const m = /:(\d+)\s*$/.exec(url)
+      if (m) backendPort = Number(m[1])
+    } catch {
+      // 浏览器 / 单测环境没有 Tauri：保持默认端口（测试里 stub 了 fetch）
+    }
+  })()
+  return portReady
+}
+
+/** 当前后端地址（端口可能不是 8765 —— 8765 被占时外壳会自动换） */
+export function backendBase(): string {
+  return `http://127.0.0.1:${backendPort}`
+}
+
+/** 仅供测试 / 排障：强制指定端口（让 `ensurePort` 立即返回） */
+export function setBackendPort(port: number): void {
+  backendPort = port
+  portReady = Promise.resolve()
+}
+
+/** MapLibre 的 raster 图层地址模板（端口动态） */
+export function tileUrlTemplate(): string {
+  return `${backendBase()}/tiles/{z}/{x}/{y}.png`
+}
 
 async function getJson<T>(path: string, timeoutMs = 8000): Promise<T> {
+  await ensurePort()
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch(`${BACKEND_BASE}${path}`, { signal: ctrl.signal })
+    const res = await fetch(`${backendBase()}${path}`, { signal: ctrl.signal })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return (await res.json()) as T
   } finally {
@@ -27,10 +65,11 @@ async function getJson<T>(path: string, timeoutMs = 8000): Promise<T> {
 }
 
 async function postJson<T>(path: string, body: unknown, timeoutMs = 120000): Promise<T> {
+  await ensurePort()
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch(`${BACKEND_BASE}${path}`, {
+    const res = await fetch(`${backendBase()}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
