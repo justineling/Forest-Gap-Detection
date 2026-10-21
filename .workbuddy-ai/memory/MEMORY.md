@@ -38,7 +38,9 @@
 验证集（10-19）：150 块 Neyman 分层 + H-T 权重（**Σwᵢ 必须精确 = 1726.0**）；`scripts/eval_validation.py --selftest` 13 项；`uncertain` 不允许"确认"；`initValidation` effect deps 必须含 scope/samples.length。
 
 ## 7. 批处理脚本（项目根，UTF-8 无 BOM + CRLF）
-- 入口：`构建安装包.bat`（中文）/ **`Build Installer.bat`（英文，2026-10-20 新增，动机：cmd 乱码）** / `启动桌面端.bat`；共享库 `_环境准备.bat`（子命令派发，顶层禁 setlocal）。
+- 入口**按功能编号**（2026-10-21 改名）：`1. 启动桌面端.bat` / `2. 构建安装包.bat` / `3. Build Installer.bat`（英文）/ `4. 诊断影像服务.bat`；共享库 `_环境准备.bat` **不能改名**（各入口用 `%~dp0` 相对调用）。
+- ⚠️ **"产物存在"≠"产物新鲜"**（坑 49）：`ensure_py_runtime` 曾只判 exe 存在 → Python 侧修复（如 `[E4099]` 编码）永远打不进包，真机验证必然假阴性。现走 `build_desktop_runtime.ps1 -CheckStale`（比 `scripts/*.py` + `requirements.txt` 与 exe 的 LastWriteTimeUtc），过期自动重建；「[过期]」与「[缺失]」文案分开。
+- ⚠️ **`.gitkeep` 一天丢两次**（坑 50）：打包清理 `desktop\runtime` 会连带删除，随后 `git add` 一起提交 → CI 干净 clone 上 tauri-build 存在性检查失败（本地因有真产物而全绿）。现打包完成自动补回 + `check_all.py` 第 10 层用 `git ls-files --error-unmatch` 把关。
 - **`FG_LANG=en` → 共享库英文输出**（21 处 if/else，默认中文零变化）；英文入口在 setlocal 后设置；心跳子进程经环境变量继承。
 - ⚠️ **if (...) 块内的 echo 文本禁用 ASCII 括号**（提前闭合代码块）。两种症状：① 显性：`. was unexpected at this time.` 脚本静默死亡；② **隐性：if/else 双双执行、`set` 丢失**（公司电脑实测 `(cargo)` → [缺失]/[ready] 同屏、FG_NEED_RUST 没置位、跳过自动安装直到构建才失败）。中文原版靠全角（）天然规避；英文翻译必须替换。兜底：`scripts/check_bat_safety.py`（13 项 selftest，覆盖块内裸 echo 与**任意嵌套深度的单行 if-echo**，已进 check_all 第 9 层与 CI）。
 - **check_runtime 的 Rust 判定必须真跑 `cargo --version`**（rustup 无默认工具链时 cargo 是能 where 到、一执行就报错的 shim，只 where 会误判"就绪"）。
@@ -52,7 +54,7 @@
 - 契约测试 `scripts/test_sidecar_contract.py` 期望 95/95；PowerShell 5.1 读 `.ps1` 必须有 UTF-8 BOM；别手删安装目录（NSIS 弹 "Unable to install"）。
 - **CI（2026-10-20 修复）**：Python 依赖唯一清单是根目录 `requirements.txt`（CI 与本地共用，别再手写 pip 清单——漏过 Pillow 导致 CI 从未绿）；`desktop/runtime/desktop_entry/.gitkeep` 必须保留（tauri-build 对 bundle.resources 做存在性硬检查，目录没了 `cargo test` 编译期就挂）；frontend 钉 `ubuntu-24.04`（latest 已迁 Ubuntu 26）；`cargo test`(debug) 不需要 `dist`（codegen 仅在非 dev 且无 devUrl 时 panic）。
 - **"装了包但服务起不来"的排查顺序**（2026-10-21 实战）：① `py-runtime\desktop_entry\desktop_entry.exe --self-test`（证明 exe 可跑，`ok:true` 即排除 DLL/依赖/杀软）；② 手动 `--run-tile-server --source <tif> --port 8799` 看 `/meta` 与 stderr；③ 完全按外壳方式起（cwd=`%LOCALAPPDATA%\fgd\data`、8765、三个 PYTHON* 变量）；④ 以上全绿才怀疑外壳（旧版无 stderr 转存/退出码，管道 64 KB 填满会让服务阻塞）。⚠️ 别用开发机的 `desktop/runtime` 判断包是否完整——那里没打包就只有 `.gitkeep`。
-- `check_all.py` 9 层静态检查（tsc/npm test/ruff/CLI --help/cargo test/契约等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。
+- `check_all.py` **10 层**静态检查（tsc/npm test/ruff/CLI --help/cargo test/仓库卫生/契约等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。验收基线 556 / 41 / 95 / 10 层。
 
 ## 9. 待办
 - ⏳ 真实 150 块打标（用户亲自做）→ 裁决 702 vs 727、解锁算法后续项。
