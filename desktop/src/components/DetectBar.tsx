@@ -50,7 +50,7 @@ export default function DetectBar() {
       <div className="detect-bar running" role="status" aria-live="polite">
         <div className="db-body">
           <div className="db-head">
-            <b>{planning ? '正在规划瓦片…' : `检测中 ${pct}%`}</b>
+            <b>{planning ? '正在准备…' : `检测中 ${pct}%`}</b>
             <span className="dim mono">{parts.join(' · ')}</span>
           </div>
           <div className="db-track">

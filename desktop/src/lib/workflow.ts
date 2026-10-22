@@ -14,10 +14,15 @@
  * 五个步骤按业务顺序：
  *   ① 选择影像 → ② 确定范围（可选）→ ③ 运行检测 → ④ 复核结果（可选）→ ⑤ 导出交付
  *
- * ⚠️ ②④ 都标「可选」，但两者语义不同，必须分开处理：
+ * ⚠️ ②④ 都标「可选」，但两者的"可选"含义不同，必须分开处理：
  *
- *    · ② 确定范围 —— **不阻塞**流程。跑整幅是很常见的做法，如果它参与
- *      "当前步骤"计算，用户不圈选就会被永远卡在第 2 步。
+ *    · ② 确定范围 —— **参与流程**（`blocks: true`），但**跳过零成本**。
+ *      早先它是 `blocks: false`，结果用户选完影像，界面直接跳到第 3 步
+ *      「运行检测」，压根看不到"可以先圈范围"这一步 —— 功能在，入口没了。
+ *      现在它成为 active 时，卡片主按钮仍是「开始检测」（不圈就是跑整幅），
+ *      次按钮额外给「跳过，跑整幅」把这条捷径写明。
+ *      会不会把人卡死？不会 —— `isStepDone('range')` 把"已经跑过检测 /
+ *      磁盘上已有结果"也算完成，跑整幅的人自然就通过了这一步。
  *    · ④ 复核结果 —— **阻塞**（但可一键跳过）。它是最该被引导的一步
  *      （1,726 块里混着误报，不看不该直接交出去）；跳过的方式是点主按钮
  *      「复核完成，去导出」，而不是让界面悄悄越过它。
@@ -85,7 +90,7 @@ interface StepSpec {
 
 const SPEC: StepSpec[] = [
   { key: 'data', label: '选择影像', hint: '选一份航拍正射影像（.tif）', optional: false, blocks: true },
-  { key: 'range', label: '确定范围', hint: '圈出要检测的区块，或直接跑整幅', optional: true, blocks: false },
+  { key: 'range', label: '确定范围', hint: '圈出要检测的区块，或直接跑整幅', optional: true, blocks: true },
   { key: 'detect', label: '运行检测', hint: '自动找出需要补种的空地', optional: false, blocks: true },
   { key: 'review', label: '复核结果', hint: '删掉误报、改错判的类别', optional: true, blocks: true },
   { key: 'export', label: '导出交付', hint: '生成交付包与一页报告', optional: false, blocks: true },
@@ -97,7 +102,10 @@ export function isStepDone(key: StepKey, s: WorkflowInput): boolean {
     case 'data':
       return s.hasImage
     case 'range':
-      return s.hasRoi
+      // 圈选过 → 完成；跑整幅（已经检测过 / 磁盘上已有结果）也算完成。
+      // 后者是"不卡死"的关键：用户选了「跳过，跑整幅」之后这一步必须自己变绿，
+      // 否则他会被永远要求回去圈一个根本不打算圈的范围。
+      return s.hasRoi || s.detected || s.hasResult
     case 'detect':
       // 磁盘上已有历史结果时也算完成 —— 打开软件就接着上次的活干，
       // 而不是逼用户重新跑 6 分钟。
@@ -117,8 +125,8 @@ export function isStepDone(key: StepKey, s: WorkflowInput): boolean {
  *
  * `active` 的规则：**第一个"参与流程且未完成"的步骤**（`blocks: true`）。
  *
- * ② 确定范围不参与（跑整幅时不该卡住），④ 复核参与但可一键跳过 ——
- * 细节见文件头注释。
+ * ② 确定范围也参与 —— 但它的"完成"条件很宽（圈选 / 已检测 / 已有结果），
+ * 所以跑整幅不会卡住；④ 复核参与但可一键跳过 —— 细节见文件头注释。
  */
 export function computeSteps(s: WorkflowInput): Step[] {
   const done = (k: StepKey) => isStepDone(k, s)
@@ -155,7 +163,10 @@ function summaryOf(key: StepKey, s: WorkflowInput): string | undefined {
     case 'data':
       return s.hasImage ? '已就绪' : undefined
     case 'range':
-      return s.hasRoi ? '已圈选' : undefined
+      if (s.hasRoi) return '已圈选'
+      // 没圈选却已经检测过 → 走的是"跑整幅"。给个摘要，否则这一步明明
+      // 已经通过（✓），副标题还挂着「可选」，看起来像没走完。
+      return s.detected || s.hasResult ? '未圈选' : undefined
     case 'detect':
       if (s.detectRunning) return '运行中'
       // 结果被删光时说"已清空"，而不是留空让人以为没跑过
@@ -186,11 +197,15 @@ export interface NextAction {
   /** 卡片标题下的一句话：为什么要点这个 */
   body: string
   /**
-   * 次按钮（0~2 个）。
+   * 次按钮（0~3 个）。
    *
    * 为什么允许两个而不是一个：「确定范围」有两条路 —— 手绘、导入 KML/GeoJSON。
    * 只留一个的话，另一条路的入口就得藏进菜单（换园区时最常用的恰恰是导入 KML）。
-   * 上限卡在 2：主按钮 + 2 个次按钮已经是"一眼看得完"的极限。
+   *
+   * 为什么「确定范围」那一步给到 3 个：第三条是「跳过，跑整幅」，它和主按钮
+   * 做的是同一件事（不圈范围直接检测），但必须**显式写出来** —— 用户看到
+   * 主按钮「开始检测」时并不知道自己正在跳过第 2 步，会以为界面漏了东西。
+   * 其余步骤仍卡在 2 个以内：主按钮 + 2 个次按钮已经是"一眼看得完"的极限。
    */
   secondaries?: { label: string; kind: ActionKind }[]
   /** 主按钮是否禁用（例如检测中） */
@@ -233,22 +248,38 @@ export function nextAction(s: WorkflowInput, exportedDir?: string | null): NextA
     }
   }
 
+  // ② 确定范围：还没圈选、也还没有结果 —— 卡片停在第 2 步。
+  //
+  // 主按钮就是这一步该做的事（圈定范围），次按钮给「导入 KML」和「跳过，跑整幅」。
+  // ⚠️ 不要把主按钮设成 `detect` 再在次按钮里加一个同 kind 的「跳过」——
+  //    那样两个按钮行为完全一样（都只是打开参数窗），"跳过"没有跳过任何东西，
+  //    比不给这个按钮更糟（QA 2026-10-22 穷举 16 组输入抓到的）。
+  if (!s.hasRoi && !s.hasResult && !s.detected) {
+    return {
+      step: 'range',
+      finished: false,
+      label: '圈定范围',
+      kind: 'drawRoi',
+      pill: '确定范围',
+      body:
+        '先圈出这次要检测的区块，只会分析圈内，能快一倍以上。' +
+        '没有明确区块就点「跳过，跑整幅」（约 6 分钟）。',
+      secondaries: [
+        { label: '导入 KML', kind: 'pickRoi' },
+        { label: '跳过，跑整幅', kind: 'detect' },
+      ],
+    }
+  }
+
   if (!s.hasResult && !s.detected) {
+    // 已经圈过了（否则会落进上面的分支）—— 直接开跑
     return {
       step: 'detect',
       finished: false,
       label: '开始检测',
       kind: 'detect',
       pill: '开始检测',
-      body: s.hasRoi
-        ? '只分析圈定的范围，会快很多。开始前会自动检查数据是否齐全。'
-        : '会分析整幅影像（约 6 分钟）。有明确的作业区块时，先圈出来能快一倍以上。',
-      secondaries: s.hasRoi
-        ? undefined
-        : [
-            { label: '手绘范围', kind: 'drawRoi' },
-            { label: '导入 KML', kind: 'pickRoi' },
-          ],
+      body: '只分析圈定的范围，会快很多。开始前会自动检查数据是否齐全。',
     }
   }
 

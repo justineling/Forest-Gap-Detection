@@ -1,7 +1,9 @@
-import { useAppStore } from '../store/useAppStore'
+import type { ReactNode } from 'react'
+import { recommendWorkers, useAppStore } from '../store/useAppStore'
 import {
   CHM_CORE_MAX,
   CHM_CORE_MIN,
+  CHM_DEFAULT,
   CHM_MIN_VETO,
   CHM_PRESETS,
   CHM_STEP,
@@ -25,6 +27,18 @@ const DENSITY = [
   { v: 150, label: '150', hint: '本项目实测密度 161.7，取整口径' },
   { v: 180, label: '180', hint: '偏密，会把零星缺株也标出来' },
 ]
+
+/**
+ * 每个参数分组下面的一句兜底提示。
+ *
+ * 为什么单独做一个组件而不是散着写 `<div className="ds-default">`：
+ * 这句话要在**每一组**都出现，且必须是同一个语气（"不知道就保持默认"）——
+ * 写散了就会变成有的组说"建议保持默认"、有的组说"一般不用改"，
+ * 用户反而更拿不准。样式也统一走 `.ds-default`（比 `.ds-hint` 更弱）。
+ */
+function DefaultHint({ children }: { children: ReactNode }) {
+  return <div className="ds-default">{children}</div>
+}
 
 /**
  * 检测参数（齿轮按钮弹出）。
@@ -54,6 +68,8 @@ export default function DetectSettings({
 
   const curWorkers = WORKERS.find((w) => w.v === p.workers) ?? WORKERS[2]
   const curDensity = DENSITY.find((d) => d.v === p.targetDensity) ?? DENSITY[1]
+  /** 当前档位就是这台电脑的推荐档 → hint 里点明"已经帮你选好了" */
+  const workersRecommended = p.workers === recommendWorkers()
 
   const activePreset = matchPreset(p.chmCore, p.chmVeto)
   const activeSpec = presetByKey(activePreset)
@@ -80,6 +96,18 @@ export default function DetectSettings({
         </button>
       </div>
 
+      {/*
+        顶部一行"当前这套值"。
+        参数是持久化的（localStorage），所以"上次使用"其实就是"这次会用"——
+        写在这里是为了让用户一眼确认"我现在用的是这套"，而不是翻五个控件
+        自己拼一遍。标题写「上次使用」而不是「当前设置」，是因为从「更多 →
+        检测参数」进来时用户的心理是"上次那套还在不在"。
+      */}
+      <div className="ds-current" title="参数会记住，所以这就是这次检测会用的值">
+        上次使用：{p.workers} 进程 · 密度 {p.targetDensity} · CHM 核心{' '}
+        {p.chmCore.toFixed(1)} / 否决 {p.chmVeto.toFixed(1)}
+      </div>
+
       {/* ---------- 林龄档位 ---------- */}
       <div className="ds-row">
         <span className="ds-label">
@@ -103,6 +131,7 @@ export default function DetectSettings({
             ? `${activeSpec.realHeight}｜${activeSpec.hint}`
             : `自定义：救援 ${p.chmCore.toFixed(1)} m / 否决 ${p.chmVeto.toFixed(1)} m`}
         </div>
+        <DefaultHint>不确定就保持「成熟林」—— 只有换到中龄 / 幼龄园区才需要改。</DefaultHint>
       </div>
 
       {/* ---------- 两条阈值滑块 ---------- */}
@@ -147,10 +176,15 @@ export default function DetectSettings({
 
         {nonDefault && !err && (
           <div className="ds-note">
-            非 Stage 14 基线。改阈值会改变瓦片缓存的参数指纹 —— <b>需要重跑</b>
-            （全量约 6 分钟），旧瓦片缓存不再命中。
+            非当前基线。改阈值会让已算好的分块结果失效 —— <b>需要重跑</b>
+            （全量约 6 分钟），旧的分块结果不再复用。
           </div>
         )}
+
+        <DefaultHint>
+          不确定就别动这两条线：救援 {CHM_DEFAULT.core.toFixed(1)} m / 否决{' '}
+          {CHM_DEFAULT.veto.toFixed(1)} m 是标定过的基线。
+        </DefaultHint>
       </div>
 
       {/* ---------- 并行与密度 ---------- */}
@@ -168,7 +202,11 @@ export default function DetectSettings({
             </button>
           ))}
         </div>
-        <div className="ds-hint">{curWorkers.hint}</div>
+        <div className="ds-hint">
+          {curWorkers.hint}
+          {workersRecommended ? '（已按你的电脑推荐）' : ''}
+        </div>
+        <DefaultHint>不确定就保持默认：软件按你这台电脑的核数挑过了。</DefaultHint>
       </div>
 
       <div className="ds-row">
@@ -186,6 +224,7 @@ export default function DetectSettings({
           ))}
         </div>
         <div className="ds-hint">{curDensity.hint}</div>
+        <DefaultHint>不确定就保持 150：这是本项目实测密度取整后的口径。</DefaultHint>
       </div>
 
       <div className="ds-row">
@@ -200,13 +239,14 @@ export default function DetectSettings({
         </label>
         <div className="ds-hint">
           {roi
-            ? '开启后只跑圈内瓦片（实测 528 → 121 块，350 秒 → 195 秒）'
+            ? '开启后只跑圈内区域（实测 528 → 121 块，350 秒 → 195 秒）'
             : '还没有圈选，此项无效（先点「① 圈选 Target Block」）'}
         </div>
+        <DefaultHint>不确定就勾上：圈过范围时只分析圈内，快得多。</DefaultHint>
       </div>
 
       <div className="ds-foot dim">
-        参数会记住，下次打开沿用。改「并行进程数」不会让已算好的瓦片失效。
+        参数会记住，下次打开沿用。改「并行进程数」不会让已算好的部分失效。
       </div>
       {onStart && (
         <div className="ds-actions">
