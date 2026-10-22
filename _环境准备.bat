@@ -521,14 +521,28 @@ if exist "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" (
     ) else (
         powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build_desktop_runtime.ps1" -CheckStale
     )
-    rem 新鲜：ps1 已经打印过「[已就绪] Python 运行时（与源码同步）」，
-    rem 这里不再重复一行（同屏两行"已就绪"会让人以为跑了两遍）。
-    if not errorlevel 1 goto :epr_ready_silent
-    rem 存在但过期 ≠ 缺失：文案必须区分，否则用户以为包被打没了，
-    rem 而实际只是"旧了要重打"（2026-10-21 实测踩到这句自相矛盾的输出）。
-    if "%FG_LANG%"=="en" (echo   [stale]   Python runtime is older than the sources - rebuilding it now...) else (echo   [过期]   Python 运行时比源码旧 —— 正在重建（否则修复不会进包）...)
-    set "FG_PYR_STALE=1"
+    if errorlevel 1 (
+        rem 存在但过期 ≠ 缺失：文案必须区分，否则用户以为包被打没了，
+        rem 而实际只是"旧了要重打"（2026-10-21 实测踩到这句自相矛盾的输出）。
+        if "%FG_LANG%"=="en" (echo   [stale]   Python runtime is older than the sources - rebuilding it now...) else (echo   [过期]   Python 运行时比源码旧 —— 正在重建（否则修复不会进包）...)
+        set "FG_PYR_STALE=1"
+    ) else (
+        rem ⚠️ **时间戳新鲜 ≠ 完整**（2026-10-22 血案）：PyInstaller 中途被杀会留下
+        rem    半截 _internal（实测 1161 个文件 vs 正常 1459），缺 unicodedata
+        rem    → rasterio 导入失败；但 exe 时间戳是新的，脚本照样复用，
+        rem    打出一个 rasterio 不可用的坏包，装到真机上才炸。
+        rem    所以再过一次 --self-test（约 1 秒；失败返回 3）。
+        "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" --self-test >nul 2>&1
+        if errorlevel 1 (
+            if "%FG_LANG%"=="en" (echo   [broken]  Python runtime failed its self-test - rebuilding it now...) else (echo   [损坏]   Python 运行时自检失败（上次打包被中断过）—— 正在重建...)
+            set "FG_PYR_STALE=1"
+        )
+    )
 )
+
+rem 新鲜且自检通过：ps1 已经打印过「[已就绪] Python 运行时（与源码同步）」，
+rem 这里不再重复一行（同屏两行"已就绪"会让人以为跑了两遍）。
+if not defined FG_PYR_STALE goto :epr_ready_silent
 
 if defined FG_PYR_STALE goto :epr_build
 if "%FG_LANG%"=="en" (echo   [missing] Python runtime bundle - bundling it now, first run takes about 3-5 minutes...) else (echo   [缺失]   Python 运行时 —— 正在用 PyInstaller 打包（首次约 3~5 分钟）...)
