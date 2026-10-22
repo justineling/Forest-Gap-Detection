@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import MapCanvas, { type DrawIntent } from './components/MapCanvas'
 import ErrorBoundary from './components/ErrorBoundary'
 import TopToolbar from './components/TopToolbar'
@@ -34,6 +34,8 @@ import { toInput, type ActionKind, type StepKey } from './lib/workflow'
 import { decideGapsLoad, shouldClearGapsOnImageChange } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
+import ResumeDialog from './components/ResumeDialog'
+import { pickGeneratedAt, shouldAskResume } from './lib/resume'
 import type { DetectProgress, GapCollection, PreflightResult } from './types'
 
 export default function App() {
@@ -96,6 +98,32 @@ export default function App() {
    * 本项目已经踩过）。它只影响截图，不进打包逻辑。
    */
   const [overviewPreview, setOverviewPreview] = useState(false)
+  /**
+   * 非 null 时显示「发现上次的检测结果」：继续复核，还是重新开始。
+   *
+   * 为什么需要这一问：启动会自动把磁盘上的旧结果读进界面，`workflow` 于是
+   * 直接跳到第 4 步 —— 用户"想重跑"和"只想看新影像"的选择权被拿走了。
+   */
+  const [resumeAsk, setResumeAsk] = useState<{
+    count: number
+    generatedAt: string | null
+  } | null>(null)
+  /**
+   * 本次启动是否已经问过（只问一次）。
+   *
+   * 不用 state 而用 ref：这个标记只影响"要不要再弹"，不参与渲染，
+   * 放进 state 会让每次 `loadGaps` 都触发一次额外渲染。
+   */
+  const resumeAsked = useRef(false)
+  /**
+   * `loadGaps` 是否已经调用过（用来判断"这一次是不是启动时的首次加载"）。
+   *
+   * ⚠️ 必须在**调用开始时**就置 true，不能等成功后再置：首次加载若失败
+   * （后端还没起来），用户点「重新载入结果」重试时会再走一遍 loadGaps，
+   * 那时若仍算"首次"，就会在他刚重试成功后弹一句"发现上次的检测结果"——
+   * 而他刚刚才亲手点了重载，这话完全不成立。
+   */
+  const firstLoadDone = useRef(false)
   /** 浏览器模式下 `?help=1` 直接预览帮助弹窗（截图 / 回归用，不进打包逻辑） */
   const [demoHelp, setDemoHelp] = useState(false)
 
@@ -135,6 +163,11 @@ export default function App() {
    */
   const loadGaps = useCallback(
     async (opts?: { rerun?: boolean }) => {
+      // 这一次是不是"启动时的首次加载"—— 必须在函数**开头**取，且立刻置 false：
+      // 检测完成后的 `loadGaps({rerun:true})`、点「重新载入结果」都不该算首次
+      // （否则每跑完一次检测就弹一次"发现上次的检测结果"）。
+      const isFirstLoad = !firstLoadDone.current
+      firstLoadDone.current = true
       setLoadingGaps(true)
       try {
         const fc = await fetchGaps()
@@ -194,6 +227,20 @@ export default function App() {
         }
         // 把算法网格一起带上 —— 前端估算的格点相位才能与 Python 侧逐株一致
         setGaps(feats, fc.planting_grid ?? null)
+        // 启动时读到了历史结果 → 问一句"继续还是重来"。
+        // 判定条件全在 lib/resume.ts 里（有 4 条规则的逐条断言）：
+        // 只有"启动首次加载 + 本次没跑过检测 + 确实读到块数"才问。
+        if (
+          !resumeAsked.current &&
+          shouldAskResume({
+            firstLoad: isFirstLoad,
+            detectedThisSession: useAppStore.getState().detect.finished != null,
+            gapCount: feats.length,
+          })
+        ) {
+          resumeAsked.current = true
+          setResumeAsk({ count: feats.length, generatedAt: pickGeneratedAt(fc) })
+        }
       } catch (e) {
         // 后端不在线时退回内置样例，保证界面可独立演示。
         // ⚠️ 但**已经有真实结果时不能拿样例覆盖它** —— 那是另一种数据丢失
@@ -358,6 +405,10 @@ export default function App() {
       if (!isTauri() && qs.has('derived')) setShowDerived(true)
       // 浏览器模式下 `?help=1` 预览帮助弹窗（截图 / 回归用）
       if (!isTauri() && qs.has('help')) setDemoHelp(true)
+      // 浏览器模式下 `?resume=1` 预览「发现上次的检测结果」弹窗（截图 / 回归用）
+      if (!isTauri() && qs.has('resume')) {
+        setResumeAsk({ count: 1726, generatedAt: '2026-10-21T14:23:00' })
+      }
       // 浏览器模式下 `?gapsError=1` 预览"结果文件没找到"的卡片态（截图 / 回归用）
       if (!isTauri() && qs.has('gapsError')) {
         setGapsError('未找到检测结果文件（已查找：D:/fgd/data/output）')
@@ -831,6 +882,24 @@ export default function App() {
       {/* 首次使用引导：盖在最上层，选好影像后自动消失 */}
       {wizard && (
         <WelcomeWizard status={wizard} onDone={onWizardDone} onCancel={() => setWizard(null)} />
+      )}
+
+      {/* 启动时读到了上次的结果：让用户选「继续复核」还是「重新开始」。
+          放在向导旁边（两者不会同时出现：向导是"还没有影像"，这里是"已有结果"）。 */}
+      {resumeAsk && (
+        <ErrorBoundary area="继续上次结果">
+          <ResumeDialog
+            count={resumeAsk.count}
+            generatedAt={resumeAsk.generatedAt}
+            onContinue={() => setResumeAsk(null)}
+            onRestart={() => {
+              // 只清界面上的结果，**不删磁盘文件** —— 用户可能只是这次不想看
+              setGaps([])
+              setGapsError(null)
+              setResumeAsk(null)
+            }}
+          />
+        </ErrorBoundary>
       )}
 
       {/* 导出交付包 */}
