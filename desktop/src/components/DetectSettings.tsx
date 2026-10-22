@@ -36,7 +36,17 @@ const DENSITY = [
  * 用 5 个真值点标定过。换到幼龄林会大面积误判，而自动标定需要标注验证集
  * （当前 0 个）—— 所以先给现场一个可调的旋钮。
  */
-export default function DetectSettings({ onClose }: { onClose: () => void }) {
+export default function DetectSettings({
+  onClose,
+  onStart,
+}: {
+  onClose: () => void
+  /**
+   * 从「开始检测」进入时传入：底部出现「开始检测」按钮。
+   * 不传就是纯编辑模式（从「⋯ 更多 → 检测参数」进来），点遮罩/取消即可关闭。
+   */
+  onStart?: () => void
+}) {
   const p = useAppStore((s) => s.detectParams)
   const setParam = useAppStore((s) => s.setDetectParam)
   const setChmPreset = useAppStore((s) => s.setChmPreset)
@@ -198,6 +208,16 @@ export default function DetectSettings({ onClose }: { onClose: () => void }) {
       <div className="ds-foot dim">
         参数会记住，下次打开沿用。改「并行进程数」不会让已算好的瓦片失效。
       </div>
+      {onStart && (
+        <div className="ds-actions">
+          <button className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn primary" onClick={onStart}>
+            开始检测
+          </button>
+        </div>
+      )}
     </div>
   )
 }

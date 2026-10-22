@@ -669,7 +669,14 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         t_proc = time.time()
 
         total = len(tiles)
-        # 首尾必发；中间按 progress_every 间隔发
+        # 进度事件节流：**按时间**而不是按块数。
+        #
+        # 原来按 `total // progress_every`（默认 20）→ 528 块只发 20 次，
+        # 进度条每次跳 5%，用户看到的是"卡住 → 猛跳一下"（2026-10-22 反馈）。
+        # 改成每 0.2 秒最多发一次：既平滑，又不会刷爆 NDJSON 通道
+        # （0.2 s 对 528 块 ≈ 每个事件覆盖 2~3 块，肉眼是连续推进的）。
+        PROGRESS_INTERVAL_S = 0.2
+        last_progress_at = 0.0
         every = max(1, total // args.progress_every) if total > args.progress_every \
             else 1
 
@@ -692,7 +699,9 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                             if k in class_totals:
                                 class_totals[k] += v
                     # 进度事件（首尾必发）
-                    if i == 1 or i == total or (i % every == 0):
+                    _t_now = time.time()
+                    if i == 1 or i == total or (_t_now - last_progress_at) >= PROGRESS_INTERVAL_S:
+                        last_progress_at = _t_now
                         el = time.time() - t_proc
                         emit("progress", stage="tile_processing",
                              done=i, total=total, ratio=round(i / total, 4),
@@ -735,7 +744,9 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                     # done==total 的收尾进度事件就发不出去，违反"首尾必发"约定。
 
             # --- 进度事件（首尾必发）---
-            if i == 1 or i == total or (i % every == 0):
+            _t_now = time.time()
+            if i == 1 or i == total or (_t_now - last_progress_at) >= PROGRESS_INTERVAL_S:
+                last_progress_at = _t_now
                 el = time.time() - t_proc
                 rate = i / el if el > 0 else 0
                 eta = (total - i) / rate if rate > 0 else None

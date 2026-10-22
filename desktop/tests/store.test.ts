@@ -6,7 +6,7 @@
  *
  * 不依赖 output/（用构造的小要素），随时可跑。
  */
-import { useAppStore, selectVisibleGaps } from '../src/store/useAppStore'
+import { useAppStore, selectVisibleGaps, recommendWorkers } from '../src/store/useAppStore'
 import { estimate } from '../src/lib/estimate'
 import type { GapClass, GapFeature, PolygonGeometry } from '../src/types'
 
@@ -298,7 +298,13 @@ console.log('\n⑦ 检测进度与参数 —— 进度条的数据源必须可�
 
   // 9) 参数：默认值 + 修改
   const p0 = S3.getState().detectParams
-  check(p0.workers === 4 && p0.targetDensity === 150, '默认参数 4 进程 / 150 株', JSON.stringify(p0))
+  // 进程数默认值随本机核数变（4 核以下 2 / 5~8 核 4 / 9 核以上 6），
+  // 所以断言"等于推荐值"而不是写死 4 —— 写死会在不同机器上假红。
+  check(
+    p0.workers === recommendWorkers() && p0.targetDensity === 150,
+    `默认参数：进程数按本机核数推荐（本机 ${recommendWorkers()}）/ 150 株`,
+    JSON.stringify(p0),
+  )
   S3.getState().setDetectParam({ workers: 6 })
   check(S3.getState().detectParams.workers === 6, '参数可改')
   check(S3.getState().detectParams.targetDensity === 150, '改一个不影响另一个')

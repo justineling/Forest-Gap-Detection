@@ -27,8 +27,31 @@ const MAX_LOGS = 300
 // 换台机器重新选一次也合理，而且不需要跨 Rust 边界。
 const DETECT_PARAMS_KEY = 'fgd.detectParams'
 const OUTPUT_DIR_KEY = 'fgd.outputDir'
+/**
+ * 按本机核数推荐进程数 —— 用户不需要知道"几个进程合适"。
+ *
+ * 规则来自实测：4 核以下用 2（再多会互相抢内存），5~8 核用 4（约 2.4×），
+ * 9 核以上用 6（再多收益递减，且要求 8 GB 以上内存）。
+ * 读不到核数（node 测试环境 / 老 WebView）→ 退回 4。
+ */
+export function recommendWorkers(): number {
+  try {
+    const n =
+      typeof navigator !== 'undefined' && navigator.hardwareConcurrency
+        ? navigator.hardwareConcurrency
+        : 0
+    if (n <= 0) return 4
+    if (n <= 4) return 2
+    if (n <= 8) return 4
+    return 6
+  } catch {
+    return 4
+  }
+}
+
 export const DEFAULT_DETECT_PARAMS: DetectParams = {
-  workers: 4,
+  // 默认值随机器变 —— 固定 4 会让 4 核笔记本过载、32 核工作站浪费
+  workers: recommendWorkers(),
   targetDensity: 150,
   useRoi: true,
   // Stage 14 基线（成熟林）。改这两个值会改变瓦片缓存的参数指纹 → 需要重算。

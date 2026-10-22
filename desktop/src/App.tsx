@@ -67,6 +67,15 @@ export default function App() {
   /** 正在预检 / 启动（按钮显示"检查中…"） */
   const [starting, setStarting] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  /**
+   * 检测参数窗是"从哪进来的"：
+   *  - edit   = 「⋯ 更多 → 检测参数」（只编辑，底部无「开始检测」）
+   *  - detect = 点「开始检测」进来的（底部有「开始检测」，确认后才真跑）
+   *
+   * 为什么强制确认：参数（株距/行距/密度）直接改变判定结果，换园区必须改；
+   * 直接开跑会让用户完全不知道用的是什么参数（2026-10-22 用户反馈）。
+   */
+  const [settingsIntent, setSettingsIntent] = useState<'edit' | 'detect'>('edit')
   const [showExport, setShowExport] = useState(false)
   /** 生成高度图 / 林地边界 */
   const [showDerived, setShowDerived] = useState(false)
@@ -526,7 +535,7 @@ export default function App() {
    * 这一步的价值：chm / segment 缺失时 sidecar 只回一条 W1004 就照常跑完，
    * 结果是"纯 RGB"版本 —— 350 秒后拿到一份看着正常、语义全错的数据。
    */
-  const onDetect = useCallback(async () => {
+  const doDetect = useCallback(async () => {
     if (starting || detect.running) return
     const withRoi = detectParams.useRoi && !!roi
     const params = buildDetectParams()
@@ -551,6 +560,18 @@ export default function App() {
       await startDetect(params, withRoi)
     }
   }, [starting, detect.running, detectParams, roi, buildDetectParams, startDetect, pushLog])
+
+  /**
+   * 点「开始检测」：**先让用户看一眼参数**，确认后才预检 + 开跑。
+   *
+   * 参数会记住，所以老用户只需要点一下「开始检测」（配置窗里那一个按钮），
+   * 多一次点击换来"我确实知道现在用的是什么参数"——对换园区场景值得。
+   */
+  const onDetect = useCallback(() => {
+    if (starting || detect.running) return
+    setSettingsIntent('detect')
+    setShowSettings(true)
+  }, [starting, detect.running])
 
   // 全局快捷键：Ctrl+Z 撤销 / Ctrl+Y(或 Ctrl+Shift+Z) 重做 / Delete 删除选中 / Esc 退出
   //
@@ -749,7 +770,17 @@ export default function App() {
 
         {showSettings && (
           <ErrorBoundary area="检测参数">
-            <DetectSettings onClose={() => setShowSettings(false)} />
+            <DetectSettings
+              onClose={() => setShowSettings(false)}
+              onStart={
+                settingsIntent === 'detect'
+                  ? () => {
+                      setShowSettings(false)
+                      void doDetect()
+                    }
+                  : undefined
+              }
+            />
           </ErrorBoundary>
         )}
       </div>

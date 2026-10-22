@@ -126,6 +126,15 @@ kbd {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.ds-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 4px;
+  border-top: 1px solid var(--line, #2a2f3a);
+  margin-top: 10px;
+}
+
 .btn.primary {
   background: rgba(61, 220, 151, 0.14);
   border-color: var(--accent);
