@@ -27,6 +27,7 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, RunEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 /// 瓦片 / 辅助服务的**首选**端口（与 `desktop/src/api/backend.ts` 的默认值一致）。
 /// 注意：真正在用的端口是 `ACTIVE_PORT` —— 8765 被别的程序占住时会往后挪。
@@ -2521,6 +2522,76 @@ pub fn run() {
                 )),
             }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 关窗前的拦截：检测 / 生成正在跑时先劝一句。
+            //
+            // 为什么在 Rust 侧做而不是前端弹框：CloseRequested 是外壳事件，
+            // 此时前端可能已经开始卸载，自定义弹框会闪一下就没了。
+            // 用系统原生 dialog 最稳（也不受前端崩溃影响）。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle().clone();
+                let (detecting, deriving) = app
+                    .try_state::<Services>()
+                    .map(|s| {
+                        let d = s.detect.lock().map(|g| g.is_some()).unwrap_or(false);
+                        let dv = s.derive.lock().map(|g| g.is_some()).unwrap_or(false);
+                        (d, dv)
+                    })
+                    .unwrap_or((false, false));
+
+                // 空闲时正常关闭，不打扰
+                if !detecting && !deriving {
+                    return;
+                }
+
+                api.prevent_close();
+
+                let (title, body) = if detecting {
+                    (
+                        "检测正在运行",
+                        "检测通常需要 3~6 分钟。\n\n\
+                         现在关闭会中断检测：已完成的部分不会损坏（结果是原子写入的），\
+                         但要重新跑一遍才能拿到完整结果。\n\n\
+                         建议等它跑完再关闭。",
+                    )
+                } else {
+                    (
+                        "正在生成高度图与林地边界",
+                        "关闭窗口后它会在后台继续跑完（只是看不到进度），\
+                         完成后产物可直接使用。\n\n\
+                         如果你想立刻停止，选「中断并退出」。",
+                    )
+                };
+
+                let app2 = app.clone();
+                app.dialog()
+                    .message(body)
+                    .title(title)
+                    .kind(MessageDialogKind::Warning)
+                    .buttons(MessageDialogButtons::OkCancelCustom(
+                        "继续等待（不关闭）".to_string(),
+                        "中断并退出".to_string(),
+                    ))
+                    .show(move |proceed| {
+                        // proceed = 点了「继续等待」→ 什么都不做，窗口保持打开
+                        if proceed {
+                            return;
+                        }
+                        // 执意退出：杀掉检测进程。
+                        // `derive` 刻意不杀 —— 它正在写的是一份有用的产物，
+                        // 让它跑完比留半个 CHM 更好（与 RunEvent::Exit 的取舍一致）。
+                        if let Some(state) = app2.try_state::<Services>() {
+                            if let Ok(mut g) = state.detect.lock() {
+                                if let Some(mut c) = g.take() {
+                                    let _ = c.kill();
+                                    let _ = c.wait();
+                                }
+                            }
+                        }
+                        app2.exit(0);
+                    });
+            }
         })
         .build(tauri::generate_context!())
         .expect("构建 Tauri 应用失败")
