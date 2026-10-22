@@ -661,30 +661,63 @@ CHM 阈值 ±1 m 会造成 ±30,400 m² 波动。这些能说明方法可信，�
 <p>修法是<b>向上找最近存在的祖先目录</b>（同一分区，剩余空间等价），最多上溯 8 层。
 这种"路径还不存在"的坑，只有真跑第一次才会撞上。</p>
 
-<h2>8.5 交互打磨（2026-10-22）</h2>
-<p>这一轮没有改算法，全部是"让人少犯迷糊"的改动。五个问题、五处修改：</p>
+<h2>9. 交互打磨：从"能跑"到"敢给别人用"</h2>
+
+<p>2026-10-22 这一轮没有改算法，全部是"让人少犯迷糊"的改动。共同点是：<b>每一处都不是功能缺失，而是"用户不知道发生了什么"</b>。</p>
 <table>
 <thead><tr><th>问题</th><th>改法</th></tr></thead>
 <tbody>
 <tr><td>点「开始检测」直接用上次参数开跑，用户不知道用的是什么</td><td>先弹参数窗；老用户点一下窗里的「开始检测」即可，换园区时在这里改</td></tr>
-<tr><td>进程数固定 4 —— 4 核笔记本过载、32 核工作站浪费</td><td><code>recommendWorkers()</code>：≤4 核 → 2、5~8 核 → 4、≥9 核 → 6，窗口里标「已按你的电脑推荐」</td></tr>
-<tr><td>进度条每 5% 跳一下（<code>progress_every=20</code>，528 块只发 20 次事件）</td><td>改按时间节流：每 0.2 秒最多发一次，连续推进</td></tr>
-<tr><td>选完影像直接跳到第 3 步，第 2 步「确定范围」永远不出现</td><td><code>blocks: true</code> + <code>isStepDone('range')</code> 含 <code>detected || hasResult</code>（跳过跑整幅后自己变绿，不卡死）</td></tr>
+<tr><td>进程数固定 4 —— 4 核笔记本过载、32 核工作站浪费</td><td><span class="code">recommendWorkers()</span>：≤4 核 → 2、5~8 核 → 4、≥9 核 → 6，窗口里标「已按你的电脑推荐」</td></tr>
+<tr><td>进度条每 5% 跳一下（<span class="code">progress_every=20</span>，528 块只发 20 次事件）</td><td>改按时间节流：每 0.2 秒最多发一次，连续推进</td></tr>
+<tr><td>选完影像直接跳到第 3 步，第 2 步「确定范围」永远不出现</td><td><span class="code">blocks: true</span> + <span class="code">isStepDone('range')</span> 含 <span class="code">detected || hasResult</span>（跳过跑整幅后自己变绿，不卡死）</td></tr>
 <tr><td>「⋯ 更多」菜单平铺 8 项，每项一个词</td><td>分 数据 / 工具 / 帮助 三组，每项一行灰色说明</td></tr>
 </tbody>
 </table>
 <p><b>QA 抓到的一个真 bug（值得记）</b>：工程师实现"步骤 2"时，把主按钮设成
-<code>kind: 'detect'</code>（打开参数窗），又在一个次按钮里写了「跳过，跑整幅」——
-两者 <code>kind</code> 相同，点「跳过」只是弹窗，<b>没有跳过任何东西</b>。
+<span class="code">kind: 'detect'</span>（打开参数窗），又在一个次按钮里写了「跳过，跑整幅」——
+两者 <span class="code">kind</span> 相同，点「跳过」只是弹窗，<b>没有跳过任何东西</b>。
 QA 穷举 8 个布尔位 × 2 种 gapCount 命中。修法是把主按钮改成「圈定范围」，
 并补了一条通用断言：<b>主按钮与次按钮的 kind 不得重复</b>。</p>
 <p><b>另外两个"看起来像 bug 其实是设计"</b>：导入的 tif 内部自带 6 级金字塔
-（所以不提示"没有加速结构"是对的，目录里那个 1.1 GB 的 <code>.ovr</code> 是另一张图的）；
-重启后界面出现的一片多边形是<b>内置演示样例</b>，已改为只在 <code>?demo=1</code> 时加载。
-状态栏现在会显示 <code>加速：内部金字塔 ×6</code> / <code>外置 .ovr ×6</code> / <code>⚠️ 无加速结构</code>。</p>
-<h2>9. 53 条坑，分 9 组</h2>
+（所以不提示"没有加速结构"是对的，目录里那个 1.1 GB 的 <span class="code">.ovr</span> 是另一张图的）；
+重启后界面出现的一片多边形是<b>内置演示样例</b>，已改为只在 <span class="code">?demo=1</span> 时加载。
+状态栏现在会显示 <span class="code">加速：内部金字塔 ×6</span> / <span class="code">外置 .ovr ×6</span> / <span class="code">⚠️ 无加速结构</span>。</p>
+<h3>9.1 启动时问一句「继续上次 / 重新开始」</h3>
 
-<p>完整清单在 <span class="code">desktop/README.md</span>（<b>50 条 / 9 组</b>，连续编号），每条都带错误原文。按主题归类：</p>
+<p>启动时程序会自动把磁盘上最近一次结果读进界面，而
+<span class="code">isStepDone('detect')</span> 把"磁盘上已有结果"也算成第 3 步完成 ——
+于是界面<b>直接跳到第 4 步「复核结果」</b>。初衷是"接着上次的活干"，
+但它把<b>选择权</b>从用户手里拿走了。</p>
+
+<p>现在改成启动时弹一次确认框。几个刻意的不对称设计：</p>
+
+<ul>
+  <li><b>ESC / 点遮罩 / 点 × 一律等于「继续复核」</b>，不是「重新开始」。
+      两个动作后果不对称：继续只是"这次先不重跑"，随时能再点检测；
+      重新开始要重跑 6 分钟才能找回。手滑高发的动作必须走不丢数据那一支。</li>
+  <li><b>「重新开始」不删磁盘上的结果</b>，只清界面（<span class="code">setGaps([])</span>）。
+      用户可能只是这次不想看，下次还要。</li>
+  <li><b>只问一次，且只在"启动后的首次加载"问</b>。检测完成后的自动刷新
+      （<span class="code">loadGaps({ rerun: true })</span>）不该弹 ——
+      那是用户刚做完一件事，不是"启动"。判定全在
+      <span class="code">lib/resume.ts</span> 的四条布尔规则里，有 30 条断言覆盖。</li>
+</ul>
+
+<h3>9.2 关窗拦截：为什么生成高度图时不让杀</h3>
+
+<p>检测或生成 CHM 时点 ×，会弹系统对话框「继续等待 / 中断并退出」。但两者处理不同：</p>
+
+<ul>
+  <li><b>检测可以中断</b>：输出是原子写入（<span class="code">.tmp</span> →
+      <span class="code">os.replace</span>），中断只留一个无害的临时文件。</li>
+  <li><b>生成 CHM 让它跑完</b>：它正在写一份有用的产物，杀掉只留半个 CHM ——
+      而检测读到半截 CHM <b>不报错</b>，那才是灾难。对话框里明确告知"会在后台跑完"。</li>
+</ul>
+
+<h2>10. 53 条坑，分 9 组</h2>
+
+<p>完整清单在 <span class="code">desktop/README.md</span>（<b>53 条 / 9 组</b>，连续编号），每条都带错误原文。按主题归类：</p>
 
 <table>
   <thead><tr><th style="width:22%">分组</th><th style="width:8%">条数</th><th>代表性问题</th></tr></thead>
@@ -697,15 +730,15 @@ QA 穷举 8 个布尔位 × 2 种 gapCount 命中。修法是把主按钮改成�
     <tr><td>一键脚本侧</td><td class="num">3</td><td><span class="code">.bat</span> 必须 UTF-8 无 BOM + CRLF；搬家自愈会误删共享的 <span class="code">CARGO_TARGET_DIR</span></td></tr>
     <tr><td>IPC 桥接侧<br><span class="sub">（含打包 / 交互 / 导出 / 自检）</span></td><td class="num">26</td><td>只读 stdout 不读 stderr → 永久死锁；参数名写错只静默退化；两份 <span class="code">proj.db</span> 版本只在冻结态炸；<span class="code">warn</span> 事件没处理 = 告警全丢；拖拽 change 洪水吃光撤销栈；框选不传可见性会盲删</td></tr>
     <tr><td>验证集侧</td><td class="num">3</td><td><span class="code">uncertain</span> 层允许"直接确认"→ 存进去的是算法输出（60 块里 51 块存疑）；加权准确率必须有 <span class="code">Σw = N</span> 恒等式自检；<span class="code">localStorage</span> effect 依赖写窄 = StrictMode 双跑抹掉进度</td></tr>
-    <tr><td>构建与进程生命周期侧</td><td class="num">5</td><td>安装包"存在≠新鲜"→ Python 修复永远进不了包；<span class="code">.gitkeep</span> 被构建删掉又提交 → CI 编译期挂；<span class="code">park_stale</span> 顺序错 → 旧包当新包报告；端口复用不验身份/不验影像 → 连上僵尸服务；<span class="code">AtomicBool</span> 防不住关窗重开 → 两个进程抢同一个 <span class="code">.part</span></td></tr>
+    <tr><td>构建与进程生命周期侧</td><td class="num">8</td><td>安装包"存在≠新鲜"→ Python 修复永远进不了包；<span class="code">.gitkeep</span> 被构建删掉又提交 → CI 编译期挂；<span class="code">park_stale</span> 顺序错 → 旧包当新包报告；端口复用不验身份/不验影像 → 连上僵尸服务；<span class="code">AtomicBool</span> 防不住关窗重开 → 两个进程抢同一个 <span class="code">.part</span></td></tr>
   </tbody>
 </table>
 
-<h2>10. 验收基线</h2>
+<h2>11. 验收基线</h2>
 
 <div class="card verdict-ok">
   <div style="display:flex;gap:2.2rem;flex-wrap:wrap">
-    <div><div class="big">632</div><div class="sub">前端断言</div></div>
+    <div><div class="big">666</div><div class="sub">前端断言</div></div>
     <div><div class="big">45/45</div><div class="sub">Rust 单测</div></div>
     <div><div class="big">95/95</div><div class="sub">契约测试</div></div>
     <div><div class="big">42</div><div class="sub">金字塔冒烟断言</div></div>
@@ -717,7 +750,7 @@ QA 穷举 8 个布尔位 × 2 种 gapCount 命中。修法是把主按钮改成�
   </div>
 </div>
 
-<h2>11. 还没做的</h2>
+<h2>12. 还没做的</h2>
 <table>
   <thead><tr><th>项</th><th>原因</th></tr></thead>
   <tbody>
