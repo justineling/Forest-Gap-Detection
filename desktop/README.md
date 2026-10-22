@@ -1205,3 +1205,41 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     ① 打包脚本在"打包完成"后自动补回 `.gitkeep`（不指望人记得）；
     ② `check_all.py` 新增第 10 层「仓库卫生」：`git ls-files --error-unmatch`
        断言它仍被跟踪 —— 必须问 git，不能用 `Test-Path`（本地永远存在）。
+
+51. **"运行时新鲜"≠"运行时完整" —— 必须过 `--self-test`**
+
+    `ensure_py_runtime` 原来只比时间戳。但 PyInstaller 在 **COLLECT 阶段被打断**
+    会留下**半截 `_internal`**（实测 1161 个文件 vs 正常 1459），缺 `unicodedata`：
+
+    ```json
+    {"rasterio": "IMPORT_FAIL: ModuleNotFoundError: No module named 'unicodedata'", "ok": false}
+    ```
+
+    而 exe 时间戳是**新的** → 下一次构建照样复用 → 打出 rasterio 不可用的坏包，
+    真机上报"影像读取失败"，完全看不出是打包问题。
+    现在：时间戳通过后再跑 `desktop_entry.exe --self-test`（失败返回 3），
+    不过就 `[损坏]` + 强制重建。
+    **教训：永远不要中途 Ctrl+C 杀正在打包的构建。**
+
+52. **后端不可用时不能自动塞演示样例**
+
+    `loadGaps` 的 catch 分支原本在后端不可用时 `fetch('/sample-gaps.geojson')`
+    塞进 store（本意"界面能独立演示"）。用户重启后影像服务没连上，界面却出现
+    一片空地多边形 —— 他第一反应是"我的检测结果怎么还在"，实际那是**演示数据**。
+    现在样例只在 URL 带 `?demo=1` 时加载。
+    **推论：任何"为了演示"的兜底数据，都必须有显式的开关，不能默认生效。**
+
+53. **`if (...)` 块里的 `goto` 挪到块外时，必须补"缺失"分支**
+
+    给 `ensure_py_runtime` 加 self-test 门槛时，把
+    `if not errorlevel 1 goto :epr_ready_silent`（原本在 `if exist (...)` 块内）
+    挪到了块外，却没给"exe 不存在"补标志：
+
+    ```bat
+    if exist "...desktop_entry.exe" ( ...检查... )
+    if not defined FG_PYR_STALE goto :epr_ready_silent   :: ← 无条件执行
+    ```
+
+    exe 不存在时 `FG_PYR_STALE` 未定义 → 直接跳"就绪" → 跳过重建 →
+    tauri build 拿**空目录**打包 → 打出 **2.3 MB** 的安装包（正常 71 MB）。
+    **改 if 块结构必须穷举分支：存在 / 缺失 / 过期 / 损坏，并用桩测跑一遍。**
