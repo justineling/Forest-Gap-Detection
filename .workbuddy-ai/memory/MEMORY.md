@@ -39,6 +39,12 @@
 
 ## 7. 批处理脚本（项目根，UTF-8 无 BOM + CRLF）
 - 入口**按功能编号**（2026-10-21 改名）：`1. 启动桌面端.bat` / `2. 构建安装包.bat` / `3. Build Installer.bat`（英文）/ `4. 诊断影像服务.bat`；共享库 `_环境准备.bat` **不能改名**（各入口用 `%~dp0` 相对调用）。
+- ⚠️ **"产物新鲜"≠"产物完整"**（2026-10-22 血案，比坑 49 更隐蔽）：
+  PyInstaller 在 COLLECT 阶段被打断会留下**半截 `_internal`**（1161/1459 个文件，缺 unicodedata），
+  但 exe 时间戳是新的 → `-CheckStale` 判"新鲜"→ 照样复用 → 打出 rasterio 不可用的坏包，
+  真机上报"影像读取失败"，完全看不出是打包问题。
+  现 `ensure_py_runtime` 在时间戳检查后再跑 `desktop_entry.exe --self-test`（失败返回 3），
+  不过就 `[损坏]` 并强制重建。**教训：永远不要中途 Ctrl+C 杀正在打包的构建。**
 - ⚠️ **"产物存在"≠"产物新鲜"**（坑 49）：`ensure_py_runtime` 曾只判 exe 存在 → Python 侧修复（如 `[E4099]` 编码）永远打不进包，真机验证必然假阴性。现走 `build_desktop_runtime.ps1 -CheckStale`（比 `scripts/*.py` + `requirements.txt` 与 exe 的 LastWriteTimeUtc），过期自动重建；「[过期]」与「[缺失]」文案分开。
 - ⚠️ **`.gitkeep` 一天丢两次**（坑 50）：打包清理 `desktop\runtime` 会连带删除，随后 `git add` 一起提交 → CI 干净 clone 上 tauri-build 存在性检查失败（本地因有真产物而全绿）。现打包完成自动补回 + `check_all.py` 第 10 层用 `git ls-files --error-unmatch` 把关。
 - **`FG_LANG=en` → 共享库英文输出**（21 处 if/else，默认中文零变化）；英文入口在 setlocal 后设置；心跳子进程经环境变量继承。

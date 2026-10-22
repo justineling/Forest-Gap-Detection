@@ -540,6 +540,13 @@ if exist "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" (
     )
 )
 
+rem ⚠️ exe 不存在时也必须置 stale —— 否则下面那句
+rem    `if not defined FG_PYR_STALE goto :epr_ready_silent` 会无条件跳过去，
+rem    结果是"目录是空的却报就绪"，tauri build 拿空目录打出一个
+rem    **2.3 MB 的安装包**（正常 71 MB），装到真机上没有瓦片服务
+rem    （2026-10-22 实测：修 self-test 门槛时引入的回归）。
+if not exist "%~dp0desktop\runtime\desktop_entry\desktop_entry.exe" set "FG_PYR_STALE=1"
+
 rem 新鲜且自检通过：ps1 已经打印过「[已就绪] Python 运行时（与源码同步）」，
 rem 这里不再重复一行（同屏两行"已就绪"会让人以为跑了两遍）。
 if not defined FG_PYR_STALE goto :epr_ready_silent
