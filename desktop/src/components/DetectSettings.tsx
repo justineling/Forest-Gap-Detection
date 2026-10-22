@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { recommendWorkers, useAppStore } from '../store/useAppStore'
 import {
   CHM_CORE_MAX,
@@ -64,7 +64,41 @@ export default function DetectSettings({
   const p = useAppStore((s) => s.detectParams)
   const setParam = useAppStore((s) => s.setDetectParam)
   const setChmPreset = useAppStore((s) => s.setChmPreset)
+  const resetDetectParams = useAppStore((s) => s.resetDetectParams)
+  const pushLog = useAppStore((s) => s.pushLog)
   const roi = useAppStore((s) => s.roi)
+
+  /**
+   * 「已恢复推荐值」的轻量反馈。
+   *
+   * 刻意**不弹确认框**：参数随时能再改回去，多一次确认只是烦。
+   * 也刻意**不新造 toast 组件**：这里只需要一句 2 秒后自己消失的小字，
+   * 顺便往状态栏日志里记一条（那条日志是持久的，事后能查）。
+   */
+  const [flash, setFlash] = useState(false)
+  const flashTimer = useRef<number | null>(null)
+
+  /** 清掉待触发的定时器（重复点击 / 卸载时必须清，否则会对已卸载组件 setState） */
+  const clearFlashTimer = (): void => {
+    if (flashTimer.current !== null) {
+      window.clearTimeout(flashTimer.current)
+      flashTimer.current = null
+    }
+  }
+
+  useEffect(() => clearFlashTimer, [])
+
+  const onReset = (): void => {
+    resetDetectParams()
+    // 日志里留一条：参数直接改变判定结果，事后要能查"什么时候恢复过"
+    pushLog('检测参数已恢复推荐值')
+    setFlash(true)
+    clearFlashTimer()
+    flashTimer.current = window.setTimeout(() => {
+      setFlash(false)
+      flashTimer.current = null
+    }, 2000)
+  }
 
   const curWorkers = WORKERS.find((w) => w.v === p.workers) ?? WORKERS[2]
   const curDensity = DENSITY.find((d) => d.v === p.targetDensity) ?? DENSITY[1]
@@ -91,10 +125,28 @@ export default function DetectSettings({
     <div className="detect-settings" role="dialog" aria-label="检测参数">
       <div className="ds-head">
         <b>检测参数</b>
-        <button className="btn tiny" onClick={onClose} title="关闭">
-          ✕
-        </button>
+        <div className="ds-head-actions">
+          {/* 「恢复推荐值」是次要动作：调乱了才用得上，所以放标题行右侧、用 tiny 按钮，
+              不占正文的视觉重量。点击后不弹确认（随时能再改回去）。 */}
+          <button
+            className="btn tiny"
+            onClick={onReset}
+            title="把下面所有参数恢复成软件为这台电脑推荐的值"
+          >
+            恢复推荐值
+          </button>
+          <button className="btn tiny" onClick={onClose} title="关闭">
+            ✕
+          </button>
+        </div>
       </div>
+
+      {/* 恢复后的轻量反馈：2 秒后自动消失，不打断操作（aria-live 让读屏也能听到） */}
+      {flash && (
+        <div className="ds-flash" role="status" aria-live="polite">
+          已恢复推荐值
+        </div>
+      )}
 
       {/*
         顶部一行"当前这套值"。

@@ -57,9 +57,21 @@ kbd {
 
 .body {
   display: grid;
-  grid-template-columns: 288px 1fr 300px;
+  /* 左右面板宽度由 App.tsx 的拖拽手柄写进 CSS 变量（不记忆，每次启动回默认值）。
+     兜底值必须与 lib/layout.ts 的 LAYOUT_DEFAULT 一致：288 / 300。 */
+  grid-template-columns: var(--left-w, 288px) 1fr var(--right-w, 300px);
   min-height: 0;
   flex: 1;
+  /* 三个拖拽手柄用 absolute 贴在列边界上（见 .resizer），需要这个定位锚 */
+  position: relative;
+}
+
+/* 状态栏外壳：只负责给上边框的拖拽手柄当定位锚。
+   手柄不能直接挂在 <footer> 上 —— 那是个 grid 容器，绝对定位的子元素会变成
+   网格项，反而影响轨道计算。 */
+.status-wrap {
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .statusbar {
@@ -432,17 +444,33 @@ kbd {
 .statusbar {
   display: grid;
   grid-template-columns: 340px 1fr;
+  /* 显式两行：第 1 行留给「结果可能已过期」警示带（没有时高度为 0），
+     第 2 行吃掉剩余高度。必须显式写，否则日志区会把整条状态栏撑高 ——
+     而状态栏现在是**固定高度**（`--status-h`，可拖拽），撑高就被裁掉。 */
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   background: var(--panel);
   border-top: 1px solid var(--line);
   padding: 6px 12px;
   font-size: 11.5px;
+  /* 高度由 App 的拖拽手柄控制（默认 120px，比原来的内容撑高大约高一倍 ——
+     用户反馈"底部太小，很难看日志"）。日志区自己滚，整条状态栏不滚。 */
+  height: var(--status-h, 120px);
+  overflow: hidden;
 }
 .sb-left {
+  grid-row: 2;
+  grid-column: 1;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  /* 状态栏被拖高以后，这一列会变得很高 —— 不加 align-content 的话
+     换行出来的每一行会被"拉伸铺满"，几项状态被摊到上下两头，读起来像两段无关的信息。
+     让它们从顶部开始自然堆叠。 */
+  align-content: flex-start;
+  min-height: 0;
+  overflow-y: auto;
 }
 .sb-left .sep {
   width: 1px;
@@ -450,13 +478,59 @@ kbd {
   background: var(--line);
 }
 .sb-logs {
-  max-height: 60px;
+  grid-row: 2;
+  grid-column: 2;
+  /* 上限交给父级的固定高度（`--status-h`）—— 这里再写 max-height 会让
+     "拖高状态栏"变成白拖（日志区纹丝不动）。min-height:0 是滚动的前提。 */
+  max-height: none;
+  min-height: 0;
   overflow-y: auto;
   line-height: 1.5;
   color: #b8c6cd;
 }
 .log-line {
   white-space: pre-wrap;
+}
+
+/* ---------- 拖拽手柄（左右面板宽度 / 状态栏高度）----------
+   设计取向与 VS Code 一致：平时完全看不见，鼠标靠近才亮一条 4px 的强调色。
+   为什么绝对定位而不是占一列/一行：多出来的 4px 轨道会让 grid 的列宽计算
+   整体偏移，`1fr` 的地图区会平白少 4~8px，而且三个手柄各占一条轨道时
+   布局会变得很难推。贴在边界上（±2px 居中）视觉上正好压住分隔线。 */
+.resizer {
+  position: absolute;
+  z-index: 14; /* 高于「下一步」卡片(12)与加速结构横幅(13)，不然拖不动 */
+  background: transparent;
+  transition: background-color 120ms ease;
+  /* 触摸屏：不加这条，手指按下会被当成滚动手势，拖不动 */
+  touch-action: none;
+}
+.resizer.col {
+  width: 4px;
+  top: 0;
+  bottom: 0;
+  cursor: col-resize;
+}
+.resizer.row {
+  height: 4px;
+  left: 0;
+  right: 0;
+  cursor: row-resize;
+}
+.resizer:hover,
+.resizer.dragging {
+  background: var(--accent);
+}
+/* 左面板右边框 / 右面板左边框：位置跟着 CSS 变量走，拖到哪贴到哪 */
+.rs-left {
+  left: calc(var(--left-w, 288px) - 2px);
+}
+.rs-right {
+  right: calc(var(--right-w, 300px) - 2px);
+}
+/* 状态栏上边框：向上拖 = 状态栏变高 */
+.rs-status {
+  top: -2px;
 }
 
 /* ---------- 估算参数（退让档位）---------- */
@@ -894,6 +968,27 @@ kbd {
   justify-content: space-between;
   margin-bottom: 12px;
   font-size: 13.5px;
+}
+
+/* 标题行右侧的两个 tiny 按钮（恢复推荐值 / 关闭）。
+   单独包一层是为了让它们紧挨着靠右，而不是被 space-between 摊到两端。 */
+.ds-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 「已恢复推荐值」的轻量反馈：2 秒后自己消失（定时器在 DetectSettings 里）。
+   只用一条淡底色 —— 它是"确认收到了"，不该抢正文的注意力，也不该像报错。 */
+.ds-flash {
+  margin: -6px 0 10px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: rgba(61, 220, 151, 0.12);
+  border: 1px solid rgba(61, 220, 151, 0.35);
+  color: var(--accent);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .ds-row {
@@ -1781,6 +1876,11 @@ kbd {
   flex: 1;
 }
 
+/* 缩放控件在右上角（见 MapCanvas.tsx）—— 这条注释留在这儿是为了说明
+   为什么没有给控件加"避让横幅"的偏移：
+   横幅 `.ovr-banner` 改成在**右侧留出 62px 安全区**里居中（见下方定义），
+   两者在水平方向上根本不会相交，所以不需要按横幅高度去猜一个 margin-top。 */
+
 /* ---------- 「下一步」卡片 ---------- */
 .next-card {
   position: absolute;
@@ -2251,6 +2351,8 @@ kbd {
 /* 状态栏的"结果可能已过期"警示带
    —— 用整条橙带而不是小图标：这条信息被忽略就等于没有。 */
 .sb-stale {
+  grid-row: 1;
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -2379,14 +2481,23 @@ kbd {
    横幅在地图区顶部（.map-cell 是 position:relative），右下角 14px 处是
    「下一步」卡片 —— 所以横幅只占顶部，宽度用 max-width 限住，窄窗口下不会盖住地图操作。
    配色只用已有的 --warn（不新造颜色），深色底 + 亮色描边保证可读。
+
+   ⚠️ 定位方式：**右侧留 62px 安全区**，在这块区域里居中（left/right 都写死，
+   再用 `margin: 0 auto` + max-width 居中）。不用 `left:50% + translateX(-50%)`：
+   缩放控件在右上角（宽 39px + 10px 边距），横幅若按整个地图宽度居中，
+   窄窗口下会横向盖到控件上（横幅 z-index 更高，+/- 就点不到了）。
+   留安全区后两者水平方向永不相交，也就不需要按横幅高度去猜一个 margin-top。
 --------------------------------------------------------------------------- */
 .ovr-banner {
   position: absolute;
   top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 10px;
+  right: 62px;
   z-index: 13;
-  width: min(560px, calc(100% - 28px));
+  width: auto;
+  max-width: 560px;
+  margin-left: auto;
+  margin-right: auto;
   display: flex;
   align-items: center;
   gap: 10px;

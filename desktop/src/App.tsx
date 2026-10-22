@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import MapCanvas, { type DrawIntent } from './components/MapCanvas'
 import ErrorBoundary from './components/ErrorBoundary'
 import TopToolbar from './components/TopToolbar'
@@ -35,8 +35,33 @@ import { decideGapsLoad, shouldClearGapsOnImageChange } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
 import ResumeDialog from './components/ResumeDialog'
+import Resizer from './components/Resizer'
 import { pickGeneratedAt, shouldAskResume } from './lib/resume'
-import type { DetectProgress, GapCollection, PreflightResult } from './types'
+import {
+  LEFT_LIMIT,
+  LAYOUT_DEFAULT,
+  RIGHT_LIMIT,
+  STATUS_LIMIT,
+  clampLayoutWidths,
+  clampSize,
+  maxLeftW,
+  maxRightW,
+} from './lib/layout'
+import type {
+  DetectProgress,
+  GapCollection,
+  GapFeature,
+  PlantingGrid,
+  PreflightResult,
+} from './types'
+
+/**
+ * 三个可拖拽尺寸的形状（左面板宽 / 右面板宽 / 状态栏高）。
+ *
+ * 单独起一个类型而不是让 `useRef` 从 `LAYOUT_DEFAULT` 推断 ——
+ * 后者是 `as const`，推断出来是字面量类型 `288`，之后赋任何别的值都报错。
+ */
+type LayoutSize = { leftW: number; rightW: number; statusH: number }
 
 export default function App() {
   const [drawIntent, setDrawIntent] = useState<DrawIntent>('none')
@@ -109,6 +134,19 @@ export default function App() {
     generatedAt: string | null
   } | null>(null)
   /**
+   * 命中「继续复核 / 重新开始」时**暂存**的结果（还没应用到 store）。
+   *
+   * ⚠️ 为什么必须暂存：以前的顺序是"先 `setGaps(feats)` 再弹窗"，
+   *    于是启动瞬间地图上会闪一下 1,762 个多边形、步骤条先跳到第 4 步，
+   *    然后才被清空 —— 用户看到的就是"我明明点了重新开始，它还是先载入了"
+   *    （2026-10-22 反馈，原话是「依然载入并跳到第二步」）。
+   *    现在：命中弹窗时数据只放这里，用户选完「继续」才真正应用。
+   */
+  const [pendingResume, setPendingResume] = useState<{
+    feats: GapFeature[]
+    grid: PlantingGrid | null
+  } | null>(null)
+  /**
    * 本次启动是否已经问过（只问一次）。
    *
    * 不用 state 而用 ref：这个标记只影响"要不要再弹"，不参与渲染，
@@ -124,8 +162,109 @@ export default function App() {
    * 而他刚刚才亲手点了重载，这话完全不成立。
    */
   const firstLoadDone = useRef(false)
+  /**
+   * 是否有一份"暂存待确认"的结果（弹窗还开着）。
+   *
+   * ⚠️ 为什么必须是 ref：`loadGaps` 是 `useCallback`，闭包里读到的是旧 state，
+   *    而这里要在**下一次 loadGaps 进来的瞬间**就知道"已经有一份在等用户确认"。
+   * ⚠️ 为什么真的会遇到"弹窗还开着又来一次 loadGaps"：dev 下 React StrictMode
+   *    会把启动 effect 跑两遍，第二次的 `firstLoad` 已经是 false ——
+   *    不加这道闸，第二次就把结果直接应用上去了，弹窗白弹
+   *    （实测：弹窗在，但地图上已经是 3 块、步骤条已经在第 4 步）。
+   */
+  const resumePending = useRef(false)
   /** 浏览器模式下 `?help=1` 直接预览帮助弹窗（截图 / 回归用，不进打包逻辑） */
   const [demoHelp, setDemoHelp] = useState(false)
+
+  // —— 布局尺寸（左右面板宽度 / 状态栏高度，可拖拽）——
+  //
+  // ⚠️ **刻意只放 React state，绝不写 localStorage / settings.json**。
+  //    用户明确要求：「这个高度 / width 是不记忆的，每次重新登入都会回到默认配置」。
+  //    下一个人请**不要**"顺手"补上持久化 —— 那会直接违背这条需求。
+  //    （项目里别的偏好确实会持久化：检测参数、导出目录、验证集进度。
+  //      唯独这三项不，因为它们是"这一次想怎么看"，不是"以后都这样"。）
+  const [leftW, setLeftW] = useState<number>(LAYOUT_DEFAULT.leftW)
+  const [rightW, setRightW] = useState<number>(LAYOUT_DEFAULT.rightW)
+  const [statusH, setStatusH] = useState<number>(LAYOUT_DEFAULT.statusH)
+  /**
+   * 拖拽起点对应的"已提交尺寸"。
+   *
+   * `Resizer.onDrag` 给的是**相对按下时的位移**（不是增量），所以每次 move 都要
+   * 用"按下那一刻的尺寸 + 位移"重算 —— 用当前尺寸累加会随鼠标抖动漂移。
+   * 松手（或窗口缩放被重新钳制）时把当前尺寸记进来，作为下一次拖拽的基准。
+   */
+  const sizeBase = useRef<LayoutSize>({
+    leftW: LAYOUT_DEFAULT.leftW,
+    rightW: LAYOUT_DEFAULT.rightW,
+    statusH: LAYOUT_DEFAULT.statusH,
+  })
+  /** 当前尺寸的即时镜像（拖拽回调里要读"另一个面板现在多宽"，不能靠闭包快照） */
+  const sizeNow = useRef<LayoutSize>({
+    leftW: LAYOUT_DEFAULT.leftW,
+    rightW: LAYOUT_DEFAULT.rightW,
+    statusH: LAYOUT_DEFAULT.statusH,
+  })
+  useEffect(() => {
+    sizeNow.current = { leftW, rightW, statusH }
+  })
+
+  /** 拖动左面板右边框：向右拖 = 左面板变宽 */
+  const onDragLeft = useCallback((delta: number) => {
+    const limit = maxLeftW(sizeNow.current.rightW, window.innerWidth)
+    setLeftW(clampSize(sizeBase.current.leftW + delta, LEFT_LIMIT.min, limit))
+  }, [])
+  /** 拖动右面板左边框：向左拖（delta 为负）= 右面板变宽 */
+  const onDragRight = useCallback((delta: number) => {
+    const limit = maxRightW(sizeNow.current.leftW, window.innerWidth)
+    setRightW(clampSize(sizeBase.current.rightW - delta, RIGHT_LIMIT.min, limit))
+  }, [])
+  /** 拖动状态栏上边框：向上拖（delta 为负）= 状态栏变高 */
+  const onDragStatus = useCallback((delta: number) => {
+    setStatusH(clampSize(sizeBase.current.statusH - delta, STATUS_LIMIT.min, STATUS_LIMIT.max))
+  }, [])
+
+  const onEndLeft = useCallback(() => {
+    sizeBase.current.leftW = sizeNow.current.leftW
+  }, [])
+  const onEndRight = useCallback(() => {
+    sizeBase.current.rightW = sizeNow.current.rightW
+  }, [])
+  const onEndStatus = useCallback(() => {
+    sizeBase.current.statusH = sizeNow.current.statusH
+  }, [])
+
+  /**
+   * 窗口变窄时把左右面板一起收回来。
+   *
+   * 拖拽时每次只钳制被拖的那一个（另一个不动），所以"两块加起来超过窗口"
+   * 只可能由改窗口大小引起 —— 不处理的话地图会被挤成一条竖缝，
+   * 用户会以为"地图加载失败了"。
+   */
+  useEffect(() => {
+    const onResize = (): void => {
+      const r = clampLayoutWidths(sizeNow.current.leftW, sizeNow.current.rightW, window.innerWidth)
+      setLeftW(r.left)
+      setRightW(r.right)
+      // 基准同步：否则下一次拖拽会从"被收之前"的尺寸开始，一按就跳
+      sizeBase.current.leftW = r.left
+      sizeBase.current.rightW = r.right
+    }
+    window.addEventListener('resize', onResize)
+    onResize()
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  /**
+   * 三个尺寸以 CSS 变量的形式挂在根节点上（`--left-w` / `--right-w` / `--status-h`），
+   * 由 styles.css 的 `.body` / `.statusbar` 消费 —— 这样拖拽只改一个 style，
+   * 不用给每个面板单独传宽度 prop。
+   */
+  const layoutVars: CSSProperties &
+    Record<'--left-w' | '--right-w' | '--status-h', string> = {
+    '--left-w': `${leftW}px`,
+    '--right-w': `${rightW}px`,
+    '--status-h': `${statusH}px`,
+  }
 
   const setBackend = useAppStore((s) => s.setBackend)
   const setGaps = useAppStore((s) => s.setGaps)
@@ -225,21 +364,33 @@ export default function App() {
           setLoadingGaps(false)
           return
         }
-        // 把算法网格一起带上 —— 前端估算的格点相位才能与 Python 侧逐株一致
-        setGaps(feats, fc.planting_grid ?? null)
-        // 启动时读到了历史结果 → 问一句"继续还是重来"。
-        // 判定条件全在 lib/resume.ts 里（有 4 条规则的逐条断言）：
-        // 只有"启动首次加载 + 本次没跑过检测 + 确实读到块数"才问。
-        if (
+        // 把算法网格一起带上 —— 前端估算的格点相位才能与 Python 侧逐株一致。
+        //
+        // ⚠️ 顺序很关键：**先判"要不要问"，再决定要不要应用**。
+        //    以前是先 `setGaps(...)` 再弹窗，启动瞬间地图上会闪一下 1,762 个
+        //    多边形、步骤条先跳到第 4 步，然后才被清空 —— 用户看到的就是
+        //    "点了重新开始，界面依然载入并跳到了第二步"（2026-10-22 反馈）。
+        //    判定条件全在 lib/resume.ts 里（有 4 条规则的逐条断言）：
+        //    只有"启动首次加载 + 本次没跑过检测 + 确实读到块数"才问。
+        const askResume =
           !resumeAsked.current &&
           shouldAskResume({
             firstLoad: isFirstLoad,
             detectedThisSession: useAppStore.getState().detect.finished != null,
             gapCount: feats.length,
           })
-        ) {
+        if (askResume) {
+          // 只暂存，**不应用**：用户选「继续」时才 setGaps（见 onContinueResume）
           resumeAsked.current = true
+          resumePending.current = true
+          setPendingResume({ feats, grid: fc.planting_grid ?? null })
           setResumeAsk({ count: feats.length, generatedAt: pickGeneratedAt(fc) })
+        } else if (resumePending.current) {
+          // 已经有一份在等用户确认 —— 这一轮**不应用**，否则等于绕过弹窗
+          // （StrictMode 下启动 effect 跑两遍就会走到这里，见 resumePending 的注释）
+          pushLog('已有一次结果等待你确认是否继续，本次未应用新读到的结果')
+        } else {
+          setGaps(feats, fc.planting_grid ?? null)
         }
       } catch (e) {
         // 后端不在线时退回内置样例，保证界面可独立演示。
@@ -430,6 +581,35 @@ export default function App() {
     // 仅启动执行一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /**
+   * 「继续复核上次结果」：把启动时**暂存**的结果真正应用上去。
+   *
+   * ESC / 点遮罩 / 点 × 也都走这一支（沿用 ResumeDialog 里"关闭 = 继续"的取舍：
+   * 两个动作后果不对称 —— 继续什么都不变，重新开始会清空界面，
+   * 而 ESC / 点遮罩都是"手滑"的高发动作，不该丢数据）。
+   */
+  const onContinueResume = useCallback(() => {
+    const pending = pendingResume
+    resumePending.current = false
+    if (pending) setGaps(pending.feats, pending.grid)
+    setPendingResume(null)
+    setResumeAsk(null)
+  }, [pendingResume, setGaps])
+
+  /**
+   * 「重新开始」：只清界面上的结果，**不删磁盘文件** —— 用户可能只是这次不想看。
+   *
+   * 暂存的那份数据必须一起丢掉：留着它的话，下次再命中弹窗会把它应用上去，
+   * 表现就是"点了重新开始，结果又回来了"。
+   */
+  const onRestartResume = useCallback(() => {
+    resumePending.current = false
+    setPendingResume(null)
+    setResumeAsk(null)
+    setGaps([])
+    setGapsError(null)
+  }, [setGaps])
 
   const onWizardDone = useCallback(async () => {
     setWizard(null)
@@ -792,8 +972,18 @@ export default function App() {
 
 
 
+  /**
+   * 「这张影像没有加速结构」横幅要不要挂载。
+   *
+   * 抽成变量而不是在 JSX 里写两遍 —— 这个判定被两个地方用（渲染 + 下面那段注释
+   * 说明的避让关系），写散了很容易改一处漏一处。
+   */
+  const showOvrNotice =
+    shouldShowOverviewNotice(meta?.has_overviews, overviewDismissed) &&
+    (isTauri() || overviewPreview)
+
   return (
-    <div className="app">
+    <div className="app" style={layoutVars}>
       {/* 每个区域各自兜底：地图挂了，工具栏 / 图层面板 / 状态栏仍可用 */}
       {/* 工具栏 + 参数弹层包在一起：弹层用 top:100% 挂在工具栏下沿，
           工具栏因窄窗口换行时也不会错位 */}
@@ -844,22 +1034,33 @@ export default function App() {
         <ErrorBoundary area="图层面板">
           <LeftPanel />
         </ErrorBoundary>
+        {/* 左面板右边框的拖拽手柄：向右拖 = 左面板变宽。
+            手柄 `position:absolute`（见 styles.css），所以它不占 grid 的列 —— 
+            否则 grid 会多出一条 4px 的轨道，布局整体偏移。 */}
+        <Resizer
+          dir="col"
+          className="rs-left"
+          label="拖动调整左侧面板宽度"
+          onDrag={onDragLeft}
+          onEnd={onEndLeft}
+        />
         <div className="map-cell">
           <ErrorBoundary area="地图">
             <MapCanvas drawIntent={drawIntent} onDrawDone={onDrawDone} />
           </ErrorBoundary>
-          {/* 「这张影像没有加速结构」：挂在地图区顶部，不挡右下角的「下一步」卡片。
+          {/* 「这张影像没有加速结构」：挂在地图区顶部，右侧给右上角的缩放控件留了安全区
+              （见 styles.css 的 .ovr-banner），不会挡住 +/-。
               桌面端才真正显示；浏览器里只有带 `?noOvr=1` / `?ovr=...` 的截图预览才挂载。 */}
-          {shouldShowOverviewNotice(meta?.has_overviews, overviewDismissed) &&
-            (isTauri() || overviewPreview) && (
-              <ErrorBoundary area="加速结构提示">
-                <OverviewNotice
-                  onDone={probeAndLoad}
-                  onDismiss={() => setOverviewDismissed(true)}
-                />
-              </ErrorBoundary>
-            )}
-          {/* 「下一步」卡片浮在地图右下角：只给一个主动作，走完自动换内容 */}
+          {showOvrNotice && (
+            <ErrorBoundary area="加速结构提示">
+              <OverviewNotice
+                onDone={probeAndLoad}
+                onDismiss={() => setOverviewDismissed(true)}
+              />
+            </ErrorBoundary>
+          )}
+          {/* 「下一步」卡片浮在地图右下角：只给一个主动作，走完自动换内容。
+              缩放控件已挪到右上角 —— 以前两者都占右下角，+/- 被卡片压住点不到。 */}
           <ErrorBoundary area="下一步提示">
             <NextStepCard
               input={workflowInput}
@@ -869,13 +1070,32 @@ export default function App() {
             />
           </ErrorBoundary>
         </div>
+        {/* 右面板左边框的拖拽手柄：向左拖 = 右面板变宽 */}
+        <Resizer
+          dir="col"
+          className="rs-right"
+          label="拖动调整右侧面板宽度"
+          onDrag={onDragRight}
+          onEnd={onEndRight}
+        />
         <ErrorBoundary area="属性面板">
           <RightPanel peekReview={reviewPeek} />
         </ErrorBoundary>
       </main>
-      <ErrorBoundary area="状态栏">
-        <StatusBar staleWarnings={staleWarnings} />
-      </ErrorBoundary>
+      {/* 包一层：手柄要 `position:absolute` 贴在这条状态栏的上边框，
+          而 `<footer>` 自己是 grid 容器（不能既当定位锚又当网格） */}
+      <div className="status-wrap">
+        <Resizer
+          dir="row"
+          className="rs-status"
+          label="拖动调整状态栏高度"
+          onDrag={onDragStatus}
+          onEnd={onEndStatus}
+        />
+        <ErrorBoundary area="状态栏">
+          <StatusBar staleWarnings={staleWarnings} />
+        </ErrorBoundary>
+      </div>
 
       {demoHelp && <HelpDialog doc={HEADER_HELP} onClose={() => setDemoHelp(false)} />}
 
@@ -891,13 +1111,8 @@ export default function App() {
           <ResumeDialog
             count={resumeAsk.count}
             generatedAt={resumeAsk.generatedAt}
-            onContinue={() => setResumeAsk(null)}
-            onRestart={() => {
-              // 只清界面上的结果，**不删磁盘文件** —— 用户可能只是这次不想看
-              setGaps([])
-              setGapsError(null)
-              setResumeAsk(null)
-            }}
+            onContinue={onContinueResume}
+            onRestart={onRestartResume}
           />
         </ErrorBoundary>
       )}

@@ -364,6 +364,17 @@ export interface AppState {
   /** 改检测参数（自动持久化） */
   setDetectParam: (patch: Partial<DetectParams>) => void
   /**
+   * 恢复推荐值（一次性整体写回）。
+   *
+   * ⚠️ 不是逐项 `setDetectParam`：那会写 N 次 localStorage，且中间态可能违反互锁
+   *    （CHM 的救援线 / 否决线是一对，中间态会短暂非法）。
+   * ⚠️ `workers` **必须重新调 `recommendWorkers()`**，不能直接用
+   *    `DEFAULT_DETECT_PARAMS.workers` —— 常量是模块加载时算的，
+   *    而用户可能在别的机器上跑过（localStorage 跟着用户走）、
+   *    或换了外接显示器导致核数 / 分辨率变化。
+   */
+  resetDetectParams: () => void
+  /**
    * 切换林龄档位（一次性设置 core + veto + preset）。
    *
    * 单独开一个 action 而不是让 UI 连调三次 `setDetectParam`：
@@ -865,6 +876,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setDetectParam: (patch) =>
     set((s) => {
       const next = { ...s.detectParams, ...patch }
+      saveDetectParams(next)
+      return { detectParams: next }
+    }),
+
+  resetDetectParams: () =>
+    set(() => {
+      // workers 重新算：常量是模块加载时算的，换机器 / 换分辨率后就不准了
+      const next: DetectParams = { ...DEFAULT_DETECT_PARAMS, workers: recommendWorkers() }
       saveDetectParams(next)
       return { detectParams: next }
     }),

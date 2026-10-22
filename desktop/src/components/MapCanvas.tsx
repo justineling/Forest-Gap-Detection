@@ -75,7 +75,16 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
       zoom: FALLBACK_ZOOM,
       attributionControl: false,
     })
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right')
+    // 缩放控件放**右上角**。
+    //
+    // ⚠️ 别挪回右下角：右下角 14px 处是「下一步」卡片（`.next-card`，
+    //    宽 330px 的常驻浮层），两者会重叠 —— 实测缩放的 +/− 被卡片压住，
+    //    用户点不到（2026-10-22 反馈）。
+    //    为什么是挪控件而不是挪卡片：卡片是主行动入口，应该留在阅读动线的落点
+    //    （右下 = 视线终点）；挪一个 30×60 的小控件，比挪一张 330px 的卡片风险小得多。
+    //    右上角原本只有居中的「没有加速结构」横幅（`.ovr-banner`），
+    //    横幅出现时由 styles.css 的 `.map-cell.has-ovr` 把控件往下让开一行。
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left')
     mapRef.current = map
 
