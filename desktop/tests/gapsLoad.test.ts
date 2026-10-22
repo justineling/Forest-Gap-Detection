@@ -107,8 +107,8 @@ console.log('\nD. 现有结果为空的边界（没有东西可保护）')
 
   const d2 = decideGapsLoad({ incoming: 0, existing: 0, reported: null, error: '未找到检测结果文件' })
   check(
-    d2.action === 'keep' && d2.reason === 'missing_file',
-    '首次打开 + 空 + error → keep（只报错，不写一条"载入 0 个多边形"）',
+    d2.action === 'apply' && d2.reason === 'empty_state',
+    '首次打开 + 空 + error → apply（“没找到结果文件”是正常状态，不该弹窗）',
   )
 }
 

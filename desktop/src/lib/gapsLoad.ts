@@ -63,8 +63,9 @@ export const SUSPECT_EMPTY_DETAIL = '结果文件是空的（可能还在写盘�
  *    - 算法自报 0 块 → 应用（真的没有空地，界面就该是 0）
  *    - 否则 → **保留**现有结果（missing_file / suspect_empty）
  * 3. 空响应 + 现有结果也为空：
- *    - 带 error → 保留（不清空，但也没什么可清；调用方只负责报错）
- *    - 无 error → 应用（首次打开、本来就空，setGaps([]) 无副作用）
+ *    - **一律应用**（首次打开 / 换影像后本来就空）。
+ *      带 error 也不弹窗 —— 那通常是“没找到结果文件”，属正常状态；
+ *      后端日志里仍有完整记录（2026-10-22 修：曾误报“结果没读到”）。
  */
 export function decideGapsLoad(input: GapsLoadInput): GapsLoadDecision {
   const { incoming, existing, reported, error } = input
@@ -82,7 +83,12 @@ export function decideGapsLoad(input: GapsLoadInput): GapsLoadDecision {
     }
   }
 
-  if (error) return { action: 'keep', reason: 'missing_file', detail }
+  // existing === 0：界面本来就没有结果可保护。此时 error 几乎总是
+  // “未找到检测结果文件（已查找：…）”，而那对一张**还没跑过检测的影像**
+  // 是完全正常的状态，不是故障。
+  // 旧逻辑在这里走 keep + detail → 界面弹“结果没读到”，用户以为数据丢了
+  //（2026-10-22 公司电脑实测：新包 + settings.gaps=null 仍弹窗）。
+  // 此时 setGaps([]) 无副作用，直接走空状态；后端日志里仍有完整记录。
   return { action: 'apply', reason: 'empty_state' }
 }
 
