@@ -715,6 +715,40 @@ QA 穷举 8 个布尔位 × 2 种 gapCount 命中。修法是把主按钮改成�
       而检测读到半截 CHM <b>不报错</b>，那才是灾难。对话框里明确告知"会在后台跑完"。</li>
 </ul>
 
+<h3>9.3 可拖拽布局：为什么刻意"不记忆"</h3>
+
+<p>状态栏高度、左右面板宽度都能像 VS Code 那样拖。实现上有三个决定：</p>
+
+<table>
+  <thead><tr><th style="width:26%">决定</th><th>为什么</th></tr></thead>
+  <tbody>
+    <tr><td><b>用 CSS 变量驱动</b><br><span class="code">--left-w / --right-w / --status-h</span></td>
+      <td>网格布局的列宽本来就该由一个变量决定；用 inline style 写变量，
+          拖动时只改一个值，不用重建 class 名或算 <span class="code">grid-template</span> 字符串</td></tr>
+    <tr><td><b>Pointer Events + <span class="code">setPointerCapture</span></b></td>
+      <td>用 <span class="code">mousedown/mousemove</span> 拖出窗口边界就会丢事件，
+          指针一松手也不知道；捕获之后拖动全程都回到同一个元素</td></tr>
+    <tr><td><b>钳制抽成纯函数</b>（<span class="code">lib/layout.ts</span>）</td>
+      <td>边界值、NaN、动态上限这些最容易写错，抽出来才有 35 条断言钉住。
+          尤其是"窗口变窄时左右面板一起收"，纯函数能直接验</td></tr>
+  </tbody>
+</table>
+
+<div class="card verdict-warn">
+  <p style="margin:0"><b>尺寸不写 localStorage 是刻意的</b>，不是漏了。
+  用户明确要求"每次重新登入回到默认"。而且持久化在这里有害：换了台电脑、
+  接投影仪、或者把窗口拉小，记住的宽高会让界面直接错位 ——
+  用户又不知道去哪儿改回来。<b>代码里在这几个 state 上方写了注释说明</b>，
+  免得下一个人"顺手"补上持久化。</p>
+</div>
+
+<h3>9.4 「恢复推荐值」：一个容易被写错的地方</h3>
+
+<p>参数窗加了「恢复推荐值」，一键写回 <span class="code">DEFAULT_DETECT_PARAMS</span>。
+<b>但 <span class="code">workers</span> 必须重新调 <span class="code">recommendWorkers()</span></b>，
+不能直接用常量 —— 常量是模块加载时算的一次，用户可能在别的机器上跑过、
+或者改了分辨率，沿用旧值就与"按这台电脑推荐"自相矛盾。</p>
+
 <h2>10. 53 条坑，分 9 组</h2>
 
 <p>完整清单在 <span class="code">desktop/README.md</span>（<b>53 条 / 9 组</b>，连续编号），每条都带错误原文。按主题归类：</p>
