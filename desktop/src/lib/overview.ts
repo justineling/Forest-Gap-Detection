@@ -17,6 +17,12 @@ export interface OverviewPlan {
   /** 给用户看的一句话（python 侧已经写成中文，可直接展示） */
   why: string
   has_overviews: boolean
+  /** 加速结构来自哪里：内部金字塔 / 外置 .ovr / 无 */
+  kind?: 'internal' | 'external' | 'none'
+  /** kind=external 时是 .ovr 的绝对路径 */
+  ovr_path?: string | null
+  /** 金字塔层级（如 [2, 4, 8, 16, 32, 64]）；无金字塔时为空数组 */
+  levels?: number[]
   size_bytes: number
   need_bytes: number
   free_bytes: number

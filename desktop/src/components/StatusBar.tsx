@@ -1,5 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
+import { overviewPlan } from '../api/backend'
+import type { OverviewPlan } from '../lib/overview'
 
 export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: string[] }) {
   const logs = useAppStore((s) => s.logs)
@@ -10,6 +12,27 @@ export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: stri
   const roi = useAppStore((s) => s.roi)
   const meta = useAppStore((s) => s.meta)
   const boxRef = useRef<HTMLDivElement>(null)
+  // 当前影像的加速结构（内部金字塔 / 外置 .ovr / 无）。
+  // 为什么放状态栏：用户最常问的就是"为什么缩到远处这么慢"，
+  // 而答案就在这一格 —— 没金字塔时它会直接写着"无"。
+  const [ovr, setOvr] = useState<OverviewPlan | null>(null)
+  useEffect(() => {
+    if (!backendOnline) {
+      setOvr(null)
+      return
+    }
+    let alive = true
+    overviewPlan()
+      .then((p) => {
+        if (alive) setOvr(p)
+      })
+      .catch(() => {
+        /* 拿不到就不显示，不打扰 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [backendOnline, meta?.source])
 
   useEffect(() => {
     const el = boxRef.current
@@ -41,6 +64,25 @@ export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: stri
             <span className="mono dim">
               {meta.res_m.toFixed(2)} m/px · {meta.width.toLocaleString()}×
               {meta.height.toLocaleString()} px
+            </span>
+          </>
+        )}
+        {ovr && (
+          <>
+            <span className="sep" />
+            <span
+              className={ovr.kind === 'none' ? 'dim' : 'dim'}
+              title={
+                ovr.kind === 'none'
+                  ? '这张影像没有金字塔：缩放到远处会明显变慢，可点顶部横幅建立'
+                  : ovr.kind === 'external'
+                    ? `外置 .ovr 加速：${ovr.ovr_path ?? ''}`
+                    : '金字塔写在 tif 内部'
+              }
+            >
+              {ovr.kind === 'none'
+                ? '⚠️ 无加速结构（远处会慢）'
+                : `加速：${ovr.kind === 'external' ? '外置 .ovr' : '内部金字塔'} ×${ovr.levels?.length ?? 0}`}
             </span>
           </>
         )}

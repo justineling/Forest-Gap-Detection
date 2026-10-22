@@ -199,12 +199,25 @@ export default function App() {
           )
           return
         }
+        // ⚠️ 后端不可用时**不要**自动塞内置样例：
+        //    用户会以为那些多边形是自己上次的检测结果
+        //    （2026-10-22 实测：重启后影像服务未连接，界面却出现一片空地多边形，
+        //     用户第一反应是"检测区域怎么还在"）。
+        //    样例只在显式演示模式（URL 带 ?demo=1）下加载。
+        const demo = new URLSearchParams(window.location.search).has('demo')
+        if (!demo) {
+          pushLog(
+            `后端不可用（${e instanceof Error ? e.message : e}）；` +
+              '未载入任何结果。先选影像，服务起来后结果会自动载入。',
+          )
+          return
+        }
         try {
           const res = await fetch('/sample-gaps.geojson')
           if (!res.ok) throw new Error(`HTTP ${res.status}`)
           const fc = (await res.json()) as GapCollection
           setGaps(fc.features ?? [], fc.planting_grid ?? null)
-          pushLog(`后端不可用（${e instanceof Error ? e.message : e}），已载入内置样例数据`)
+          pushLog(`演示模式：已载入内置样例数据（后端不可用：${e instanceof Error ? e.message : e}）`)
         } catch (e2) {
           pushLog(`载入失败：${e2 instanceof Error ? e2.message : String(e2)}`)
         }

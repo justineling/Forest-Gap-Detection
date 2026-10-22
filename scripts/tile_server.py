@@ -841,6 +841,20 @@ def overview_plan(source: Path, mode: str = "auto") -> dict:
     size = source.stat().st_size
     gdaladdo = _find_gdaladdo()
 
+    # 加速结构来自哪里（给界面显示用）：
+    #   internal = 金字塔写在 tif 内部（原图自带，或 copy 模式生成的副本）
+    #   external = 同名 .ovr 外置文件（GDAL 的 PAM 机制自动加载）
+    #   none     = 没有任何金字塔，缩放到远处会很慢
+    # ⚠️ rasterio 的 ds.overviews(1) **包含**外置 .ovr（PAM 自动挂载），
+    #    所以只能靠"同名 .ovr 是否存在"来区分内部还是外置。
+    ovr_path = source.with_name(source.name + ".ovr")
+    if not levels:
+        kind = "none"
+    elif ovr_path.exists():
+        kind = "external"
+    else:
+        kind = "internal"
+
     if levels:
         action, why = "none", "已有金字塔，无需处理"
     elif mode == "inplace":
@@ -884,6 +898,8 @@ def overview_plan(source: Path, mode: str = "auto") -> dict:
     return {
         "source": str(source),
         "has_overviews": bool(levels),
+        "kind": kind,
+        "ovr_path": str(ovr_path) if kind == "external" else None,
         "levels": levels,
         "width": width,
         "height": height,
