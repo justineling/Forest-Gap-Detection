@@ -502,6 +502,86 @@ fn resolve_backend(app: &tauri::AppHandle) -> Option<Backend> {
 ///
 /// 打包版没有"仓库根"，而 `tile_server` 的默认探测（`drone data/`、`output/`）
 /// 都是相对路径。所以这里给一个明确的工作目录，并把相对路径参数补成绝对路径。
+/// 实测目录可写（写探针再删）。Windows 上"目录存在"不代表能写 ——
+/// 装到 Program Files 时安装目录是只读的，必须实测。
+fn dir_is_writable(dir: &std::path::Path) -> bool {
+    let probe = dir.join(".fgd-write-probe");
+    let ok = std::fs::write(&probe, b"1").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    ok
+}
+
+/// 递归复制目录，**总量超过 `cap` 就整体放弃**（避免首次启动卡在几 GB 的拷贝上）。
+///
+/// 返回复制成功的字节数；0 表示"太大没搬"。
+fn copy_dir_capped(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    cap: u64,
+) -> std::io::Result<u64> {
+    fn size_of(dir: &std::path::Path) -> u64 {
+        let mut total = 0u64;
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                match e.metadata() {
+                    Ok(m) if m.is_dir() => total += size_of(&p),
+                    Ok(m) => total += m.len(),
+                    Err(_) => {}
+                }
+            }
+        }
+        total
+    }
+    fn copy_all(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<u64> {
+        std::fs::create_dir_all(dst)?;
+        let mut n = 0u64;
+        for e in std::fs::read_dir(src)? {
+            let e = e?;
+            let from = e.path();
+            let to = dst.join(e.file_name());
+            if e.metadata()?.is_dir() {
+                n += copy_all(&from, &to)?;
+            } else {
+                n += std::fs::copy(&from, &to)?;
+            }
+        }
+        Ok(n)
+    }
+    let total = size_of(src);
+    if total > cap {
+        return Ok(0);
+    }
+    copy_all(src, dst)
+}
+
+/// 首次切到「程序旁边的 data/」时，把旧位置（%LOCALAPPDATA%\fgd\data）的数据搬过来。
+///
+/// 只搬小的两样：
+///   · `settings.json`（记录影像路径，几 KB）
+///   · `output/`（检测结果，通常几 MB；超过 200 MB 就放弃，避免首次启动卡住）
+///
+/// **影像本身不搬**：可能 5 GB，而且 settings.json 里存的是绝对路径，搬了反而失效。
+fn migrate_from_localappdata(target: &std::path::Path) {
+    let Ok(local) = std::env::var("LOCALAPPDATA") else {
+        return;
+    };
+    let old = PathBuf::from(local).join("fgd").join("data");
+    if !old.is_dir() || old == target {
+        return;
+    }
+    let src_cfg = old.join("settings.json");
+    let dst_cfg = target.join("settings.json");
+    if src_cfg.is_file() && !dst_cfg.exists() {
+        let _ = std::fs::copy(&src_cfg, &dst_cfg);
+    }
+    let src_out = old.join("output");
+    let dst_out = target.join("output");
+    if src_out.is_dir() && !dst_out.exists() {
+        let _ = copy_dir_capped(&src_out, &dst_out, 200 * 1024 * 1024);
+    }
+}
+
 fn bundled_data_root(app: &tauri::AppHandle) -> PathBuf {
     // 1) 显式指定（运维 / 多套数据切换）
     if let Ok(p) = std::env::var("FGD_DATA_ROOT") {
@@ -517,7 +597,28 @@ fn bundled_data_root(app: &tauri::AppHandle) -> PathBuf {
             return d;
         }
     }
-    // 3) %LOCALAPPDATA%\fgd\data —— **可写**，推荐用户把影像与结果放这里。
+    // 2.5) **便携模式：程序旁边的 data/** —— 数据跟着程序走，不占 C 盘。
+    //
+    // 用户要求（2026-10-23）："把数据存储在 D:\Forest Gap Detection 内，
+    // 而不是把数据存储在 c 盘内"。装在 D 盘根目录时这里可写，优先用它。
+    //
+    // ⚠️ 必须实测可写再返回：装到 `C:\Program Files` 时安装目录只读，
+    //    此时要老老实实回退到下面的 %LOCALAPPDATA%。
+    // ⚠️ 只对**主程序**成立：`desktop_entry.exe` 在 py-runtime 子目录里，
+    //    它不会走这里 —— 子进程的 cwd 由 `build_command` 显式传入。
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let d = dir.join("data");
+            let usable = d.is_dir() || std::fs::create_dir_all(&d).is_ok();
+            if usable && dir_is_writable(&d) {
+                // 首次切换：把旧位置的小数据搬过来（幂等，已存在就跳过）
+                migrate_from_localappdata(&d);
+                return d;
+            }
+        }
+    }
+
+    // 3) %LOCALAPPDATA%\fgd\data —— 兜底：程序目录不可写时用这里。
     //    安装到 Program Files 时安装目录是只读的，写不了 output/ 与瓦片缓存。
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         let d = PathBuf::from(local).join("fgd").join("data");
@@ -1902,11 +2003,17 @@ fn get_status(app: tauri::AppHandle) -> AppStatus {
 /// 而这里出错的代价是"界面状态错乱"这种不报错、只让人困惑的故障 ——
 /// 恰恰是最需要被测试钉住的一类。纯函数四个分支覆盖完，测试是确定性的。
 fn should_clear_gaps(
-    old_image: &Option<String>,
-    new_image: &Option<String>,
+    _old_image: &Option<String>,
+    _new_image: &Option<String>,
     gaps_given: bool,
 ) -> bool {
-    new_image != old_image && !gaps_given
+    // ⚠️ 不再要求"影像变了"。
+    //
+    // 用户点「换一张影像」再选**同一张** tif 时，意图是"重新开始"，不是"继续上次"。
+    // 旧逻辑 `new_image != old_image && !gaps_given` 在这种情形下返回 false →
+    // cfg.gaps 保留 → 前端一加载就跳回第 4 步（2026-10-23 实测）。
+    // `gaps_given` 仍然要尊重：用户明确指定了结果文件时不能清。
+    !gaps_given
 }
 
 /// 用户选了影像（或结果文件）→ 存配置 + 重启瓦片服务。
@@ -3396,11 +3503,16 @@ mod tests {
         let a = Some("A.tif".to_string());
         let b = Some("B.tif".to_string());
         // 换影像 + 没给新结果 → 清空
+        // 影像变了 + 没给结果 → 清（原行为）
         assert!(should_clear_gaps(&a, &b, false));
         // 换影像 + 同时给了新结果 → 不清（新结果会覆盖）
         assert!(!should_clear_gaps(&a, &b, true));
         // 同一张影像 + 没给结果 → 不清（重选同一张不该抹掉现有结果）
-        assert!(!should_clear_gaps(&a, &a, false));
+        // ★ 影像没变 + 没给结果 → **也要清**（2026-10-23 口径变更）：
+        //   用户点「换一张影像」再选同一张 tif，意图是重新开始。
+        assert!(should_clear_gaps(&a, &a, false));
+        // 影像没变 + 明确给了结果 → 不清
+        assert!(!should_clear_gaps(&a, &a, true));
         // 首次选择（原来没有影像）→ 清空（可能残留上一次会话的结果）
         assert!(should_clear_gaps(&None, &a, false));
     }

@@ -31,7 +31,7 @@ import {
   type AppStatus,
 } from './api/backend'
 import { toInput, type ActionKind, type StepKey } from './lib/workflow'
-import { decideGapsLoad, shouldClearGapsOnImageChange } from './lib/gapsLoad'
+import { decideGapsLoad } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
 import ResumeDialog from './components/ResumeDialog'
@@ -162,6 +162,15 @@ export default function App() {
    * 而他刚刚才亲手点了重载，这话完全不成立。
    */
   const firstLoadDone = useRef(false)
+  /**
+   * 向导提交后，**跳过紧接着那一次自动载入**。
+   *
+   * 为什么需要：`onWizardDone` 会 `setGaps([])` 清空界面，但随后 `probeAndLoad`
+   * 又调 `loadGaps()` —— 后端 `/gaps` 会扫 `output/` 找最新结果文件，
+   * 于是旧结果立刻被拉回来，界面又跳回第 4 步（2026-10-23 实测）。
+   * 这个 ref 只跳过**紧随其后的那一次**；用户之后点「重新载入结果」仍可加载。
+   */
+  const skipNextLoad = useRef(false)
   /**
    * 是否有一份"暂存待确认"的结果（弹窗还开着）。
    *
@@ -307,6 +316,17 @@ export default function App() {
       // （否则每跑完一次检测就弹一次"发现上次的检测结果"）。
       const isFirstLoad = !firstLoadDone.current
       firstLoadDone.current = true
+      // 向导刚提交过 → 跳过这一次自动载入（见 skipNextLoad 的注释）。
+      // `rerun`（检测完成后刷新）不受影响：那是新结果，必须载入。
+      if (skipNextLoad.current && !opts?.rerun) {
+        skipNextLoad.current = false
+        setLoadingGaps(false)
+        pushLog(
+          '已清空界面上的结果（重新开始）。磁盘上的结果文件仍在，' +
+            '想找回点「⋯ 更多 → 重新载入结果」。',
+        )
+        return
+      }
       setLoadingGaps(true)
       try {
         const fc = await fetchGaps()
@@ -631,18 +651,22 @@ export default function App() {
   const onWizardDone = useCallback(async () => {
     setWizard(null)
     const st = await getStatus()
-    // ⚠️ 换影像后必须清空 store 里的旧结果：`setGaps([])` 会把
-    //    `workflow.loaded` 置 false，步骤判定才会回到「运行检测」。
-    //    不清的话：旧结果属于上一张影像（网格原点/坐标系都可能不同），
-    //    界面会直接跳到「复核结果」并弹"结果没读到"（2026-10-21 实测）。
-    //    判定条件抽在 shouldClearGapsOnImageChange 里（有单测）。
-    if (shouldClearGapsOnImageChange(st.image, appStatus?.image)) {
-      setGaps([])
-      setGapsError(null)
-    }
+    // ⚠️ 向导 = 用户主动重新选数据 → **无条件清空界面结果**。
+    //
+    // 2026-10-23 口径变更：以前用 `shouldClearGapsOnImageChange`，它的规则是
+    // "同一张影像 → 不清"（防止重选时误抹结果）。但用户的实际路径是：
+    // 点「换一张影像」→ 又选了同一张 tif → 期望"重新开始"，
+    // 结果旧结果还在 → 步骤判定"检测已完成" → 直接跳第 4 步。
+    // 用户原话：「项目不会自动跳转到后续的步骤」。
+    //
+    // 现在的约定：**进向导就是重新开始**。想接着看旧结果有专门的入口
+    // （启动弹窗的「继续复核」/「⋯ 更多 → 重新载入结果」）。
+    setGaps([])
+    setGapsError(null)
+    skipNextLoad.current = true
     setAppStatus(st)
     await probeAndLoad()
-  }, [probeAndLoad, appStatus, setGaps])
+  }, [probeAndLoad, setGaps])
 
   // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 进度条 / 日志 / 自动重载结果
   // ⚠️ 浏览器模式（Headless Chrome）下 onSidecarEvent 直接返回空订阅，
@@ -945,8 +969,11 @@ export default function App() {
           setShowExport(true)
           break
         case 'openOutput':
-          if (outputDir) {
-            openPath(outputDir).catch((e) =>
+          // ⚠️ 用**后端返回的数据根**（`appStatus.data_root`），不要用前端的
+          //    `outputDir` —— 后者是 localStorage 里缓存的旧值，实测指向安装目录
+          //    `D:\Forest Gap Detection`，而不是数据目录（2026-10-23 用户反馈）。
+          if (appStatus?.data_root || outputDir) {
+            openPath(appStatus?.data_root || outputDir).catch((e) =>
               pushLog(`打开目录失败：${e instanceof Error ? e.message : String(e)}`),
             )
           } else {
