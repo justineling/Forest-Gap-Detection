@@ -285,6 +285,44 @@ def job_gaps_path(source: Path | None, job: str | None) -> Path | None:
     return None
 
 
+def export_outdir(raw_out: object, job: str | None, root: Path | None = None) -> Path:
+    """算出交付包该落在哪个目录 —— **永远**带上区块名那一层。
+
+    ## 为什么"用户自己选了目录"也还要再分一层
+
+    交付包里的文件名是**固定的**（`gaps-all-wgs84.geojson` / `gaps-all.kml` /
+    `补种勘察一页报告.html` …）。两块导出到同一个目录时，block B 会把 block A
+    的交付包**整个盖掉，而且不报错** —— 用户拿到的"上一批"其实是这一批，
+    到现场才发现放样点错了一片。这类"看起来正常"的错是本项目最贵的。
+
+    而"用户选了目录"不是罕见分支：前端 `useAppStore` 会记住上次选的导出目录，
+    所以**第二次导出之后的常态**就是带着 `outdir` 进来。因此这里不能把 outdir
+    当成"整份交付包的落点"，只能当成**父目录**，再拼一级 `<区块>/`。
+
+    唯一例外：outdir 的**末段已经是这个区块名**（用户手动指到 `.../wgr17-002`）
+    → 说明他自己分好了，不再套娃（否则会出现 `wgr17-002/wgr17-002/`）。
+
+    参数：
+        raw_out: 前端传来的 `outdir`（可能是空串 / None / 非字符串脏值）
+        job:     当前区块名（`None` → 用 `block`）
+        root:    解析相对路径的基准（默认模块级 `ROOT`，测试会替换它做隔离）
+
+    返回：绝对路径（不做 mkdir，由 `export_bundle` 负责）。
+    """
+    base = ROOT if root is None else root
+    block = sanitize_job(job or "")
+    if not isinstance(raw_out, str) or not raw_out.strip():
+        # 没选目录 → 默认 `output/desktop-export/<区块>/`
+        return base / "output" / "desktop-export" / block
+    d = Path(raw_out.strip())
+    if not d.is_absolute():
+        d = base / d
+    # 末段已经是区块名（大小写不敏感：Windows 用户可能手打大写）→ 不套娃
+    if d.name.lower() == block.lower():
+        return d
+    return d / block
+
+
 def discover_gaps(source: Path | None) -> Path | None:
     """在候选目录里找**最新的** `*gaps*.geojson`（按 mtime）。
 
@@ -1567,11 +1605,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/export":
-            # 导出默认目录按区块分开：`output/desktop-export/<job>/`。
+            # 导出目录**永远**按区块分开：`<outdir>/<job>/`（没选 outdir 时是
+            # `output/desktop-export/<job>/`）。规则与理由见 `export_outdir`。
             #
-            # 为什么必须分（用户需求："不能清空 A 的数据"）：交付包里的文件名是固定的
-            # （`gaps.geojson` / `report.html` / `放样点.shp`…），单一目录下换区块再导出
-            # 会把 A 的交付包整个盖掉 —— 用户拿到的"上一批"其实是这一批。
+            # ⚠️ 这里曾经是 `outdir = payload["outdir"] or default_dir` —— 只要前端
+            #    带了 outdir（而前端会记住上次选的目录，所以第二次导出就带），
+            #    `<job>/` 那层就被整个绕过，于是交付包里的固定文件名
+            #    （`gaps-all-wgs84.geojson` / `gaps-all.kml` / 报告 html…）
+            #    让 block B **静默盖掉** block A 的交付包。注释写着"按区块分家"、
+            #    实现只在 outdir 留空时成立 —— 注释与实现不一致，代价是用户的交付包。
             #
             # 用 current_gaps() 而不是 gaps_path：导出必须按**当前生效**的结果算，
             # 否则用户刚切完区块就导出，报告里的株数还是上一个区块的。
@@ -1581,10 +1623,7 @@ class Handler(BaseHTTPRequestHandler):
                 stem = Path(gp).stem
                 if stem.lower().endswith("-gaps"):
                     job = stem[: -len("-gaps")]
-            default_dir = ROOT / "output" / "desktop-export" / (job or "block")
-            outdir = Path(payload.get("outdir") or default_dir)
-            if not outdir.is_absolute():
-                outdir = ROOT / outdir
+            outdir = export_outdir(payload.get("outdir"), job)
             base_obj = None
             if gp and Path(gp).exists():
                 try:

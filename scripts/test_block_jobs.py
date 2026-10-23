@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tile_server as ts  # noqa: E402
 from tile_server import (  # noqa: E402
     TileServer,
+    export_outdir,
     gaps_belongs_to,
     gaps_owner,
     job_gaps_path,
@@ -253,30 +254,134 @@ def main() -> int:
 
             shutil.rmtree(tmp2, ignore_errors=True)
 
-        print("\nE. 候选名上限与 Rust 一致（99，不是 9）")
-        # 第 15 个同名影像：Rust 会分配 wgr17-002-15，Python 必须能找到
+        print("\nE. 候选名上限：1..99 找得到，第 100 个找不到（与 Rust 的 JOB_MAX_TRIES 同值）")
+        # ⚠️ 这一段以前标题写"上限与 Rust 一致（99）"，实际只造到第 15 张 ——
+        #    把 JOB_MAX_TRIES 改成 15 仍然全绿，正好漏掉边界。
+        #    现在真的打到边界，三条都要成立：
+        #      ① 第 15 张（现实里会遇到的量级）找得到；
+        #      ② 第 99 张（上限本身）找得到；
+        #      ③ `-100`（Rust 旧版兜底会造出来的名字）**找不到** ——
+        #         否则"Rust 写 100、Python 只扫 99"就退化成
+        #         "检测成功了但界面没有空地"。
         tmp3 = Path(tempfile.mkdtemp(prefix="fgd-blockjobs3-"))
         try:
             use_root(tmp3)
             out3 = tmp3 / "output"
             imgs = []
-            for i in range(15):
+            for i in range(100):
                 p = tmp3 / f"dir{i}" / "WGR17-002.tif"
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_bytes(b"x" * (i + 1))
                 imgs.append(p)
-            last = imgs[-1]
-            write_result(out3 / "wgr17-002-15-gaps.geojson", source_path=last, marker="O-1")
-            got = job_gaps_path(last, "wgr17-002")
+            # 第 15、99、100 张各自有一份结果（内容是空的都行，只验"找不找得到"）
+            write_result(out3 / "wgr17-002-15-gaps.geojson", source_path=imgs[14], marker="O-15")
+            write_result(out3 / "wgr17-002-99-gaps.geojson", source_path=imgs[98], marker="O-99")
+            write_result(out3 / "wgr17-002-100-gaps.geojson", source_path=imgs[99], marker="O-100")
+
+            got15 = job_gaps_path(imgs[14], "wgr17-002")
             check(
-                got is not None and got.name == "wgr17-002-15-gaps.geojson",
-                "★ 第 15 个同名影像的结果找得到（上限与 Rust 同为 99）",
-                got.name if got else "(None)",
+                got15 is not None and got15.name == "wgr17-002-15-gaps.geojson",
+                "第 15 个同名影像的结果找得到",
+                got15.name if got15 else "(None)",
+            )
+
+            got99 = job_gaps_path(imgs[98], "wgr17-002")
+            check(
+                got99 is not None and got99.name == "wgr17-002-99-gaps.geojson",
+                "★ 第 99 个（上限本身）也找得到 —— 上限不是 9 也不是 15",
+                got99.name if got99 else "(None)",
+            )
+
+            got100 = job_gaps_path(imgs[99], "wgr17-002")
+            check(
+                got100 is None,
+                "★ 第 100 个找不到（上限就是 99；Rust 用尽时改为报错，不再分配 -100）",
+                got100.name if got100 else "(None)",
+            )
+
+            check(
+                ts.JOB_MAX_TRIES == 99,
+                "常量与 Rust 的 JOB_MAX_TRIES 同为 99（改一个就必须改另一个）",
+                str(ts.JOB_MAX_TRIES),
             )
         finally:
             import shutil
 
             shutil.rmtree(tmp3, ignore_errors=True)
+
+        print("\nF. 导出目录：用户选过目录也**必须**按区块分家（否则两块静默互相覆盖）")
+        # 交付包里的文件名是固定的（gaps-all-wgs84.geojson / gaps-all.kml / 报告 html），
+        # 而前端会记住上次选的导出目录 —— 所以"带 outdir 进来"是第二次导出之后的常态。
+        # 旧实现 `outdir = payload["outdir"] or default_dir` 只要 outdir 非空就整个
+        # 绕过 `<job>/` 那层，block B 会把 block A 的交付包整个盖掉，且不报错。
+        tmp4 = Path(tempfile.mkdtemp(prefix="fgd-blockjobs4-"))
+        try:
+            use_root(tmp4)
+            shared = tmp4 / "交付" / "2026-10"
+
+            # ① 同一个 outdir 连导两次（两个不同区块）→ 两个子目录都在，互不覆盖
+            dir_a = export_outdir(str(shared), "wgr17-002")
+            dir_b = export_outdir(str(shared), "wgr17-003")
+            dir_a.mkdir(parents=True, exist_ok=True)
+            dir_b.mkdir(parents=True, exist_ok=True)
+            (dir_a / "gaps-all-wgs84.geojson").write_text("A", encoding="utf-8")
+            (dir_b / "gaps-all-wgs84.geojson").write_text("B", encoding="utf-8")
+            check(dir_a != dir_b, "★ 两个区块的导出目录必须不同", f"{dir_a.name} vs {dir_b.name}")
+            check(
+                (dir_a / "gaps-all-wgs84.geojson").read_text(encoding="utf-8") == "A",
+                "★ A 的交付包没有被 B 覆盖（这就是原来那个静默覆盖）",
+            )
+            check(
+                dir_a.parent == shared and dir_b.parent == shared,
+                "两者都落在用户选的父目录下",
+                str(dir_a.parent),
+            )
+
+            # ② outdir 末段已经是区块名 → 不再套一层（否则 wgr17-002/wgr17-002/）
+            mine = export_outdir(str(shared / "wgr17-002"), "wgr17-002")
+            check(mine == shared / "wgr17-002", "★ 末段已是区块名 → 不套娃", str(mine))
+            check(
+                "wgr17-002/wgr17-002" not in str(mine).replace("\\", "/"),
+                "不出现重复的区块目录",
+                str(mine),
+            )
+            # 大小写不同也算"已经分好了"（Windows 用户可能手打大写）
+            check(
+                export_outdir(str(shared / "WGR17-002"), "wgr17-002") == shared / "WGR17-002",
+                "末段大小写不同 → 同样不套娃",
+            )
+
+            # ③ outdir 留空 → 仍落到默认的 output/desktop-export/<job>/
+            d_default = export_outdir("", "wgr17-002")
+            check(
+                d_default == tmp4 / "output" / "desktop-export" / "wgr17-002",
+                "outdir 留空 → 默认 output/desktop-export/<区块>/",
+                str(d_default),
+            )
+            check(
+                export_outdir(None, None) == tmp4 / "output" / "desktop-export" / "block",
+                "没有区块名 → 兜底 block",
+            )
+
+            # ④ 相对路径按 ROOT 解析；脏值（数字 / 空白）当没给
+            rel = export_outdir("交付/2026-10", "wgr17-002")
+            check(
+                rel == tmp4 / "交付" / "2026-10" / "wgr17-002",
+                "相对 outdir 按数据根解析，再拼区块名",
+                str(rel),
+            )
+            check(
+                export_outdir("   ", "wgr17-002") == d_default,
+                "只有空白的 outdir → 当没给",
+            )
+            check(
+                export_outdir(123, "wgr17-002") == d_default,
+                "非字符串的 outdir → 当没给（不崩）",
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp4, ignore_errors=True)
     finally:
         import shutil
 
