@@ -1275,3 +1275,22 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 
     现在：`config_target()` 便携优先（`程序目录/data/settings.json`），
     `load_config()` 目标不存在时读 `legacy_config_path()` 并顺手迁移过去。
+
+56. **数据目录搬家后，`settings.json` 里的绝对路径不会自己变**
+
+    `migrate_from_localappdata` 只复制文件，不改内容。于是 `gaps` 还指向旧位置：
+
+    ```json
+    "gaps": "C:////Users////...////AppData////Local////fgd////data////output////wgr17-desktop-gaps.geojson"
+    ```
+
+    而文件其实已复制到 `D:////Forest Gap Detection\\data\\output\\`。
+    向导里显示「✓ 结果文件」（只显示文件名），一点「开始使用」就报
+    「结果文件不存在」→ **卡在第一步**（2026-10-23 用户实测）。
+
+    修法：`rebase_to_data_root(old)` —— 拿文件名去数据根下的 `output/` 与根目录
+    各找一次，找到就返回新路径（**只改路径、不搬文件**）。
+    `load_config()` 自愈并写回；`set_data_paths()` 兜底前端传旧路径的情形。
+
+    **推论**：任何"把数据换个地方"的迁移，都要问
+    **"配置文件里的绝对路径谁来更新？"**
