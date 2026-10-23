@@ -31,7 +31,7 @@ import {
   type AppStatus,
 } from './api/backend'
 import { nextAction, toInput, type ActionKind, type StepKey } from './lib/workflow'
-import { decideGapsLoad, shouldLoadAfterWizard } from './lib/gapsLoad'
+import { decideGapsLoad, shouldLoadAfterWizard, shouldLoadJobResultOnSwitch } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
 import ResumeDialog from './components/ResumeDialog'
@@ -528,7 +528,7 @@ export default function App() {
             {
               key: 'chm_path',
               label: '冠层高度模型（CHM）',
-              path: 'D:/project/output/chm.tif',
+              path: 'D:/project/output/wgr17-002-chm.tif',
               status: 'warn',
               detail: '文件不存在 —— 缺了会退化成纯 RGB 判据，水体与低矮植被会大量误判',
             },
@@ -549,7 +549,7 @@ export default function App() {
             {
               key: 'work_dir',
               label: '输出目录',
-              path: 'D:/project/output/jobs',
+              path: 'D:/project/output/caches',
               status: 'ok',
               detail: '可写',
             },
@@ -727,16 +727,50 @@ export default function App() {
         return
       }
 
-      // —— 分支 B：没给结果文件 → 保持"进向导 = 重新开始"的语义 ——
+      // —— 分支 B：没给结果文件 ——
+      //
+      // 这里要分开两种意图（判据见 lib/gapsLoad.ts 的 shouldLoadJobResultOnSwitch）：
+      //
+      //   B1. **换到了另一张影像，且那张影像自己跑过** → 载入它自己的结果。
+      //       这是用户的核心诉求："检测完 block A 再检测 block B，不能清空 A 的数据，
+      //       切回 A 还能看到 A 的结果"。以前结果是同一个文件（job 写死），
+      //       切回去什么都看不到，因为 A 的结果早被 B 覆盖了。
+      //
+      //   B2. 其余（新影像没跑过 / 又选了同一张影像想重新开始）→ 保持
+      //       "进向导 = 重新开始"的语义。
       //
       // 2026-10-23 口径：以前用 `shouldClearGapsOnImageChange`，规则是
       // "同一张影像 → 不清"（防止重选时误抹结果）。但用户的实际路径是：
       // 点「换一张影像」→ 又选了同一张 tif → 期望"重新开始"，
       // 结果旧结果还在 → 步骤判定"检测已完成" → 直接跳第 4 步。
       // 用户原话：「项目不会自动跳转到后续的步骤」。
-      //
-      // 现在的约定：**进向导且没指定结果 = 重新开始**。想接着看旧结果有专门的入口
+      // 所以 B2 一律清空；"想接着看旧结果"有专门的入口
       // （启动弹窗的「继续复核」/「⋯ 更多 → 重新载入结果」）。
+      if (
+        shouldLoadJobResultOnSwitch({
+          imageChanged: !!st.image && st.image !== (appStatus?.image ?? null),
+          hasResult: !!st.gaps,
+        })
+      ) {
+        // B1：切到另一个区块，它自己有结果 → 载入它自己的
+        //
+        // 先清空是为了不把上一个区块的结果留在屏幕上（载入是异步的，
+        // 清空与载入之间会有一小段空窗，留着旧结果看起来像"没换成功"）。
+        setGaps([])
+        setGapsError(null)
+        skipNextLoad.current = false
+        resumePending.current = false
+        setPendingResume(null)
+        setResumeAsk(null)
+        // 圈选属于上一个区块（范围与结果是一起交付的），不能带过来 ——
+        // 否则导出的报告会用 A 的范围去描述 B 的结果。
+        setRoi(null)
+        pushLog(`已切换到区块 ${st.job ?? ''}，正在载入它自己的结果…`)
+        await probeAndLoad({ fromWizard: true })
+        return
+      }
+
+      // —— B2：没给结果文件 → 保持"进向导 = 重新开始"的语义 ——
       setGaps([])
       setGapsError(null)
       // ⚠️ 圈选也必须一起清（2026-10-24 用户反馈）：
@@ -752,7 +786,7 @@ export default function App() {
       skipNextLoad.current = true
       await probeAndLoad()
     },
-    [probeAndLoad, setGaps, setRoi],
+    [probeAndLoad, setGaps, setRoi, appStatus?.image],
   )
 
   // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 进度条 / 日志 / 自动重载结果
@@ -835,13 +869,23 @@ export default function App() {
    * 只有 `input` 是绝对的（来自 /meta），其余是**相对数据根**的路径 ——
    * Rust 侧会按 dev/bundled 两种基准补成绝对路径。
    * 森林掩膜**刻意不写死文件名**：换影像后文件名会变，交给预检自动发现。
+   *
+   * ⚠️ 区块名（`job`）与高度图（`chm_path`）以前写死在这里：
+   *   · `job: 'wgr17-desktop'` → 所有影像的结果写到同一个文件，block B 覆盖 block A；
+   *   · `chm_path: 'output/chm.tif'` → 所有影像共用一张高度图，B 拿 A 的树高算高程。
+   * 现在两个都由 Rust 按**影像名**算（`appStatus.job` / `output/<区块名>-chm.tif`），
+   * 前端只负责把当前区块名报给后端做日志，真正的路径以 Rust 侧为准。
    */
   const buildDetectParams = useCallback(
     (): Record<string, unknown> => ({
       input: meta?.source ?? 'drone data/WGR17-002.tif',
-      job: 'wgr17-desktop',
-      chm_path: 'output/chm.tif',
-      segment_path: 'drone data/segment.tif',
+      // 区块名由后端算（见 get_status）。拿不到就不传 —— 后端会按影像名自己算，
+      // 传一个猜的名字反而可能写错文件。
+      ...(appStatus?.job ? { job: appStatus.job } : {}),
+      // ⚠️ 这里**不再**写死 `segment_path: 'drone data/segment.tif'`：
+      //    换到 block B 后那个路径仍指向 block A 的分割图（而且它存在！），
+      //    预检找不到 B 自己的分割图时不会覆盖它 → B 静默用 A 的水面判据。
+      //    交给预检/后端按"影像同目录"自动发现，找不到就如实报缺。
       workers: detectParams.workers,
       target_density_per_ha: detectParams.targetDensity,
       // CHM 高度阈值（缺陷台账 P1-3）：三档林龄预设 + 手动微调。
@@ -849,7 +893,7 @@ export default function App() {
       elevation_core_chm: detectParams.chmCore,
       elevation_veto_chm: detectParams.chmVeto,
     }),
-    [meta, detectParams],
+    [meta, detectParams, appStatus?.job],
   )
 
   /** 真正启动 sidecar */

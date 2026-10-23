@@ -466,6 +466,16 @@ export interface AppStatus {
   tile_running: boolean
   image: string | null
   gaps: string | null
+  /**
+   * 当前区块名（由影像文件名算出，同时是结果文件前缀与缓存目录名）。
+   *
+   * 为什么由后端给：区块名必须与磁盘上的文件名**逐字一致**（`<区块名>-gaps.geojson`）。
+   * 前端自己算一份就会有两套规则，早晚对不上 —— 以前写死 `'wgr17-desktop'` 时，
+   * 检测 block B 直接覆盖了 block A 的结果文件。
+   *
+   * 老版本 Rust 没有这个字段 → `null`（检测时后端会按影像名自己算，不依赖它）。
+   */
+  job?: string | null
   /** 数据根目录（提示"文件该放哪"时显示） */
   data_root: string
   /** true = 还没有可用影像，应显示「选择影像」引导 */
@@ -477,6 +487,7 @@ const BROWSER_STATUS: AppStatus = {
   tile_running: false,
   image: null,
   gaps: null,
+  job: null,
   data_root: '（浏览器模式）',
   needs_setup: false,
 }

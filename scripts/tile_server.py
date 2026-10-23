@@ -30,6 +30,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -48,6 +49,14 @@ from rasterio.warp import reproject, transform_bounds
 ROOT = Path(__file__).resolve().parent.parent
 
 TILE_SIZE = 256
+# 区块名（job）长度上限，必须与 `desktop/src-tauri/src/lib.rs` 的 JOB_MAX_LEN 一致
+JOB_MAX_LEN = 40
+# 同名影像的候选名上限（`job`、`job-2` … `job-99`），与 Rust 的 JOB_MAX_TRIES 一致。
+#
+# ⚠️ 两边必须同值：Rust 负责**分配**名字（第 15 个同名影像拿到 `job-15`），
+#    这里负责**找回**名字。上限不一样就会出现"Rust 写了 job-15、Python 只找到
+#    job-9"，症状又是"检测成功了但界面没有空地"。
+JOB_MAX_TRIES = 99
 WEB_MERCATOR = "EPSG:3857"
 WGS84 = "EPSG:4326"
 R_EARTH = 6378137.0
@@ -112,6 +121,168 @@ def gaps_search_dirs(source: Path | None) -> list[Path]:
         seen.add(key)
         out.append(d)
     return out
+
+
+def sanitize_job(raw: str) -> str:
+    """文件名 stem → 可安全用作目录名的区块名（与 Rust 侧 `job_id_for` **同一套规则**）。
+
+    两处必须逐字一致：Rust 用它决定**写**哪个文件，这里用它决定**读**哪个文件。
+    规则不一致的后果是"检测明明成功了（要素在磁盘上），界面却说没有空地" ——
+    这个故障在历史上真实发生过，代价是一整轮现场排查。
+
+    规则：小写 → `[a-z0-9._-]` 之外换成 `-` → 折叠连续 `-` → 去首尾 `-`
+          → 空串兜底 `block` → 截到 `JOB_MAX_LEN` 个字符。
+    """
+    out: list[str] = []
+    last_dash = False
+    for ch in raw.lower():
+        keep = ch.isascii() and (ch.isalnum() or ch in "._-")
+        if keep and not (ch == "-" and last_dash):
+            out.append(ch)
+            last_dash = ch == "-"
+        elif not keep and not last_dash:
+            out.append("-")
+            last_dash = True
+    s = "".join(out).strip("-")[:JOB_MAX_LEN].strip("-")
+    return s or "block"
+
+
+def job_id_for(source: Path | None) -> str | None:
+    """这张影像的区块名（`None` = 没有影像，算不出来）。"""
+    if source is None:
+        return None
+    return sanitize_job(Path(source).stem)
+
+
+def _result_source_image(p: Path) -> str | None:
+    """读结果文件里的 `source_image`（影像文件名）；读不出来返回 None。
+
+    只读前 256 KB：这个字段在 JSON 最外层前半段，而结果文件有 15 MB
+    （`features` 才是体积所在），为一次名字比对读整份不值。
+    """
+    try:
+        with p.open("rb") as f:
+            head = f.read(256 * 1024).decode("utf-8", "replace")
+    except OSError:
+        return None
+    m = re.search(r'"source_image"\s*:\s*"([^"]*)"', head)
+    return m.group(1) if m else None
+
+
+def _result_source_path(p: Path) -> str | None:
+    """读结果文件里记的影像**完整路径**（`inputs_snapshot.image.path`）。
+
+    为什么需要它（同名影像）：`source_image` 只有文件名，而用户完全可能有
+    `区块A/WGR17-002.tif` 与 `区块B/WGR17-002.tif` 两个区块 —— 只比文件名
+    会把它们当成同一张，于是 B 的影像上画出 A 的空地。
+
+    与 Rust 的 `gaps_source_path` 逐字对应（先找 `inputs_snapshot`，再找
+    其中的 `image`，再取 `path`），两边判据必须一致。
+    """
+    try:
+        with p.open("rb") as f:
+            head = f.read(256 * 1024).decode("utf-8", "replace")
+    except OSError:
+        return None
+    i1 = head.find('"inputs_snapshot"')
+    if i1 < 0:
+        return None
+    tail = head[i1:]
+    i2 = tail.find('"image"')
+    if i2 < 0:
+        return None
+    tail = tail[i2:]
+    m = re.search(r'"path"\s*:\s*"((?:[^"\\]|\\.)*)"', tail)
+    if not m:
+        return None
+    # JSON 里反斜杠是转义过的（Windows 路径会写成 `D:\\data\\a.tif`）
+    return m.group(1).replace("\\\\", "\\")
+
+
+def _same_file_path(a: Path, b: Path) -> bool:
+    """两个路径是否指向同一个文件（与 Rust 的 `same_file_path` 同语义）。
+
+    能规范化就比规范化结果（Windows 上顺带消掉大小写差异），
+    规范化失败就退化成规范化绝对路径的字符串比较 —— 保守方向是"判不同"。
+    """
+    try:
+        ra = os.path.normcase(str(Path(a).resolve(strict=False)))
+        rb = os.path.normcase(str(Path(b).resolve(strict=False)))
+        return ra == rb
+    except OSError:
+        return os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(
+            os.path.abspath(str(b))
+        )
+
+
+def gaps_owner(p: Path, source: Path | None) -> str:
+    """这份结果**属于谁**：`own` / `foreign` / `unknown`（三态，不是布尔）。
+
+    为什么必须三态：两种调用方对"读不出元数据"的期望正好相反 ——
+
+    · `job_gaps_path` / 自动发现：宁可不认（unknown → 当 foreign）。
+      认错了 = 别人的空地画在你的影像上，不报错、数字自洽，最危险。
+    · 用户在向导里**亲手指定**的结果文件：必须认。
+      那可能是同事给的、或手工整理过的 geojson，本来就没有我们的元数据；
+      当 foreign 拒掉会变成"我选了文件却不生效"。
+
+    判据强度（与 Rust 的 `gaps_belongs_to` 依次退化一致）：
+      1. `inputs_snapshot.image.path`（完整路径）—— 最可靠，同名影像也能分开
+      2. `source_image`（文件名）—— 老结果没有快照时用
+      3. 都没有 → `unknown`
+    """
+    if source is None:
+        return "own"
+    rec_path = _result_source_path(p)
+    if rec_path and rec_path.strip():
+        return "own" if _same_file_path(Path(rec_path.strip()), Path(source)) else "foreign"
+    rec = _result_source_image(p)
+    if rec is None:
+        return "unknown"
+    return "own" if rec.strip().lower() == Path(source).name.lower() else "foreign"
+
+
+def gaps_belongs_to(p: Path, source: Path | None) -> bool:
+    """这份结果是不是**当前影像**跑出来的（保守版：`unknown` 也算"不是"）。
+
+    为什么要判（多区块的安全阀）：`output/` 下会同时躺着几个区块的结果。
+    只按 mtime 取最新的话，用户切回 block A 时会读到 block B 的结果 ——
+    地图上是 A 的影像配 B 的空地，数字自洽、没有报错，是最危险的一种错。
+
+    没有影像（`source is None`，服务还没起来）→ 不拦，保持旧行为。
+    """
+    return gaps_owner(p, source) == "own"
+
+
+def job_gaps_path(source: Path | None, job: str | None) -> Path | None:
+    """本区块自己的结果 `output/<候选>-gaps.geojson`（**存在且属于这张影像**才返回）。
+
+    为什么需要它（多区块的核心）：`output/` 下会同时躺着
+    `block-a-gaps.geojson` 与 `block-b-gaps.geojson`。
+    只按 mtime 取最新的话，用户切回 block A 会读到 block B 的结果 ——
+    地图上是 A 的影像配 B 的空地，数字自洽、没有报错，是最危险的一种错。
+
+    ⚠️ 候选名必须**与 Rust 的冲突消解同规则**：`job`、`job-2`、`job-3`…
+    （Rust 侧是 `job_id_for_output`）。只在 `job` 上找是不够的 ——
+    两张影像同名时（`区块A/WGR17-002.tif` 与 `区块B/WGR17-002.tif`），
+    Rust 给 B 算出的名字是 `wgr17-002-2`，只找 `wgr17-002-gaps.geojson`
+    会命中 **A 的** 结果，于是 B 的影像上画 A 的空地。
+
+    每个候选都要过 `gaps_belongs_to`：名字对上但内容属于别人 → 继续往后试。
+    """
+    if not job:
+        return None
+    dirs = gaps_search_dirs(source)
+    for n in range(1, JOB_MAX_TRIES + 1):
+        cand = job if n == 1 else f"{job}-{n}"
+        for d in dirs:
+            p = d / f"{cand}-gaps.geojson"
+            try:
+                if p.is_file() and gaps_belongs_to(p, source):
+                    return p
+            except OSError:
+                continue
+    return None
 
 
 def discover_gaps(source: Path | None) -> Path | None:
@@ -428,15 +599,55 @@ class TileServer:
         如果只在启动时发现一次，用户跑完 6 分钟的检测回来，看到的还是上一轮
         结果，或者永远"未找到" —— 只能重启整个应用，这显然不可接受。
 
-        选择规则：显式指定的 `--gaps`（存在时）与自动发现的最新文件，取 mtime 更新的那个。
+        选择规则（顺序即正确性，改之前先读这段）：
+          ① 本区块自己的 `output/<候选>-gaps.geojson`（候选含冲突消解，且**验归属**）
+          ② 用户显式指定的 `--gaps`（只在**确定属于别的区块**时才拒）
+          ③ 兜底：按 mtime 找最新的，但**只接受属于当前影像的**
+          ①② 都命中时取 mtime 更新的那个 —— 本区块文件被重跑后会更新，
+          自动刷新不能被弄坏。
+
+        ⚠️ ① 不能省、也不能挪到最后。多区块下"最新"≠"当前"：
+        用户切回 block A 时，刚跑完的 block B 结果 mtime 更新，按 mtime 取会
+        把 B 的空地画在 A 的影像上 —— 数字自洽、没有报错，只有到现场才发现
+        坑挖错地方（交付级错误）。
         """
         with self._gaps_lock:
-            best: Path | None = None
+            # ① 本区块自己的结果
+            #
+            # ⚠️ 第二道防线：`job_gaps_path` 内部已经按 `gaps_belongs_to` 筛过一遍，
+            #    这里再断言一次。理由是这个错误的代价太高（别人的空地画在你的影像上，
+            #    不报错、数字自洽，只有到现场才发现坑挖错地方），而多一次判定的成本
+            #    只是读一个文件头 —— 将来若有人改了 ① 的筛选顺序，这条仍然兜得住。
+            own = job_gaps_path(self.source, job_id_for(self.source))
+            if own is not None and not gaps_belongs_to(own, self.source):
+                own = None
+            # ② 显式指定的（不存在、或**确定属于别的区块** → 不认）
+            #
+            # 注意这里只拒 `foreign`，不拒 `unknown`：用户亲手选的结果文件
+            # 可能没有我们的元数据（同事给的、手工整理的 geojson），
+            # 那属于"他明确要看这份"，拒掉就变成"选了却不生效"。
             explicit = self.gaps_explicit
-            if explicit is not None and explicit.exists():
-                best = explicit
+            if explicit is not None and not explicit.exists():
+                explicit = None
+            if explicit is not None and gaps_owner(explicit, self.source) == "foreign":
+                explicit = None
+
+            if own is not None and explicit is not None:
+                best: Path | None = (
+                    own if _mtime_ns(own) >= _mtime_ns(explicit) else explicit
+                )
+            else:
+                best = own if own is not None else explicit
+
+            # ③ 兜底：按 mtime 找最新的（**只认属于当前影像的**）
+            #
+            # 这里只看"最新的那一个"：它属于别人就直接放弃兜底，不再往回找第二新的。
+            # 取舍理由：兜底只为升级前的老数据服务（那时只有一个区块），
+            # 而"多试几个候选"每次请求都要多读几个文件头；正常路径由 ① 覆盖。
             found = discover_gaps(self.source)
-            # 谁有资格接管显式指定？
+            if found is not None and not gaps_belongs_to(found, self.source):
+                found = None
+            # 谁有资格接管已有的候选？
             #   · 当前还没有任何候选（best is None）→ 用找到的
             #   · 用户指定过 → 只接受"比指定时刻更新"的文件（= 指定之后新产生的）
             #   · 用户没指定（自动发现模式）→ 按 mtime 取最新
@@ -1356,13 +1567,25 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/export":
-            outdir = Path(payload.get("outdir") or (ROOT / "output" / "desktop-export"))
+            # 导出默认目录按区块分开：`output/desktop-export/<job>/`。
+            #
+            # 为什么必须分（用户需求："不能清空 A 的数据"）：交付包里的文件名是固定的
+            # （`gaps.geojson` / `report.html` / `放样点.shp`…），单一目录下换区块再导出
+            # 会把 A 的交付包整个盖掉 —— 用户拿到的"上一批"其实是这一批。
+            #
+            # 用 current_gaps() 而不是 gaps_path：导出必须按**当前生效**的结果算，
+            # 否则用户刚切完区块就导出，报告里的株数还是上一个区块的。
+            gp = self.tile_server.current_gaps()
+            job = job_id_for(self.tile_server.source)
+            if gp is not None:
+                stem = Path(gp).stem
+                if stem.lower().endswith("-gaps"):
+                    job = stem[: -len("-gaps")]
+            default_dir = ROOT / "output" / "desktop-export" / (job or "block")
+            outdir = Path(payload.get("outdir") or default_dir)
             if not outdir.is_absolute():
                 outdir = ROOT / outdir
             base_obj = None
-            # 用 current_gaps() 而不是 gaps_path：导出必须按**最新**的结果算，
-            # 否则用户刚重跑完就导出，报告里的株数还是上一轮的
-            gp = self.tile_server.current_gaps()
             if gp and Path(gp).exists():
                 try:
                     base_obj = json.loads(Path(gp).read_text(encoding="utf-8"))

@@ -160,3 +160,37 @@ export function shouldClearGapsOnImageChange(
 ): boolean {
   return !!next && next !== prev
 }
+
+/**
+ * 切换区块后该不该**载入新影像自己的**结果（而不是清空重来）。
+ *
+ * 为什么需要（用户需求："检测完 block A 再检测 block B，不能清空 A 的数据，
+ * 切回 A 还能看到 A 的结果"）：
+ *
+ * 每张影像的结果 / 缓存 / 高度图现在都按区块分开存（`output/<区块名>-gaps.geojson`），
+ * 所以"换影像"有两种完全不同的意图，必须分开处理：
+ *
+ * | 情形 | imageChanged | hasResult | 处置 |
+ * |---|---|---|---|
+ * | 从 block A 切到 block B，B 没跑过 | true | false | 清空，从第 1 步重走 |
+ * | 从 block B 切回 block A，A 跑过 | true | **true** | **载入 A 的结果** |
+ * | 又选了同一张影像（想重新开始） | false | true | 清空，从第 1 步重走 |
+ *
+ * 第三行是 2026-10-24 修过的坑：用户点「换一张影像」又选了同一个 tif，
+ * 期望"重新开始"，如果按"有结果就载入"处理，界面会立刻跳回第 4 步
+ * 「复核结果」—— 也就是他抱怨过的"点了重新开始却直接跳到最后一步"。
+ *
+ * 所以判据必须是 **"影像真的换了" + "新影像自己有结果"**，两个条件缺一不可。
+ * `imageChanged` 传"影像路径是否变化"，不要传"结果字段非空"。
+ */
+export interface JobSwitchInfo {
+  /** 这次选择的影像与当前影像**不是**同一个文件 */
+  imageChanged: boolean
+  /** 新影像**自己**已有结果文件（由 Rust 按区块名解析后返回） */
+  hasResult: boolean
+}
+
+export function shouldLoadJobResultOnSwitch(info?: JobSwitchInfo | null): boolean {
+  if (!info) return false
+  return info.imageChanged === true && info.hasResult === true
+}

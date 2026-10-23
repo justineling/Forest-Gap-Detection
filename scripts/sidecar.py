@@ -101,7 +101,7 @@ PARAM_SPEC: dict[str, tuple[type, object]] = {
     # (类型, 默认值)
     "input":            (str,   None),
     "job":              (str,   "wgr17-full"),
-    "work_dir":         (str,   "output/jobs"),
+    "work_dir":         (str,   "output/caches"),
     "out_json":         (str,   None),
     "kml":              (str,   None),   # 已废弃，请用 roi（保留兼容）
     "roi":              (str,   ""),     # ROI 圈选：只检测该多边形内（.geojson/.kml）

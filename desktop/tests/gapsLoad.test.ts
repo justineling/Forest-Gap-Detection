@@ -17,6 +17,7 @@ import {
   decideGapsLoad,
   shouldClearGapsOnImageChange,
   shouldLoadAfterWizard,
+  shouldLoadJobResultOnSwitch,
   SUSPECT_EMPTY_DETAIL,
 } from '../src/lib/gapsLoad'
 import { computeSteps, toInput } from '../src/lib/workflow'
@@ -371,6 +372,64 @@ console.log('\nK. ★ 重新开始 = 清结果 + 清圈选（store 层复现）'
   st().setRoi(null)
   st().setGaps([])
   st().markWorkflow({ detected: false, reviewed: false, exported: false })
+}
+
+// ---------- L. ★ 切换区块后该不该载入新影像自己的结果 ----------
+//
+// 守的是用户的核心诉求："检测完 block A 再检测 block B，不能清空 A 的数据，
+// 切回 A 还能看到 A 的结果"。
+//
+// 每张影像的结果 / 缓存 / 高度图现在按区块分开存（`output/<区块名>-gaps.geojson`），
+// 所以"换影像"有两种完全不同的意图，必须分开：
+//   · 从 B 切回 A（A 跑过）→ **载入 A 的结果**（不然用户以为数据丢了）
+//   · 又选了同一张影像想重新开始 → 清空、回到第 2 步
+//     （2026-10-24 修过的坑：这条如果判成"载入"，界面会立刻跳回第 4 步）
+//
+// ⚠️ 真正的"哪个文件属于哪张影像"由 Rust 判定（`job_id_for_output` +
+//    `resolve_gaps` 的按区块收窄），前端只拿到 `AppStatus.gaps` 这个结果。
+//    也就是说本文件测的是"拿到结果之后怎么用"，不是"去哪找文件" ——
+//    后者在 Rust 侧有单测（`resolve_gaps_narrows_to_current_job_not_newest`）。
+console.log('\nL. ★ 切换区块：换到有结果的影像就载入，其余一律重新开始')
+{
+  check(
+    shouldLoadJobResultOnSwitch({ imageChanged: true, hasResult: true }),
+    '★ 从 B 切回 A（A 有结果）→ true（必须载入 A 的结果）',
+  )
+  check(
+    !shouldLoadJobResultOnSwitch({ imageChanged: true, hasResult: false }),
+    '换到一张没跑过的影像 → false（重新开始，别把空结果当"载入成功"）',
+  )
+  check(
+    !shouldLoadJobResultOnSwitch({ imageChanged: false, hasResult: true }),
+    '★ 又选了同一张影像（想重新开始）→ false（否则直接跳回第 4 步）',
+  )
+  check(
+    !shouldLoadJobResultOnSwitch({ imageChanged: false, hasResult: false }),
+    '同一张影像且没有结果 → false',
+  )
+  // 两个条件的"必要性"：单独任一个为真都不够
+  check(
+    shouldLoadJobResultOnSwitch({ imageChanged: true, hasResult: true }) &&
+      !shouldLoadJobResultOnSwitch({ imageChanged: true, hasResult: false }) &&
+      !shouldLoadJobResultOnSwitch({ imageChanged: false, hasResult: true }),
+    '★ 只有「影像真的换了」+「新影像自己有结果」同时成立才载入',
+  )
+  // 脏输入：缺参数 / undefined / 非严格布尔 → 一律不载入（保守）
+  check(!shouldLoadJobResultOnSwitch(undefined), '参数缺省 → false')
+  check(!shouldLoadJobResultOnSwitch(null), 'null → false')
+  check(
+    !shouldLoadJobResultOnSwitch({
+      imageChanged: 'true' as unknown as boolean,
+      hasResult: true,
+    }),
+    'imageChanged 传字符串 "true" → false（只认严格的 true）',
+  )
+  // 与"重新开始"分支必须互斥：同一份信息不可能既载入又清空
+  const info = { imageChanged: true, hasResult: true }
+  check(
+    shouldLoadJobResultOnSwitch(info) !== shouldLoadJobResultOnSwitch({ imageChanged: false, hasResult: true }),
+    '★ 两个分支的判定必须相反（否则就是"既清空又载入"）',
+  )
 }
 
 // ---------- 汇总 ----------

@@ -1015,8 +1015,8 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--input", required=True, help="正射影像 tif 路径")
     ap.add_argument("--job", default=DEFAULT_JOB_NAME,
                     help=f"任务名，决定中间态目录名（默认 {DEFAULT_JOB_NAME}）")
-    ap.add_argument("--work-dir", default="output/jobs",
-                    help="中间态根目录（默认 output/jobs）")
+    ap.add_argument("--work-dir", default="output/caches",
+                    help="中间态根目录（默认 output/caches；每张影像一个子目录）")
     ap.add_argument("--out-json", default=None,
                     help="合并后的整幅 GeoJSON 路径（默认 output/<job>-gaps.geojson）")
 

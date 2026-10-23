@@ -288,7 +288,7 @@ export default function DerivedDialog({
               ? '生成的文件已在数据目录 output/ 下'
               : phase === 'running'
                 ? '生成中，请稍候'
-                : '生成会覆盖同名的 chm.tif / forest-mask.geojson'}
+                : '生成会覆盖这张影像上次生成的高度图与林地边界'}
           </span>
           {phase === 'ready' && (
             <button className="btn primary" disabled={hasError} onClick={start}>
