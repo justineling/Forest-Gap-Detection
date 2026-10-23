@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>那些文件都是什么 · 小白版 · Forest Gap Detection</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #161c20; --panel-2: #1c2429;
+    --line: #263137; --text: #e6edf1; --dim: #8b9aa3;
+    --accent: #3ddc97; --warn: #f0b429; --danger: #e05252;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px 72px;
+    background: var(--bg); color: var(--text);
+    font: 16px/1.85 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 30px; }
+  h1 { margin: 0 0 8px; font-size: 25px; }
+  .sub { color: var(--dim); font-size: 13.5px; }
+  h2 { margin: 44px 0 14px; font-size: 19px; padding-left: 11px; border-left: 3px solid var(--accent); }
+  h3 { margin: 26px 0 8px; font-size: 16px; }
+  p { margin: 12px 0; }
+  .analogy {
+    background: #1a2226; border-left: 3px solid var(--warn);
+    padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; color: #d8e2e8;
+  }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 16px 0; }
+  .card.ok { border-color: #1e4a37; background: #101d18; }
+  .card.warn { border-color: #4a3a1a; background: #1d1810; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); color: var(--dim); font-size: 13px; font-weight: 600; }
+  code {
+    font-family: Consolas, "Courier New", monospace; font-size: 12.5px;
+    background: #1b2429; padding: 1px 5px; border-radius: 4px; color: #a8e6c8;
+  }
+  .yes { color: var(--accent); font-weight: 600; }
+  .no { color: var(--danger); font-weight: 600; }
+  .mid { color: var(--warn); font-weight: 600; }
+  .dim { color: var(--dim); font-size: 13.5px; }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>那些文件都是什么</h1>
+  <div class="sub">大白话版 ｜ 不用懂 GIS，也不用懂代码 ｜ 2026-10-23</div>
+</header>
+
+<p>
+你打开 <code>D:\Forest Gap Detection\data\output</code>，会看到一堆 geojson、tif、还有 jobs 文件夹，
+看着像垃圾，其实各有各的用处。这篇用做饭打比方讲清楚：
+<b>哪些是食材、哪些是备菜、哪些是成品、哪些是外卖打包盒</b>。
+</p>
+
+<div class="analogy">
+  <b>一句话版本</b><br>
+  <code>chm.tif</code> 和 <code>forest-mask</code> 是<b>备菜</b>（切好的葱姜蒜）——
+  可以现切，也可以提前切好放冰箱；<br>
+  <code>jobs\</code> 里的东西是<b>半成品和便签</b>（腌好的肉、记着火候的纸条）——
+  下次炒同一道菜能省时间；<br>
+  <code>wgr17-desktop-gaps.geojson</code> 是<b>炒好的这盘菜</b>——
+  你尝过、挑过刺、调过味，<b>别倒掉</b>；<br>
+  <code>desktop-export</code> 是<b>打包盒</b>——
+  装好了才能送出去，而且必须用这个盒子，锅不能直接端给客人。
+</div>
+
+<h2>一、两个 tif / geojson 是"备菜"</h2>
+
+<h3>chm.tif —— 高度图（60 MB）</h3>
+<p>
+它记录的是「每个点比地面高出多少米」。软件靠它判断"这块是树冠还是空地"：
+高的是树，矮的就是空地。
+</p>
+<p class="dim">
+没有它会怎样：只能靠颜色判断，水塘和刚种下去的小树容易被当成空地。
+想要就点 <b>⋯ 更多 → 生成高度图与林地边界</b>，42 秒就好。
+</p>
+
+<h3>forest-mask-50m-exg60.geojson —— 林地边界（1.4 MB）</h3>
+<p>
+它圈出「哪些地方是已经开发过的种植园」。因为南边那片天然林如果不管，
+里面的缝隙会被当成"该补种的空地"，那就白挖了。
+</p>
+<p class="dim">名字里的 50m / exg60 是当时的参数，不用管。</p>
+
+<h2>二、jobs 文件夹：你确实"没直接用"，但它一直在帮你</h2>
+
+<p>
+里面有 528 个小 json 文件。软件检测时把大图切成 528 小块分别算，
+每算完一块就存一份 —— 这就是那 528 个文件。
+</p>
+
+<div class="card ok">
+  <p style="margin:0">
+    <b>它的价值只有一个：省时间。</b><br>
+    你调了参数重跑，或者中途取消了再跑，只要这一块的图和参数没变，
+    软件就直接拿上次的结果用，不用重算（这次 528 块里有 206 块是直接复用的）。<br>
+    <b>删掉也不影响结果对不对</b>，只是下次要从头算，多等几分钟。
+  </p>
+</div>
+
+<p>
+另外那个 <code>grid-survey.json</code> 是一张"便签"：记着这次量出来的株距、行距、朝向。
+哪天你觉得"点位怎么偏了"，就是拿它来对账的。
+</p>
+
+<h2>三、两个 gaps.geojson：一个是你现在的成果，一个是旧账</h2>
+
+<table>
+  <thead><tr><th style="width:42%">文件</th><th>是什么</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>wgr17-desktop-gaps.geojson</code><br><span class="dim">25 MB ｜ 1,726 块</span></td>
+      <td>
+        <b>你现在这盘菜。</b>界面上看到的每一个多边形、你删掉的误报、你改过的类别，全在里面。<br>
+        <span class="no">别删</span> —— 删了就得重跑 6 分钟，而且改判回不来。
+      </td>
+    </tr>
+    <tr>
+      <td><code>_archive\wgr17-final-gaps.geojson</code><br><span class="dim">14.5 MB ｜ 1,762 块</span></td>
+      <td>
+        <b>上一次的旧账</b>（10 月 19 日那轮）。软件已经不看它了，
+        我把它挪进了 <code>_archive</code> 文件夹，免得跟新结果混在一起。<br>
+        <span class="yes">想删就整个删掉</span>，不影响任何功能。
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>四、desktop-export：外卖打包盒</h2>
+
+<p>
+这个文件夹里的东西才是<b>给别人的</b>：能直接拖进 ArcGIS / QGIS 的地图文件、
+能在 Google Earth 里打开的 KML、能用 Excel 看的表格、还有一页纸的汇总报告。
+</p>
+
+<div class="card warn">
+  <p style="margin:0 0 8px"><b>最容易踩的坑</b></p>
+  <p style="margin:0">
+    别把 <code>output\wgr17-desktop-gaps.geojson</code> 拖进 ArcGIS —— 会提示"没有要素"。
+    文件没坏，只是<b>格式不对</b>：它内部是"按作业块分组"的结构，ArcGIS 只认平铺的那种。<br>
+    要给人的，一律用 <code>desktop-export\gaps-all-wgs84.geojson</code>（或者 <code>*-shp.zip</code>）。
+  </p>
+</div>
+
+<p class="dim">
+还有个细节：这个文件夹现在在 <code>py-runtime\desktop_entry\output\desktop-export</code> 下面，
+不是 <code>data</code> 下面。原因是导出的默认位置跟着"程序目录"走。
+不影响使用，但如果你想让所有交付包集中在一个地方，导出时把目标目录改成
+<code>D:\Forest Gap Detection\data\desktop-export</code> 就好。
+</p>
+
+<h2>五、到底哪些能删？（一张表看完）</h2>
+
+<table>
+  <thead><tr><th style="width:40%">东西</th><th style="width:16%">能删吗</th><th>删了会怎样</th></tr></thead>
+  <tbody>
+    <tr><td><code>_archive\</code> 整个文件夹</td><td class="yes">能</td><td>少一份旧结果做对照，没别的影响。</td></tr>
+    <tr><td><code>jobs\...\tiles\</code> 那 528 个 json</td><td class="mid">能</td><td>下次检测从头算，多花几分钟；结果一模一样。</td></tr>
+    <tr><td><code>chm.tif</code>、<code>forest-mask</code></td><td class="mid">能</td><td>检测前得重新生成（42 秒），不生成的话精度会降。</td></tr>
+    <tr><td><b>当前的 <code>*-gaps.geojson</code></b></td><td class="no">别删</td><td>你的复核成果全没了，要重跑而且改判找不回来。</td></tr>
+    <tr><td><code>desktop-export\</code></td><td class="yes">能</td><td>交付物没了，再导出一次就行（几十秒）。</td></tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <p style="margin:0">
+    <b>记住这一句就够</b>：<br>
+    看到 <code>chm</code> / <code>forest-mask</code> / <code>jobs</code> —— 都是能重算的，放心删；<br>
+    看到 <code>*-gaps.geojson</code>（不带 archive）—— 那是你的活，别动；<br>
+    要给别人东西 —— 只从 <code>desktop-export</code> 里拿。
+  </p>
+</div>
+
+<footer>
+  Forest Gap Detection · 那些文件都是什么（小白版）· 2026-10-23<br>
+  想看每个字段的细节，看同目录的「数据文件说明-专业版」
+</footer>
+
+</div>
+</body>
+</html>

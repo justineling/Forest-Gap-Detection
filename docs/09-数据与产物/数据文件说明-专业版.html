@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据文件说明 · 专业版 · Forest Gap Detection</title>
+<style>
+  :root {
+    --bg: #0f1417; --panel: #161c20; --panel-2: #1c2429;
+    --line: #263137; --text: #e6edf1; --dim: #8b9aa3;
+    --accent: #3ddc97; --warn: #f0b429; --danger: #e05252; --info: #5aa9e6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 28px 72px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.75 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  header { border-bottom: 1px solid var(--line); padding-bottom: 22px; margin-bottom: 30px; }
+  h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: .3px; }
+  .sub { color: var(--dim); font-size: 13.5px; }
+  h2 { margin: 44px 0 14px; font-size: 19px; padding-left: 11px; border-left: 3px solid var(--accent); }
+  h3 { margin: 26px 0 10px; font-size: 15.5px; }
+  p { margin: 10px 0; }
+  .lead { font-size: 15.5px; color: #cfdae1; }
+  code {
+    font-family: Consolas, "Courier New", monospace; font-size: 12.5px;
+    background: #1b2429; padding: 1px 5px; border-radius: 4px; color: #a8e6c8;
+  }
+  pre {
+    background: #131a1e; border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; font-size: 12.5px; line-height: 1.7;
+    font-family: Consolas, "Courier New", monospace; color: #c8d6de;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--panel-2); color: var(--dim); font-weight: 600; font-size: 12.5px; }
+  tr:hover td { background: rgba(255,255,255,.02); }
+  .keep { color: var(--accent); font-weight: 600; }
+  .cache { color: var(--warn); font-weight: 600; }
+  .gone { color: var(--dim); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 16px 0; }
+  .card.warn { border-color: #4a3a1a; background: #1d1810; }
+  .card.ok { border-color: #1e4a37; background: #101d18; }
+  .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; margin: 18px 0; }
+  .node {
+    flex: 1 1 150px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; padding: 11px 13px; min-width: 150px;
+  }
+  .node b { display: block; font-size: 13.5px; margin-bottom: 3px; }
+  .node span { color: var(--dim); font-size: 12px; line-height: 1.5; display: block; }
+  .node.src { border-color: #2a4a5e; }
+  .node.mid { border-color: #4a3a1a; }
+  .node.out { border-color: #1e4a37; }
+  .arrow { align-self: center; color: var(--dim); font-size: 18px; }
+  .mono { font-family: Consolas, "Courier New", monospace; font-size: 12.5px; }
+  .dim { color: var(--dim); }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--dim); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>数据文件说明 · 专业版</h1>
+  <div class="sub">
+    安装目录 <span class="mono">D:\Forest Gap Detection</span> 里那些 geojson / tif / jobs 到底是什么<br>
+    2026-10-23 ｜ 以本机实际文件为准（体积、块数均为实测）
+  </div>
+</header>
+
+<p class="lead">
+一句话：<b>同一个结果有三种形态</b> —— 界面上看的「内部结果」、重跑时省时间的「缓存」、
+交给 ArcGIS 的「交付包」。它们长得像，用途完全不同，混用会出问题。
+</p>
+
+<h2>1. 数据流：一份影像怎么变成交付包</h2>
+
+<div class="flow">
+  <div class="node src">
+    <b>① 正射影像</b>
+    <span><code>drone data\WGR17-002.tif</code><br>4.66 GB，你自己提供</span>
+  </div>
+  <div class="arrow">→</div>
+  <div class="node mid">
+    <b>② 中间产物</b>
+    <span><code>output\chm.tif</code><br><code>output\forest-mask-*.geojson</code><br>从 DSM / 树木清单派生</span>
+  </div>
+  <div class="arrow">→</div>
+  <div class="node mid">
+    <b>③ 瓦片缓存</b>
+    <span><code>output\jobs\&lt;job&gt;\tiles\*.json</code><br>528 个瓦片的中间结果</span>
+  </div>
+  <div class="arrow">→</div>
+  <div class="node out">
+    <b>④ 内部结果</b>
+    <span><code>output\wgr17-desktop-gaps.geojson</code><br>界面读它、你编辑它</span>
+  </div>
+  <div class="arrow">→</div>
+  <div class="node out">
+    <b>⑤ 交付包</b>
+    <span><code>…\output\desktop-export\</code><br>20 个文件，给 ArcGIS</span>
+  </div>
+</div>
+
+<p>
+注意 ②③ 都是<b>可再生的</b>：删掉不影响正确性，只是下次要重新算。
+④ 是你的人工编辑成果（删了误报、改判类别都在里面），<b>删了就没了</b>。
+⑤ 是最终交付物，可以随便拷走。
+</p>
+
+<h2>2. <span class="mono">data\output\</span> 逐文件说明</h2>
+
+<table>
+  <thead>
+    <tr><th style="width:26%">文件</th><th style="width:9%">体积</th><th style="width:22%">是什么</th><th>谁在用 / 删了会怎样</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>chm.tif</code></td>
+      <td>60 MB</td>
+      <td><b>高度图</b>（冠层高度模型）。每个像素一个"高出地面多少米"的值。</td>
+      <td>
+        检测时用来区分「高的是树」和「矮的是空地」。<br>
+        <span class="cache">可再生</span>：<b>⋯ 更多 → 生成高度图与林地边界</b>，约 42 秒。<br>
+        <span class="dim">缺了它会退化成纯 RGB 判断 → 水塘、幼林容易误判。</span>
+      </td>
+    </tr>
+    <tr>
+      <td><code>forest-mask-50m-exg60.geojson</code></td>
+      <td>1.4 MB</td>
+      <td><b>林地掩膜</b>：用 50 m 网格 + ExG 阈值圈出"哪些地方是已开发的种植园"。</td>
+      <td>
+        检测时把未开发天然林排除在外 —— 否则天然林里的空隙会被当成"该补种的空地"。<br>
+        <span class="cache">可再生</span>：同上面那个菜单项一起生成。<br>
+        <span class="dim">文件名里的 <code>50m</code> / <code>exg60</code> 是当时的参数，改参数会生成新名字。</span>
+      </td>
+    </tr>
+    <tr>
+      <td><code>wgr17-desktop-gaps.geojson</code></td>
+      <td>25 MB<br><span class="dim">1,726 块</span></td>
+      <td><b>当前检测结果（内部格式）</b>。界面读的就是它，你的删除 / 改判也写回它。</td>
+      <td>
+        <span class="keep">别删</span>：这是你的工作成果。<br>
+        <span class="dim">结构是 <code>blocks[0].gaps</code>（按"作业块"嵌套），
+        <b>不是</b>标准 GeoJSON 的 <code>features</code> —— 所以 ArcGIS 直接导入会失败，见 §5。</span>
+      </td>
+    </tr>
+    <tr>
+      <td><code>_archive\wgr17-final-gaps.geojson</code></td>
+      <td>14.5 MB<br><span class="dim">1,762 块</span></td>
+      <td>10-19 那一轮的旧结果（带 ROI 裁剪）。</td>
+      <td>
+        <span class="gone">程序不读它</span>，已移进 <code>_archive\</code> 并附 README。<br>
+        确认不需要对照历史后，<b>整个 <code>_archive</code> 可以删</b>。
+      </td>
+    </tr>
+    <tr>
+      <td><code>jobs\wgr17-desktop\grid-survey.json</code></td>
+      <td>3 KB</td>
+      <td><b>网格标定审计</b>：每个瓦片采样出的株距 / 行距 / 方位角 / 密度，外加"设计密度 vs 估计密度"检查。</td>
+      <td>
+        排查「为什么放样点位看着偏了」时用它，是<b>诊断证据</b>。<br>
+        <span class="cache">可再生</span>：下次检测会重写。
+      </td>
+    </tr>
+    <tr>
+      <td><code>jobs\wgr17-desktop\tiles\*.json</code><br><span class="dim">528 个，共 8.8 MB</span></td>
+      <td>8.8 MB</td>
+      <td><b>瓦片缓存</b>：每个 2048 px 瓦片的检测中间结果，带一个<b>参数指纹</b>。</td>
+      <td>
+        重跑时若影像与参数都没变，直接复用（实测 322 个 done + 206 个 skipped），省几分钟。<br>
+        <span class="cache">可再生</span>：删掉只是下次全量重算，结果不会变。<br>
+        <span class="dim">指纹不一致的瓦片会自动失效重算，不需要你手动清。</span>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="card">
+  <p style="margin:0">
+    <b>关于 <code>jobs\</code>：为什么它看起来"没用"却一直存在</b><br>
+    它只服务于两件事：<b>重跑加速</b>（瓦片缓存）和<b>事后查账</b>（网格标定）。
+    界面不会展示它，所以你感觉没用到它 —— 这是正常的。它不会越滚越大：
+    同一个 job 名只保留一套缓存，参数变了旧瓦片会被指纹判死并覆盖。
+  </p>
+</div>
+
+<h2>3. 交付包：<span class="mono">desktop-export\</span></h2>
+
+<p>
+位置：<code>py-runtime\desktop_entry\output\desktop-export\</code>。
+<b>为什么在 py-runtime 下面</b>：导出的默认目录是"程序目录下的 <code>output\desktop-export</code>"，
+而安装版里程序目录就是 <code>py-runtime\desktop_entry</code>。想放到别处，在导出对话框里改目标目录即可。
+</p>
+
+<table>
+  <thead><tr><th style="width:34%">文件</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td><code>gaps-all-wgs84.geojson</code><br><code>gaps-all-utm49n.geojson</code></td>
+        <td>全量空地的<b>标准</b> GeoJSON，两种坐标系各一份（经纬度 / UTM 49N）。ArcGIS、QGIS 直接拖进去就能用。</td></tr>
+    <tr><td><code>gaps-all-wgs84-shp.zip</code><br><code>gaps-all-utm49n-shp.zip</code></td>
+        <td>Shapefile 压缩包（含 <code>.prj</code> 投影文件）。老 ArcGIS 工作流、给测绘同事时用这个。</td></tr>
+    <tr><td><code>gaps-all.kml</code></td>
+        <td>给 Google Earth / 奥维互动地图看的。手机上也能打开。</td></tr>
+    <tr><td><code>by-class\gaps-&lt;类别&gt;-utm49n-shp.zip</code><br><span class="dim">本次 7 个（有几个类别就有几个）</span></td>
+        <td><b>按类别分包</b>：只想要"道路"或只想要"待复核"时，单独拿一个包，不用在大表里筛。</td></tr>
+    <tr><td><code>planting-points-*</code><br><span class="dim">2 GeoJSON + 2 Shapefile + 1 KML + 1 CSV</span></td>
+        <td><b>放样点位</b>（每一株该种在哪）。由 Python 逐格排坑算出，和界面上看到的一致。<br>
+            <span class="dim">结果里没有种植规格时会整组跳过。</span></td></tr>
+    <tr><td><code>gaps-edited.csv</code></td>
+        <td>纯表格：编号 / 类别 / 面积 / 中心经纬度 / 是否人工改过。给不装 GIS 的人看。</td></tr>
+    <tr><td><code>补种勘察一页报告.html</code></td>
+        <td>一页纸：三类（确定要补 / 待复核 / 不需要）的块数与面积。可以直接打印或转 PDF 交上去。</td></tr>
+  </tbody>
+</table>
+
+<p class="dim">
+本次实测 20 个文件 = 13 个顶层 + 7 个按类别分包（结果里有 7 个类别）。
+换成 8 个类别就是 21 个 —— <b>文件数会随数据变</b>，导出对话框里的预览就是按这个规则算的。
+</p>
+
+<h2>4. 为什么内部结果和交付包不能合并成一套</h2>
+
+<table>
+  <thead><tr><th style="width:24%">对比项</th><th style="width:38%">内部结果<br><span class="mono dim">output\*-gaps.geojson</span></th><th>交付包<br><span class="mono dim">desktop-export\*</span></th></tr></thead>
+  <tbody>
+    <tr><td>数据结构</td><td><code>blocks[0].gaps</code>（按作业块嵌套）</td><td>标准 <code>features</code> 数组</td></tr>
+    <tr><td>坐标系</td><td>只有 WGS84，<code>crs</code> 是字符串</td><td>WGS84 + UTM 49N 双份</td></tr>
+    <tr><td>附带信息</td><td>置信度、判定依据、网格单元等内部字段</td><td>只留交付需要的字段</td></tr>
+    <tr><td>能被 ArcGIS 直接打开</td><td class="gone">不能（找不到 features）</td><td class="keep">能</td></tr>
+    <tr><td>为什么需要它</td><td>界面要按块管理、要支持人工编辑与撤销</td><td>对方要能直接拖进 GIS 干活</td></tr>
+  </tbody>
+</table>
+
+<div class="card warn">
+  <p style="margin:0">
+    <b>最常见的坑</b>：把 <code>output\wgr17-desktop-gaps.geojson</code> 拖进 ArcGIS → 报"没有要素"。
+    不是文件坏了，是<b>格式不对</b>。要给别人一律用 <code>desktop-export\</code> 里的
+    <code>gaps-all-wgs84.geojson</code>（或 Shapefile 包）。
+  </p>
+</div>
+
+<h2>5. 另外两个常见困惑</h2>
+
+<h3>5.1 为什么导出目录在 <code>py-runtime</code> 下面，而不是 <code>data</code> 下面？</h3>
+<p>
+导出默认写到「程序目录 / <code>output</code> / <code>desktop-export</code>」。
+安装版里程序目录是 <code>py-runtime\desktop_entry</code>，所以就在那儿。
+这不是 bug，但确实不直观 —— 建议在导出对话框里把目标目录改成
+<code>D:\Forest Gap Detection\data\desktop-export</code>，以后所有交付包都在一处。
+</p>
+
+<h3>5.2 <code>chm.tif</code> 和 <code>forest-mask</code> 算"输入"还是"输出"？</h3>
+<p>
+对<b>检测</b>来说是输入（检测读它们）；对<b>你</b>来说是输出（程序从 DSM / 树木清单算出来的）。
+所以它们放在 <code>output\</code> 里，但可以随时重新生成。真正的"只进不出"的输入只有那个
+<b>4.66 GB 的正射影像</b>（以及可选的 DSM / 地物分类图 / 树木清单）。
+</p>
+
+<h2>6. 清理建议</h2>
+
+<table>
+  <thead><tr><th style="width:32%">想清的东西</th><th style="width:16%">能删吗</th><th>代价</th></tr></thead>
+  <tbody>
+    <tr><td><code>_archive\</code></td><td class="keep">能</td><td>失去 10-19 那轮 1,762 块结果的对照副本。</td></tr>
+    <tr><td><code>jobs\&lt;job&gt;\tiles\</code></td><td class="cache">能</td><td>下次检测全量重算，多花几分钟；结果不变。</td></tr>
+    <tr><td><code>chm.tif</code> / <code>forest-mask-*</code></td><td class="cache">能</td><td>检测前要重新生成（约 42 秒），否则精度下降。</td></tr>
+    <tr><td><code>*-gaps.geojson</code>（当前结果）</td><td class="gone">别删</td><td>人工编辑全部丢失，要重跑 6 分钟且改判回不来。</td></tr>
+    <tr><td><code>desktop-export\</code></td><td class="keep">能</td><td>交付物丢了，重新导出一次即可（几十秒）。</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  Forest Gap Detection · 数据文件说明（专业版）· 2026-10-23<br>
+  配套阅读：<a href="输入输出文件清单.html" style="color:#5aa9e6">输入输出文件清单</a>（全流程每个文件的产生时机）
+</footer>
+
+</div>
+</body>
+</html>
