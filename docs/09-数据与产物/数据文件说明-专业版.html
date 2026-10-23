@@ -65,7 +65,7 @@
 <header>
   <h1>数据文件说明 · 专业版</h1>
   <div class="sub">
-    安装目录 <span class="mono">D:\Forest Gap Detection</span> 里那些 geojson / tif / jobs 到底是什么<br>
+    安装目录 <span class="mono">D:\Forest Gap Detection</span> 里那些 geojson / tif / caches 到底是什么<br>
     2026-10-23 ｜ 以本机实际文件为准（体积、块数均为实测）
   </div>
 </header>
@@ -90,12 +90,12 @@
   <div class="arrow">→</div>
   <div class="node mid">
     <b>③ 瓦片缓存</b>
-    <span><code>output\jobs\&lt;job&gt;\tiles\*.json</code><br>528 个瓦片的中间结果</span>
+    <span><code>output\caches\&lt;job&gt;\tiles\*.json</code><br>每块一个子目录</span>
   </div>
   <div class="arrow">→</div>
   <div class="node out">
     <b>④ 内部结果</b>
-    <span><code>output\wgr17-desktop-gaps.geojson</code><br>界面读它、你编辑它</span>
+    <span><code>output\&lt;区块&gt;-gaps.geojson</code><br>界面读它、你编辑它</span>
   </div>
   <div class="arrow">→</div>
   <div class="node out">
@@ -118,7 +118,7 @@
   </thead>
   <tbody>
     <tr>
-      <td><code>chm.tif</code></td>
+      <td><code>&lt;区块&gt;-chm.tif</code></td>
       <td>60 MB</td>
       <td><b>高度图</b>（冠层高度模型）。每个像素一个"高出地面多少米"的值。</td>
       <td>
@@ -128,7 +128,7 @@
       </td>
     </tr>
     <tr>
-      <td><code>forest-mask-50m-exg60.geojson</code></td>
+      <td><code>&lt;区块&gt;-forest-mask-50m-exg60.geojson</code></td>
       <td>1.4 MB</td>
       <td><b>林地掩膜</b>：用 50 m 网格 + ExG 阈值圈出"哪些地方是已开发的种植园"。</td>
       <td>
@@ -138,7 +138,7 @@
       </td>
     </tr>
     <tr>
-      <td><code>wgr17-desktop-gaps.geojson</code></td>
+      <td><code>&lt;区块&gt;-gaps.geojson</code></td>
       <td>25 MB<br><span class="dim">1,726 块</span></td>
       <td><b>当前检测结果（内部格式）</b>。界面读的就是它，你的删除 / 改判也写回它。</td>
       <td>
@@ -157,7 +157,7 @@
       </td>
     </tr>
     <tr>
-      <td><code>jobs\wgr17-desktop\grid-survey.json</code></td>
+      <td><code>caches\&lt;job&gt;\grid-survey.json</code></td>
       <td>3 KB</td>
       <td><b>网格标定审计</b>：每个瓦片采样出的株距 / 行距 / 方位角 / 密度，外加"设计密度 vs 估计密度"检查。</td>
       <td>
@@ -166,7 +166,7 @@
       </td>
     </tr>
     <tr>
-      <td><code>jobs\wgr17-desktop\tiles\*.json</code><br><span class="dim">528 个，共 8.8 MB</span></td>
+      <td><code>caches\&lt;job&gt;\tiles\*.json</code><br><span class="dim">每个区块一套（本例 528 个，约 8.8 MB）</span></td>
       <td>8.8 MB</td>
       <td><b>瓦片缓存</b>：每个 2048 px 瓦片的检测中间结果，带一个<b>参数指纹</b>。</td>
       <td>
@@ -180,7 +180,7 @@
 
 <div class="card">
   <p style="margin:0">
-    <b>关于 <code>jobs\</code>：为什么它看起来"没用"却一直存在</b><br>
+    <b>关于 <code>caches\</code>（2026-10-23 由 <code>jobs\</code> 改名）：为什么它看起来"没用"却一直存在</b><br>
     它只服务于两件事：<b>重跑加速</b>（瓦片缓存）和<b>事后查账</b>（网格标定）。
     界面不会展示它，所以你感觉没用到它 —— 这是正常的。它不会越滚越大：
     同一个 job 名只保留一套缓存，参数变了旧瓦片会被指纹判死并覆盖。
@@ -236,15 +236,60 @@
 
 <div class="card warn">
   <p style="margin:0">
-    <b>最常见的坑</b>：把 <code>output\wgr17-desktop-gaps.geojson</code> 拖进 ArcGIS → 报"没有要素"。
+    <b>最常见的坑</b>：把 <code>output\&lt;区块&gt;-gaps.geojson</code> 拖进 ArcGIS → 报"没有要素"。
     不是文件坏了，是<b>格式不对</b>。要给别人一律用 <code>desktop-export\</code> 里的
     <code>gaps-all-wgs84.geojson</code>（或 Shapefile 包）。
   </p>
 </div>
 
-<h2>5. 另外两个常见困惑</h2>
+<h2>5. 多区块：一个园区分成好几张图怎么办</h2>
 
-<h3>5.1 为什么导出目录在 <code>py-runtime</code> 下面，而不是 <code>data</code> 下面？</h3>
+<p>
+2026-10-23 起，<b>每张影像各自一套数据</b>，互不覆盖。区块名（下称 <code>&lt;区块&gt;</code>）
+由影像文件名生成：<code>WGR17-002.tif</code> → <code>wgr17-002</code>；
+两个同名影像会自动加后缀（<code>wgr17-002-2</code>）。
+</p>
+
+<table>
+  <thead><tr><th style="width:30%">产物</th><th>路径</th></tr></thead>
+  <tbody>
+    <tr><td>检测结果</td><td><code>output\&lt;区块&gt;-gaps.geojson</code></td></tr>
+    <tr><td>瓦片缓存</td><td><code>output\caches\&lt;区块&gt;\tiles\</code></td></tr>
+    <tr><td>网格标定审计</td><td><code>output\caches\&lt;区块&gt;\grid-survey.json</code></td></tr>
+    <tr><td>高度图</td><td><code>output\&lt;区块&gt;-chm.tif</code></td></tr>
+    <tr><td>林地边界</td><td><code>output\&lt;区块&gt;-forest-mask*.geojson</code></td></tr>
+    <tr><td>导出交付包</td><td><code>desktop-export\&lt;区块&gt;\</code></td></tr>
+  </tbody>
+</table>
+
+<div class="card ok">
+  <p style="margin:0">
+    <b>切回上一个区块会自动带回它的结果。</b>
+    在向导里重新选 block A 的影像 → 后端按区块名找到
+    <code>&lt;区块&gt;-gaps.geojson</code> 并挂上，界面上立刻是 A 的多边形。
+    日志里会写「已切换到区块 wgr17-002（结果：有 · 高度图：有）」。
+  </p>
+</div>
+
+<div class="card warn">
+  <p style="margin:0">
+    <b>找结果的第一优先级是"本区块自己的文件"，不是"最新的文件"。</b>
+    多区块下这两个不一样：切回 A 时，刚跑完的 B 结果修改时间更新，
+    按"最新"取会把 B 的空地画在 A 的影像上 —— <b>数字自洽、不报错</b>，
+    只有到现场才发现坑挖错地方。这条有专门的测试守着（<code>test_block_jobs.py</code>）。
+  </p>
+</div>
+
+<p class="dim">
+升级到这一版时，旧目录会做一次性改名：<code>output\jobs</code> → <code>output\caches</code>、
+<code>wgr17-desktop-gaps.geojson</code> → <code>&lt;区块&gt;-gaps.geojson</code>、
+<code>chm.tif</code> → <code>&lt;区块&gt;-chm.tif</code>。
+<b>只改名、不删任何文件</b>，目标已存在就跳过。
+</p>
+
+<h2>6. 另外两个常见困惑</h2>
+
+<h3>6.1 为什么导出目录在 <code>py-runtime</code> 下面，而不是 <code>data</code> 下面？</h3>
 <p>
 导出默认写到「程序目录 / <code>output</code> / <code>desktop-export</code>」。
 安装版里程序目录是 <code>py-runtime\desktop_entry</code>，所以就在那儿。
@@ -252,20 +297,20 @@
 <code>D:\Forest Gap Detection\data\desktop-export</code>，以后所有交付包都在一处。
 </p>
 
-<h3>5.2 <code>chm.tif</code> 和 <code>forest-mask</code> 算"输入"还是"输出"？</h3>
+<h3>6.2 <code>&lt;区块&gt;-chm.tif</code> 和 <code>forest-mask</code> 算"输入"还是"输出"？</h3>
 <p>
 对<b>检测</b>来说是输入（检测读它们）；对<b>你</b>来说是输出（程序从 DSM / 树木清单算出来的）。
 所以它们放在 <code>output\</code> 里，但可以随时重新生成。真正的"只进不出"的输入只有那个
 <b>4.66 GB 的正射影像</b>（以及可选的 DSM / 地物分类图 / 树木清单）。
 </p>
 
-<h2>6. 清理建议</h2>
+<h2>7. 清理建议</h2>
 
 <table>
   <thead><tr><th style="width:32%">想清的东西</th><th style="width:16%">能删吗</th><th>代价</th></tr></thead>
   <tbody>
     <tr><td><code>_archive\</code></td><td class="keep">能</td><td>失去 10-19 那轮 1,762 块结果的对照副本。</td></tr>
-    <tr><td><code>jobs\&lt;job&gt;\tiles\</code></td><td class="cache">能</td><td>下次检测全量重算，多花几分钟；结果不变。</td></tr>
+    <tr><td><code>caches\&lt;job&gt;\tiles\</code></td><td class="cache">能</td><td>下次检测全量重算，多花几分钟；结果不变。</td></tr>
     <tr><td><code>chm.tif</code> / <code>forest-mask-*</code></td><td class="cache">能</td><td>检测前要重新生成（约 42 秒），否则精度下降。</td></tr>
     <tr><td><code>*-gaps.geojson</code>（当前结果）</td><td class="gone">别删</td><td>人工编辑全部丢失，要重跑 6 分钟且改判回不来。</td></tr>
     <tr><td><code>desktop-export\</code></td><td class="keep">能</td><td>交付物丢了，重新导出一次即可（几十秒）。</td></tr>

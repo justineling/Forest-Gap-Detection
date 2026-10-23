@@ -152,14 +152,14 @@ scripts\一键配置环境.bat
 │   ├── process_image.py    整幅检测主入口
 │   ├── sidecar.py          桌面端调算法用的 NDJSON 通道
 │   ├── tile_server.py      唯一的 HTTP 服务（瓦片）
-│   └── check_all.py        11 层自检（类型 / 断言 / 静态检查 / 契约）
+│   └── check_all.py        12 层自检（类型 / 断言 / 静态检查 / 契约）
 └── docs/                   全部项目资料（索引见 docs/README.md）
 ```
 
 ## 开发与测试
 
 ```bash
-# 前端类型检查 + 断言（764 项）
+# 前端类型检查 + 断言（773 项）
 cd desktop && npx tsc --noEmit && npm test
 
 # Rust 单测（45 项）
@@ -168,11 +168,11 @@ cd desktop/src-tauri && cargo test
 # 算法契约测试（95 项，改算法后必跑）
 .venv\Scripts\python.exe scripts\test_sidecar_contract.py
 
-# 全量自检（11 层，约 60 秒；--fast 跳过契约测试）
+# 全量自检（12 层，约 55 秒；--fast 跳过契约测试）
 .venv\Scripts\python.exe scripts\check_all.py
 ```
 
-**验收基线**：`npm test` 764 · `cargo test` 45 · 契约 95/95 · `check_all.py` 11 层全绿。
+**验收基线**：`npm test` 773 · `cargo test` 62 · 契约 95/95 · `check_all.py` 12 层全绿。
 任何一项掉了都算回归。
 
 ## 文档索引

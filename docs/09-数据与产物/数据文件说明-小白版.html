@@ -53,18 +53,18 @@
 </header>
 
 <p>
-你打开 <code>D:\Forest Gap Detection\data\output</code>，会看到一堆 geojson、tif、还有 jobs 文件夹，
+你打开 <code>D:\Forest Gap Detection\data\output</code>，会看到一堆 geojson、tif、还有 caches 文件夹，
 看着像垃圾，其实各有各的用处。这篇用做饭打比方讲清楚：
 <b>哪些是食材、哪些是备菜、哪些是成品、哪些是外卖打包盒</b>。
 </p>
 
 <div class="analogy">
   <b>一句话版本</b><br>
-  <code>chm.tif</code> 和 <code>forest-mask</code> 是<b>备菜</b>（切好的葱姜蒜）——
+  <code>&lt;区块&gt;-chm.tif</code> 和 <code>forest-mask</code> 是<b>备菜</b>（切好的葱姜蒜）——
   可以现切，也可以提前切好放冰箱；<br>
-  <code>jobs\</code> 里的东西是<b>半成品和便签</b>（腌好的肉、记着火候的纸条）——
+  <code>caches\</code> 里的东西是<b>半成品和便签</b>（腌好的肉、记着火候的纸条）——
   下次炒同一道菜能省时间；<br>
-  <code>wgr17-desktop-gaps.geojson</code> 是<b>炒好的这盘菜</b>——
+  <code>&lt;区块&gt;-gaps.geojson</code> 是<b>炒好的这盘菜</b>——
   你尝过、挑过刺、调过味，<b>别倒掉</b>；<br>
   <code>desktop-export</code> 是<b>打包盒</b>——
   装好了才能送出去，而且必须用这个盒子，锅不能直接端给客人。
@@ -89,7 +89,7 @@
 </p>
 <p class="dim">名字里的 50m / exg60 是当时的参数，不用管。</p>
 
-<h2>二、jobs 文件夹：你确实"没直接用"，但它一直在帮你</h2>
+<h2>二、caches 文件夹：你确实"没直接用"，但它一直在帮你</h2>
 
 <p>
 里面有 528 个小 json 文件。软件检测时把大图切成 528 小块分别算，
@@ -116,7 +116,7 @@
   <thead><tr><th style="width:42%">文件</th><th>是什么</th></tr></thead>
   <tbody>
     <tr>
-      <td><code>wgr17-desktop-gaps.geojson</code><br><span class="dim">25 MB ｜ 1,726 块</span></td>
+      <td><code>&lt;区块&gt;-gaps.geojson</code><br><span class="dim">25 MB ｜ 1,726 块</span></td>
       <td>
         <b>你现在这盘菜。</b>界面上看到的每一个多边形、你删掉的误报、你改过的类别，全在里面。<br>
         <span class="no">别删</span> —— 删了就得重跑 6 分钟，而且改判回不来。
@@ -156,14 +156,45 @@
 <code>D:\Forest Gap Detection\data\desktop-export</code> 就好。
 </p>
 
-<h2>五、到底哪些能删？（一张表看完）</h2>
+<h2>五、一个园区分成好几张图怎么办</h2>
+
+<p>
+以前只有一套位置，你检测了 A 再检测 B，<b>B 会把 A 顶掉</b>。现在不会了：
+<b>每张影像自己一套</b>，名字从文件名来（<code>WGR17-002.tif</code> → <code>wgr17-002</code>）。
+</p>
+
+<table>
+  <thead><tr><th style="width:44%">你会看到</th><th>意思</th></tr></thead>
+  <tbody>
+    <tr><td><code>wgr17-002-gaps.geojson</code></td><td>A 块的结果</td></tr>
+    <tr><td><code>wgr17-002-2-gaps.geojson</code></td><td>另一个也叫 WGR17-002 的图（自动加了个 2）</td></tr>
+    <tr><td><code>caches\wgr17-002\</code></td><td>A 块的缓存</td></tr>
+    <tr><td><code>desktop-export\wgr17-002\</code></td><td>A 块的交付包</td></tr>
+  </tbody>
+</table>
+
+<div class="card ok">
+  <p style="margin:0">
+    <b>切回 A 会自动看到 A 的结果。</b>重新选 A 的那张 tif，界面就直接是 A 的多边形，
+    不用再跑一遍，也不会看到 B 的东西。
+  </p>
+</div>
+
+<div class="card warn">
+  <p style="margin:0">
+    <b>升级后第一次打开，它会自己把旧文件改名</b>（<code>jobs</code> → <code>caches</code>、
+    旧结果加上区块名）。<b>只改名，不删东西</b>，所以不用担心丢数据。
+  </p>
+</div>
+
+<h2>六、到底哪些能删？（一张表看完）</h2>
 
 <table>
   <thead><tr><th style="width:40%">东西</th><th style="width:16%">能删吗</th><th>删了会怎样</th></tr></thead>
   <tbody>
     <tr><td><code>_archive\</code> 整个文件夹</td><td class="yes">能</td><td>少一份旧结果做对照，没别的影响。</td></tr>
-    <tr><td><code>jobs\...\tiles\</code> 那 528 个 json</td><td class="mid">能</td><td>下次检测从头算，多花几分钟；结果一模一样。</td></tr>
-    <tr><td><code>chm.tif</code>、<code>forest-mask</code></td><td class="mid">能</td><td>检测前得重新生成（42 秒），不生成的话精度会降。</td></tr>
+    <tr><td><code>caches\...\tiles\</code> 那些 json</td><td class="mid">能</td><td>下次检测从头算，多花几分钟；结果一模一样。</td></tr>
+    <tr><td><code>&lt;区块&gt;-chm.tif</code>、<code>forest-mask</code></td><td class="mid">能</td><td>检测前得重新生成（42 秒），不生成的话精度会降。</td></tr>
     <tr><td><b>当前的 <code>*-gaps.geojson</code></b></td><td class="no">别删</td><td>你的复核成果全没了，要重跑而且改判找不回来。</td></tr>
     <tr><td><code>desktop-export\</code></td><td class="yes">能</td><td>交付物没了，再导出一次就行（几十秒）。</td></tr>
   </tbody>
@@ -172,7 +203,7 @@
 <div class="card">
   <p style="margin:0">
     <b>记住这一句就够</b>：<br>
-    看到 <code>chm</code> / <code>forest-mask</code> / <code>jobs</code> —— 都是能重算的，放心删；<br>
+    看到 <code>chm</code> / <code>forest-mask</code> / <code>caches</code> —— 都是能重算的，放心删；<br>
     看到 <code>*-gaps.geojson</code>（不带 archive）—— 那是你的活，别动；<br>
     要给别人东西 —— 只从 <code>desktop-export</code> 里拿。
   </p>
