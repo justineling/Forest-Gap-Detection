@@ -192,7 +192,7 @@
 <p>
 位置：<code>py-runtime\desktop_entry\output\desktop-export\</code>。
 <b>为什么在 py-runtime 下面</b>：导出的默认目录是"程序目录下的 <code>output\desktop-export</code>"，
-而安装版里程序目录就是 <code>py-runtime\desktop_entry</code>。想放到别处，在导出对话框里改目标目录即可。
+而安装版里程序目录就是 <code>py-runtime\desktop_entry</code>。想放到别处，在导出对话框里改目标目录即可。<br><b>即使你选了目标目录，它也会在里面按区块再建一层</b>（<code>你选的目录\&lt;区块&gt;\</code>）——因为交付包里的文件名是固定的，两块写进同一个目录会<b>静默互相覆盖</b>。如果末段已经是区块名，就不会重复套娃。
 </p>
 
 <table>
