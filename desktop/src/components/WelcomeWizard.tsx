@@ -11,6 +11,43 @@ import {
 import { explain } from '../lib/tileDiag'
 
 /**
+ * 「我该准备什么」说明卡的条目。
+ *
+ * 为什么要把这些写在界面上：打包版没有仓库根、没有 README、没有命令行 ——
+ * 用户手里只有一堆无人机文件，他不知道哪个必须给、哪个给了更好、哪个根本不用管。
+ * 以前这些知识只存在于文档里，而目标用户不会去翻文档。
+ *
+ * 文案纪律（改的时候请守住）：
+ *  · **不出现技术术语**：不写 CHM / gdaladdo / ovr / NDJSON / sidecar / 瓦片。
+ *    「高度图」可以说，「CHM」不行 —— 前者他一看就懂，后者他要先查。
+ *  · 每一条都要说清 **没有它会怎样**，只写「可选」等于没说。
+ *    "可选"是给开发者的分类，用户要的是"我不给会损失什么"。
+ */
+const PREPARE_REQUIRED: ReadonlyArray<{ name: string; why: string }> = [
+  {
+    name: '正射影像（.tif）',
+    why: '无人机拍的那一整张园区大图。没有它软件做不了任何事 —— 检测、看图、导出都从它开始。',
+  },
+]
+
+const PREPARE_OPTIONAL: ReadonlyArray<{ name: string; why: string }> = [
+  {
+    name: '地表高程（dsm.tif）',
+    why:
+      '和影像放在同一个文件夹里就行。没有它就画不出高度图，' +
+      '水塘和还没长起来的幼林容易被当成空地，需要人工多复核一些。',
+  },
+  {
+    name: '地物分类图（segment.tif）',
+    why: '同样放同一文件夹。没有它水塘基本认不出来 —— 能认出的比例会从 98% 掉到 7.9%。',
+  },
+  {
+    name: '树木清单（tree_info.json）',
+    why: '只有在需要重新圈定"哪片算林地"的时候才用得上。没有它不影响检测，也不影响导出。',
+  },
+]
+
+/**
  * 首次使用引导。
  *
  * 为什么需要它：打包版没有"仓库根"，用户不可能知道要把 3.5 GB 的影像放到
@@ -28,7 +65,18 @@ export default function WelcomeWizard({
   onCancel,
 }: {
   status: AppStatus
-  onDone: () => void
+  /**
+   * 提交成功后的回调。
+   *
+   * 为什么要带参数（2026-10-23 修复）：`onWizardDone` 曾经无条件按"重新开始"
+   * 处理（清空界面 + 跳过紧接着的自动载入）。于是用户在**第 2 步明确选了
+   * 结果文件**，提交后地图上却一个多边形都没有 —— 他指定的文件被那道闸门跳过。
+   *
+   * `gapsProvided` 的语义是「**用户本次在向导里主动选过结果文件**」，
+   * 不是"结果文件那一栏非空"（那一栏会预填上次的路径）。
+   * 三种情形见 `gapsPicked` 的注释与 `lib/gapsLoad.ts` 的 `shouldLoadAfterWizard`。
+   */
+  onDone: (info: { gapsProvided: boolean }) => void
   /**
    * 关掉引导（不保存任何改动）。
    *
@@ -42,7 +90,22 @@ export default function WelcomeWizard({
   onCancel?: () => void
 }) {
   const [image, setImage] = useState<string | null>(status.image)
+  // ⚠️ 这两个状态**预填自上次配置**（`status.gaps` 非空时 `gaps` 一进来就有值）。
+  //    所以"`gaps` 非空"**不能**当成"用户这次指定了结果文件" —— 见 gapsPicked。
   const [gaps, setGaps] = useState<string | null>(status.gaps)
+  /**
+   * 用户**本次**是否在向导里主动点过「选择结果文件」并选中了一个文件。
+   *
+   * 为什么不能直接用 `!!gaps`（2026-10-23 踩过，属于"过度纠正"的反面）：
+   * `gaps` 预填自 `status.gaps`。用户点「换一张影像」打开向导时，结果文件那一栏
+   * **本来就是上次那个路径**。他只改了 tif、完全没碰结果文件，`!!gaps` 依然是
+   * `true` —— 于是被判定成"用户要载入这份结果"，旧结果被载回来、
+   * `hasResult` 变 true、界面又跳到第 4 步。这正是 10-23 修掉的
+   * 「换影像后仍跳第 4 步」（`3207e94`）。
+   *
+   * 判据必须是"**动作**"（点过并选中），不是"**字段非空**"（可能只是预填）。
+   */
+  const [gapsPicked, setGapsPicked] = useState(false)
   const [busy, setBusy] = useState(false)
   const [stage, setStage] = useState('')
   const [err, setErr] = useState<string | null>(null)
@@ -86,9 +149,15 @@ export default function WelcomeWizard({
       const root = typeof status.data_root === 'string' ? status.data_root.trim() : ''
       const defaultPath = kind === 'gaps' && root ? `${root.replace(/[\\/]+$/, '')}/output` : undefined
       const p = await pickFile(kind, { defaultPath })
+      // 用户按了取消 / 什么都没选 → 不算"指定过"，`gapsPicked` 保持原值
       if (!p) return
-      if (kind === 'image') setImage(p)
-      else setGaps(p)
+      if (kind === 'image') {
+        setImage(p)
+      } else {
+        setGaps(p)
+        // ★ 只有"真的选中了一个文件"才算用户指定过（预填不算，取消不算）
+        setGapsPicked(true)
+      }
     } catch (e) {
       setErr(`打开文件选择框失败：${e instanceof Error ? e.message : String(e)}`)
     }
@@ -118,7 +187,10 @@ export default function WelcomeWizard({
         return
       }
       setStage('就绪')
-      onDone()
+      // ★ 带出去的是 `gapsPicked`（用户本次的动作），**不是** `!!gaps`（字段非空）。
+      //   两者在"只换 tif、结果文件是预填的"这一情形下正好相反，而那正是
+      //   10-23 修过的 bug（换影像后又跳第 4 步）。详见 gapsPicked 的注释。
+      onDone({ gapsProvided: gapsPicked })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       // 外壳抛回来的就是真因；同时抓一份快照，把日志尾一起摆出来
@@ -185,6 +257,40 @@ export default function WelcomeWizard({
               ) : (
                 <span className="dim">还没有选择</span>
               )}
+            </div>
+
+            {/* 「我该准备什么」——把"必需 / 可选、缺了会怎样"直接摆在选择框下面。
+                只放在第 1 步：用户此刻正在找文件，说明卡离开这个位置就没人看了。 */}
+            <div className="wiz-prep">
+              <div className="wiz-prep-head">我该准备什么？</div>
+
+              <div className="wiz-prep-group">
+                <span className="wiz-prep-tag req">必需</span>
+                <ul className="wiz-prep-list">
+                  {PREPARE_REQUIRED.map((it) => (
+                    <li key={it.name} className="wiz-prep-item">
+                      <span className="wiz-prep-name">{it.name}</span>
+                      <span className="wiz-prep-why">{it.why}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="wiz-prep-group">
+                <span className="wiz-prep-tag opt">可选</span>
+                <ul className="wiz-prep-list">
+                  {PREPARE_OPTIONAL.map((it) => (
+                    <li key={it.name} className="wiz-prep-item">
+                      <span className="wiz-prep-name">{it.name}</span>
+                      <span className="wiz-prep-why">{it.why}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="wiz-prep-foot dim">
+                可选的那几个不选也能用，只是结果会差一些 —— 先点下面「开始使用」照样能跑。
+              </div>
             </div>
           </div>
         </div>

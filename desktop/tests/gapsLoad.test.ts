@@ -16,6 +16,7 @@
 import {
   decideGapsLoad,
   shouldClearGapsOnImageChange,
+  shouldLoadAfterWizard,
   SUSPECT_EMPTY_DETAIL,
 } from '../src/lib/gapsLoad'
 import { useAppStore } from '../src/store/useAppStore'
@@ -190,6 +191,88 @@ console.log('\nH. 换影像才清空旧结果（重选同一张不能抹）')
   check(
     !shouldClearGapsOnImageChange(a, a),
     '★ 只换结果文件、影像没变 → false（否则刚选的结果立刻被清掉）',
+  )
+}
+
+// ---------- I. ★ 向导指定了结果文件 → 必须真的载入 ----------
+//
+// 这一条守的是 2026-10-23 用户实测的 bug：
+// 向导第 2 步明确选了 `data/output/wgr17-desktop-gaps.geojson`
+//（15,179,448 字节，blocks[0].gaps 共 1,762 个 Polygon，文件完好），
+// 提交后地图上**一个多边形都没有** —— 因为 `onWizardDone` 无条件置
+// `skipNextLoad = true`，紧接着的 `loadGaps()` 被那道闸门直接 return。
+//
+// 语义修正：**向导里给了结果文件 ≠ 重新开始**。给了就载入；没给才清空并跳过。
+// 保守方向也要守住：参数缺省（旧调用方）必须当作"没给"，不能反过来把
+// 用户没指定的文件也载进来。
+console.log('\nI. ★ 向导给了结果文件就要载入（不是"重新开始"）')
+{
+  check(
+    shouldLoadAfterWizard({ gapsProvided: true }),
+    '★ gapsProvided=true → true（用户指定的文件必须真的载入）',
+  )
+  check(
+    !shouldLoadAfterWizard({ gapsProvided: false }),
+    'gapsProvided=false → false（没给结果，沿用"进向导 = 重新开始"）',
+  )
+  // 旧调用方 / 以后有人忘了传参数：一律按"没给结果"处理（保守）
+  check(!shouldLoadAfterWizard(undefined), '参数缺省（undefined）→ false（保守，按重新开始）')
+  check(!shouldLoadAfterWizard(), '完全不传参数 → false')
+  check(!shouldLoadAfterWizard(null), 'null → false')
+  // 脏输入：真值不是布尔 true 的都不该放行
+  check(
+    !shouldLoadAfterWizard({ gapsProvided: 'true' as unknown as boolean }),
+    'gapsProvided 传了字符串 "true" → false（只认严格的 true）',
+  )
+  // 与"重新开始"分支必须互斥：同一份信息不可能既载入又清空
+  const info = { gapsProvided: true }
+  check(
+    shouldLoadAfterWizard(info) !== shouldLoadAfterWizard({ gapsProvided: false }),
+    '★ 两个分支的判定必须相反（否则就是"既清空又载入"或"都不做"）',
+  )
+}
+
+// ---------- J. ★★ 把「主动选过」与「只是预填」钉死 ----------
+//
+// 这一组守的是 2026-10-23 的另一半：判据必须传"动作"，不能传"字段非空"。
+//
+// `WelcomeWizard.tsx` 里结果文件那一栏是
+//     const [gaps, setGaps] = useState<string | null>(status.gaps)
+// —— **预填上次的路径**。所以用户点「换一张影像」打开向导时，`gaps` 一进来就非空。
+// 他只改了 tif、完全没碰结果文件，`!!gaps` 依然是 true。
+//
+// 如果 `onDone` 传 `{ gapsProvided: !!gaps }`，第一行就会走"载入旧结果" →
+// `hasResult` 变 true → 界面又跳第 4 步 —— 正是 `3207e94` 修掉的那个 bug。
+// 所以真正的判据是 `gapsPicked`（点了「选择结果文件」并真的选中），
+// 下面三条把三种情形逐个钉住（对应 lib/gapsLoad.ts 里 WizardDoneInfo 的表格）。
+console.log('\nJ. ★★ 三种情形：主动选过 / 只是预填 / 首次使用')
+{
+  // 情形 1：只换 tif，结果文件是预填的、没动 → gapsPicked 为 false
+  check(
+    !shouldLoadAfterWizard({ gapsProvided: false }),
+    '★ 预填但未主动选择 → false（那一栏非空，但用户没动过它）',
+  )
+  // 情形 2：主动点了「选择结果文件」并选中 → gapsPicked 为 true
+  check(
+    shouldLoadAfterWizard({ gapsProvided: true }),
+    '★ 主动点了「选择结果文件」并选中 → true',
+  )
+  // 情形 3：首次使用，没有预填、也没选 → 与情形 1 同为 false
+  check(
+    !shouldLoadAfterWizard({ gapsProvided: false }),
+    '首次使用、没预填也没选 → false（与"预填未选"同结论）',
+  )
+
+  // 情形 1 与情形 2 在"字段非空"这个错误判据下**完全一样**，却要走出相反结论。
+  // 这条断言就是把"两者必须能区分"这件事本身钉住 —— 将来若有人把判据简化回
+  // `!!gaps`，这两种情形会同时变成 true，这条会红。
+  const prefilled = { gapsNonEmpty: true, gapsPicked: false }
+  const picked = { gapsNonEmpty: true, gapsPicked: true }
+  check(
+    prefilled.gapsNonEmpty === picked.gapsNonEmpty &&
+      shouldLoadAfterWizard({ gapsProvided: prefilled.gapsPicked }) !==
+        shouldLoadAfterWizard({ gapsProvided: picked.gapsPicked }),
+    '★ 「预填」与「主动选过」的字段非空状态相同，但判定必须相反（判据只能是动作）',
   )
 }
 

@@ -31,7 +31,7 @@ import {
   type AppStatus,
 } from './api/backend'
 import { toInput, type ActionKind, type StepKey } from './lib/workflow'
-import { decideGapsLoad } from './lib/gapsLoad'
+import { decideGapsLoad, shouldLoadAfterWizard } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
 import ResumeDialog from './components/ResumeDialog'
@@ -310,7 +310,7 @@ export default function App() {
    *    按判定结果打日志 / 报错。
    */
   const loadGaps = useCallback(
-    async (opts?: { rerun?: boolean }) => {
+    async (opts?: { rerun?: boolean; fromWizard?: boolean }) => {
       // 这一次是不是"启动时的首次加载"—— 必须在函数**开头**取，且立刻置 false：
       // 检测完成后的 `loadGaps({rerun:true})`、点「重新载入结果」都不该算首次
       // （否则每跑完一次检测就弹一次"发现上次的检测结果"）。
@@ -318,7 +318,8 @@ export default function App() {
       firstLoadDone.current = true
       // 向导刚提交过 → 跳过这一次自动载入（见 skipNextLoad 的注释）。
       // `rerun`（检测完成后刷新）不受影响：那是新结果，必须载入。
-      if (skipNextLoad.current && !opts?.rerun) {
+      // `fromWizard`（用户在向导里指定了结果文件）更不该被跳 —— 见 shouldLoadAfterWizard。
+      if (skipNextLoad.current && !opts?.rerun && !opts?.fromWizard) {
         skipNextLoad.current = false
         setLoadingGaps(false)
         pushLog(
@@ -393,6 +394,18 @@ export default function App() {
         //    判定条件全在 lib/resume.ts 里（有 4 条规则的逐条断言）：
         //    只有"启动首次加载 + 本次没跑过检测 + 确实读到块数"才问。
         const askResume =
+          // 浏览器模式下 `?noResume=1` 强制不弹「继续上次结果」。
+          //
+          // 为什么需要它（2026-10-23）：e2e 脚本要能**确定性**地拿到"没有弹窗"的
+          // 界面。以前脚本靠"本地没有后端"这个隐含前提 —— 用户装了软件、
+          // 8765 上真跑着 fgd-tile-server 时，`/gaps` 返回 1,726 块 →
+          // 启动询问弹窗（`.help-mask`，z-index 1050）盖住全屏 →
+          // 拖拽手柄全部点不到 → 4~8 项"假失败"。那种"换台机器就红/绿"的
+          // 脚本等于没有。开关只影响浏览器预览，**桌面端 URL 不带它**。
+          !(!isTauri() && new URLSearchParams(window.location.search).has('noResume')) &&
+          // 向导里已经亲手选过结果文件 → 这个"要不要接着看上次结果"的选择
+          // 他已经做完了，再问一次只会让人以为软件没记住他的选择。
+          !opts?.fromWizard &&
           !resumeAsked.current &&
           shouldAskResume({
             firstLoad: isFirstLoad,
@@ -411,6 +424,14 @@ export default function App() {
           pushLog('已有一次结果等待你确认是否继续，本次未应用新读到的结果')
         } else {
           setGaps(feats, fc.planting_grid ?? null)
+          // 向导里指定的结果文件：日志要如实说"载入了多少块"。
+          // 跳过分支的"已清空界面上的结果（重新开始）"在**没给结果文件**时才成立，
+          // 两个分支的文案必须分开，否则用户会以为自己的文件被忽略了。
+          if (opts?.fromWizard) {
+            pushLog(
+              `已载入指定的结果文件（${feats.length.toLocaleString()} 块）`,
+            )
+          }
         }
       } catch (e) {
         // 后端不在线时退回内置样例，保证界面可独立演示。
@@ -456,22 +477,25 @@ export default function App() {
   )
 
   /** 探测瓦片服务并载入结果（向导完成后也会调它） */
-  const probeAndLoad = useCallback(async () => {
-    const st = await probeBackend()
-    setBackend(st)
-    if (st.online) {
-      pushLog(
-        `影像已就绪：${st.meta?.source ?? ''}（${st.meta?.width}×${st.meta?.height}，` +
-          `${st.meta?.res_m.toFixed(2)} m/px）`,
-      )
-    } else {
-      pushLog(
-        '影像服务未连接。若是第一次使用，请点右上角「⋯ 更多 → 更换影像或结果文件」；' +
-          '已选过则稍等几秒（首次要建索引），仍不行请查看日志文件。',
-      )
-    }
-    await loadGaps()
-  }, [setBackend, pushLog, loadGaps])
+  const probeAndLoad = useCallback(
+    async (opts?: { fromWizard?: boolean }) => {
+      const st = await probeBackend()
+      setBackend(st)
+      if (st.online) {
+        pushLog(
+          `影像已就绪：${st.meta?.source ?? ''}（${st.meta?.width}×${st.meta?.height}，` +
+            `${st.meta?.res_m.toFixed(2)} m/px）`,
+        )
+      } else {
+        pushLog(
+          '影像服务未连接。若是第一次使用，请点右上角「⋯ 更多 → 更换影像或结果文件」；' +
+            '已选过则稍等几秒（首次要建索引），仍不行请查看日志文件。',
+        )
+      }
+      await loadGaps(opts?.fromWizard ? { fromWizard: true } : undefined)
+    },
+    [setBackend, pushLog, loadGaps],
+  )
 
   // 启动：先问"有没有影像"，没有就显示引导（而不是丢给用户一句开发者命令）
   useEffect(() => {
@@ -648,25 +672,52 @@ export default function App() {
     setWizard(appStatus ?? ({} as AppStatus))
   }, [appStatus, setGaps])
 
-  const onWizardDone = useCallback(async () => {
-    setWizard(null)
-    const st = await getStatus()
-    // ⚠️ 向导 = 用户主动重新选数据 → **无条件清空界面结果**。
-    //
-    // 2026-10-23 口径变更：以前用 `shouldClearGapsOnImageChange`，它的规则是
-    // "同一张影像 → 不清"（防止重选时误抹结果）。但用户的实际路径是：
-    // 点「换一张影像」→ 又选了同一张 tif → 期望"重新开始"，
-    // 结果旧结果还在 → 步骤判定"检测已完成" → 直接跳第 4 步。
-    // 用户原话：「项目不会自动跳转到后续的步骤」。
-    //
-    // 现在的约定：**进向导就是重新开始**。想接着看旧结果有专门的入口
-    // （启动弹窗的「继续复核」/「⋯ 更多 → 重新载入结果」）。
-    setGaps([])
-    setGapsError(null)
-    skipNextLoad.current = true
-    setAppStatus(st)
-    await probeAndLoad()
-  }, [probeAndLoad, setGaps])
+  const onWizardDone = useCallback(
+    async (info?: { gapsProvided: boolean }) => {
+      setWizard(null)
+      const st = await getStatus()
+      setAppStatus(st)
+
+      if (shouldLoadAfterWizard(info)) {
+        // —— 分支 A：用户在向导第 2 步**明确指定了结果文件** → 真的要载入 ——
+        //
+        // 2026-10-23 修复：以前这里无条件按"重新开始"处理，`skipNextLoad = true`
+        // 会让紧随其后的 `loadGaps()` 直接 return。用户选了
+        // `data/output/wgr17-desktop-gaps.geojson`（1,762 块，文件完好），
+        // 提交后地图上却一个多边形都没有 —— 他指定的文件被闸门永久跳过。
+        //
+        // 先 `setGaps([])` 是为了不把**上一张影像**的结果残留在新影像上
+        //（载入是异步的，清空与载入之间会有一小段空窗，留着旧结果看起来像"没换成功"）。
+        // 但 `skipNextLoad` 必须显式置 false —— 闸门要放行这一次载入。
+        setGaps([])
+        setGapsError(null)
+        skipNextLoad.current = false
+        // 向导里亲手选过结果文件，就不该再弹"发现上次的检测结果，要接着看吗"：
+        // 那个选择他已经做完了。顺手把待确认的暂存丢掉，免得旧弹窗把新选择盖掉。
+        resumePending.current = false
+        setPendingResume(null)
+        setResumeAsk(null)
+        await probeAndLoad({ fromWizard: true })
+        return
+      }
+
+      // —— 分支 B：没给结果文件 → 保持"进向导 = 重新开始"的语义 ——
+      //
+      // 2026-10-23 口径：以前用 `shouldClearGapsOnImageChange`，规则是
+      // "同一张影像 → 不清"（防止重选时误抹结果）。但用户的实际路径是：
+      // 点「换一张影像」→ 又选了同一张 tif → 期望"重新开始"，
+      // 结果旧结果还在 → 步骤判定"检测已完成" → 直接跳第 4 步。
+      // 用户原话：「项目不会自动跳转到后续的步骤」。
+      //
+      // 现在的约定：**进向导且没指定结果 = 重新开始**。想接着看旧结果有专门的入口
+      // （启动弹窗的「继续复核」/「⋯ 更多 → 重新载入结果」）。
+      setGaps([])
+      setGapsError(null)
+      skipNextLoad.current = true
+      await probeAndLoad()
+    },
+    [probeAndLoad, setGaps],
+  )
 
   // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 进度条 / 日志 / 自动重载结果
   // ⚠️ 浏览器模式（Headless Chrome）下 onSidecarEvent 直接返回空订阅，
