@@ -743,6 +743,92 @@ kbd {
   white-space: nowrap;
 }
 
+/* ---------- 第 1 步里的「我该准备什么」说明卡 ----------
+   为什么单独一块而不是塞进 .dim 段落：三条可选文件各有一句"缺了会怎样"，
+   混在正文里会变成一大段灰字，用户会整段跳过。这里用左右两栏
+   （左边文件名、右边后果）让他能只扫文件名那一列。
+   ⚠️ 窄窗口（1100px）时 wizard 宽 700px、遮罩留 24px，本身放得下；
+      真正会溢出的是长文件名 —— 所以 `.wiz-prep-name` 允许任意处断行。 */
+.wiz-prep {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+
+.wiz-prep-head {
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.wiz-prep-group + .wiz-prep-group {
+  margin-top: 8px;
+}
+
+.wiz-prep-tag {
+  display: inline-block;
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+}
+.wiz-prep-tag.req {
+  color: var(--warn);
+  border-color: rgba(224, 168, 82, 0.5);
+}
+.wiz-prep-tag.opt {
+  color: var(--dim);
+}
+
+.wiz-prep-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.wiz-prep-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+/* 文件名不换行不现实（可能很长），改成"允许断行 + 定宽" */
+.wiz-prep-name {
+  flex: 0 0 auto;
+  max-width: 42%;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.wiz-prep-why {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+.wiz-prep-foot {
+  margin-top: 9px;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* 窄窗口：两栏变上下两行，避免文件名被挤成一列竖排 */
+@media (max-width: 780px) {
+  .wiz-prep-item {
+    display: block;
+  }
+  .wiz-prep-name {
+    display: block;
+    max-width: 100%;
+    margin-bottom: 1px;
+  }
+}
+
 .wizard-err {
   margin: 8px 0 0;
   padding: 10px 12px;
@@ -1464,6 +1550,125 @@ kbd {
 }
 .exp-summary b {
   font-size: 13px;
+}
+
+/* ---------- 导出前预览（「这次会生成什么」） ----------
+   为什么放在 exp-summary 之后、导出按钮之前：用户的视线路径是
+   "选目录 → 看一眼会得到什么 → 点导出"，把预览塞到按钮下面就得回头找。
+   为什么每一行左边固定一个数字列：他要的是"一共几个文件"，
+   数字成列才能一眼扫出总数，混在句子里就变成要读完全文。 */
+/* 加了「这次会生成什么」之后对话框内容变高，「开始导出」会被挤到折叠线以下 ——
+   底栏固定住，让主动作按钮始终可见。
+   ⚠️ 只作用于 `.export-dialog`：向导页（WelcomeWizard）的底栏行为保持不变，
+      那里内容和按钮是一起读完的，固定住反而挡住说明卡。 */
+.export-dialog .wizard-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  /* 必须给背景：否则滚到下面的内容会从底栏里透出来 */
+  background: var(--panel);
+  padding-bottom: 2px;
+}
+
+.exp-plan {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.exp-plan-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  margin-bottom: 8px;
+}
+.exp-plan-head .exp-plan-total {
+  color: var(--accent);
+  font-size: 15px;
+}
+
+.exp-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  /* 两栏排布：7 行单列会把「开始导出」挤出折叠线（实测 1280×900 就要滚动）。
+     两栏之后 4 行就放得下，用户开窗即见"会得到什么 + 按钮在哪"。
+     对话框窄到 640px 以下再退回单栏（每行说明有完整句子，太窄会变成竖条）。 */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 18px;
+}
+
+@media (max-width: 640px) {
+  .exp-plan-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.exp-plan-item {
+  display: flex;
+  gap: 9px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+/* 会跳过的那一组：整行压暗，别让用户以为"0 个"也算产出 */
+.exp-plan-item.off {
+  opacity: 0.55;
+}
+
+.exp-plan-num {
+  flex: 0 0 22px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--accent);
+}
+.exp-plan-item.off .exp-plan-num {
+  color: var(--dim);
+}
+
+.exp-plan-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.exp-plan-label {
+  display: block;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.exp-plan-var {
+  margin-left: 6px;
+  font-size: 10.5px;
+  color: var(--warn);
+  border: 1px solid rgba(224, 168, 82, 0.5);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.exp-plan-detail {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.exp-plan-skip {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--warn);
+  line-height: 1.6;
+}
+
+.exp-plan-where {
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .exp-result {

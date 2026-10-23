@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { exportBundle, isTauri, openPath, pickOutputDir, type ExportResponse } from '../api/backend'
 import { polygonAreaM2 } from '../lib/geometry'
+import { countClasses, describeExportPlan } from '../lib/exportPreview'
 import type { GapCollection } from '../types'
 
 function baseName(p: string): string {
@@ -35,6 +36,22 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
   const [res, setRes] = useState<ExportResponse | null>(null)
   const [err, setErr] = useState<string | null>(null)
+
+  /**
+   * 「点导出之前」的预览。
+   *
+   * 数字全部来自 `lib/exportPreview.ts`（纯函数、有单测），它对着
+   * `scripts/tile_server.py::export_bundle()` 的实际产出清单逐项对齐 ——
+   * 不写死任何"21 个文件"这类数字，因为**按类别分包的文件数随数据变化**。
+   *
+   * 计算放在渲染里而不是 `useMemo`：`gaps` 变化本来就整块重渲染，
+   * 而且这里没有昂贵运算（一次 Set 去重）。**注意：不能加在任何 early return 之后。**
+   */
+  const plan = describeExportPlan({
+    gapCount: gaps.length,
+    classCount: countClasses(gaps),
+    hasGrid: !!plantingGrid?.plant_pitch_m,
+  })
 
   const chooseDir = async () => {
     try {
@@ -140,6 +157,42 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
           <div>
             <span className="k">范围</span>
             <b>{roi ? '圈选' : '整幅'}</b>
+          </div>
+        </div>
+
+        {/* 「这次会生成什么」——必须在点导出**之前**就能看到。
+            以前只有导出完成之后才列文件名，用户不知道会得到几个、放在哪，
+            于是反复点了又点，每次都要等几十秒。 */}
+        <div className="exp-plan">
+          <div className="exp-plan-head">
+            <b>这次会生成什么</b>
+            <span className="dim">
+              共 <b className="exp-plan-total">{plan.totalFiles}</b> 个文件
+              {gaps.length > 0 ? ` · 基于当前 ${gaps.length.toLocaleString()} 块结果` : ''}
+            </span>
+          </div>
+          <ul className="exp-plan-list">
+            {plan.groups.map((g) => (
+              <li key={g.key} className={g.files === 0 ? 'exp-plan-item off' : 'exp-plan-item'}>
+                <span className="exp-plan-num">{g.files}</span>
+                <span className="exp-plan-body">
+                  <span className="exp-plan-label">
+                    {g.label}
+                    {/* 「随数据变化」这个标记很重要：不标的话用户会以为
+                        "按类别分包 5 个"是写死的，下次换张影像又变成 3 个就要来问。 */}
+                    {g.variable && <span className="exp-plan-var">随数据变化</span>}
+                  </span>
+                  <span className="exp-plan-detail dim">{g.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {plan.skipped.length > 0 && (
+            <div className="exp-plan-skip">⚠️ 会跳过：{plan.skipped.join('；')}</div>
+          )}
+          <div className="exp-plan-where dim">
+            全部写进：<span className="mono">{dir || 'output/desktop-export'}</span>
+            （按类别分包的在 <span className="mono">by-class</span> 子文件夹里）
           </div>
         </div>
 
