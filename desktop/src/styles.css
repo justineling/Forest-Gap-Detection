@@ -2232,6 +2232,15 @@ kbd {
 .next-pill:hover {
   border-color: var(--accent);
 }
+/* 检测参数窗打开时，卡片被**强制**折叠成胶囊（见 NextStepCard 的 settingsOpen）。
+   这时胶囊不是可点元素 —— 点了也展不开，所以光标与悬停都不做"可点"的暗示，
+   否则又是一个死按钮。 */
+.next-pill.np-locked {
+  cursor: default;
+}
+.next-pill.np-locked:hover {
+  border-color: var(--line);
+}
 .next-pill.done {
   border-left-color: var(--accent);
   color: var(--accent);

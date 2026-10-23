@@ -149,7 +149,20 @@ console.log('\nD. 下一步动作（每个阶段只给一个主行动）')
 
   const a3 = nextAction({ ...withImage, hasRoi: true })
   check(a3.step === 'detect', '圈过范围 → 卡片进第 3 步', a3.step)
-  check(a3.secondaries === undefined, '已圈选时不再提示圈选')
+  // ★ 2026-10-24：圈错了必须能反悔。用户原话「我选择了固定范围后选择了 polygon，
+  //   然后我又反悔了，打算画整幅，却无法跳回第二步」—— 圈选之后
+  //   `isStepDone('range')` 立刻为 true，第 2 步的所有入口（含「跳过，跑整幅」）
+  //   全都消失，用户被自己 30 秒前的操作锁死。第 3 步必须留一个反悔按钮。
+  check(
+    a3.secondaries?.length === 1 && a3.secondaries[0].kind === 'clearRoi',
+    '★ 已圈选时给次按钮「清除圈选，改跑整幅」（clearRoi）',
+    JSON.stringify(a3.secondaries),
+  )
+  check(
+    !!a3.secondaries?.[0]?.label.includes('整幅'),
+    '次按钮文案写明是"改跑整幅"',
+    a3.secondaries?.[0]?.label ?? '',
+  )
   check(a3.body.includes('圈定'), '已圈选时文案改说"只分析圈定范围"', a3.body)
 
   const a4 = nextAction(withImage, null)
@@ -220,6 +233,82 @@ console.log('\nF. toInput：把 store 状态翻成 WorkflowInput')
     manualEdited: 0,
   })
   check(i2.edited, '只有删除也算编辑过（−2）')
+}
+
+// ---------- G. ★ 圈错了要能反悔（回到第 2 步） ----------
+console.log('\nG. ★ 圈选之后必须还能改回跑整幅（每一步都能回头，不能把用户锁死）')
+{
+  const roiPicked: WorkflowInput = { ...withImage, hasRoi: true }
+  const a = nextAction(roiPicked)
+  check(a.kind === 'detect', '已圈选 → 主按钮仍是「开始检测」', a.kind)
+  check(
+    (a.secondaries ?? []).some((x) => x.kind === 'clearRoi'),
+    '★ 已圈选 → 次按钮里有「清除圈选，改跑整幅」',
+    JSON.stringify(a.secondaries),
+  )
+  // 护栏（沿用 D 组那条）：主按钮与次按钮 kind 不得重复。
+  // 重复 = 两个按钮做同一件事，"改跑整幅"会变成一句假话。
+  const kinds = [a.kind, ...(a.secondaries ?? []).map((x) => x.kind)]
+  check(new Set(kinds).size === kinds.length, '★ 第 3 步主/次按钮 kind 不重复', kinds.join(','))
+
+  // 清掉 roi 之后（= `setRoi(null)` 的效果）：active 必须回到第 2 步。
+  // 这正是用户说的"跳回第二步"—— 不需要额外改 active 计算。
+  const afterClear: WorkflowInput = { ...roiPicked, hasRoi: false }
+  const steps = computeSteps(afterClear)
+  const active = steps.find((x) => x.status === 'active')
+  check(active?.key === 'range', '★ 清除圈选后 active 回到第 2 步「确定范围」', active?.key ?? '(无)')
+  check(
+    steps.find((x) => x.key === 'detect')?.status === 'todo',
+    '清除圈选后第 3 步回到 todo（不能还停在"可以开跑"）',
+  )
+  const a2 = nextAction(afterClear)
+  check(a2.kind === 'drawRoi', '清除圈选后主按钮回到「圈定范围」', a2.kind)
+  check(
+    (a2.secondaries ?? []).some((x) => x.kind === 'detect' && x.label.includes('跳过')),
+    '★ 清除圈选后「跳过，跑整幅」重新出现（第 2 步的三个入口都回来了）',
+    JSON.stringify(a2.secondaries),
+  )
+
+  // 已经有结果的人不该看到这个按钮：结果与范围是一起导出的，
+  // 清掉 roi 只会破坏两者的对应关系（App 里这条路由"分支 A 不清 roi"守着）。
+  const hasOutcome: WorkflowInput = {
+    ...withImage,
+    hasRoi: true,
+    hasGaps: true,
+    hasResult: true,
+    gapCount: 12,
+  }
+  check(
+    !(nextAction(hasOutcome).secondaries ?? []).some((x) => x.kind === 'clearRoi'),
+    '已有结果时不再提示"清除圈选"',
+    JSON.stringify(nextAction(hasOutcome).secondaries),
+  )
+}
+
+// ---------- H. ★ 向导「重新开始」之后必须回到第 2 步 ----------
+console.log('\nH. ★ 向导里重新开始（无 ROI / 无结果）→ 第 2 步必须是 active')
+{
+  // 用户原话：「我在第三步…点击第一步（选择影像）后，如果是同一个的 tif 并点击
+  // 重新开始后，直接跳到第三步了」。
+  // 根因：重新开始只清了结果、**没清 roi** → `isStepDone('range')` 里 `hasRoi`
+  // 仍为 true → 第 2 步算"已完成" → active 直接落到第 3 步。
+  const restarted: WorkflowInput = {
+    ...withImage,
+    hasRoi: false,
+    hasResult: false,
+    hasGaps: false,
+    detected: false,
+  }
+  const active = computeSteps(restarted).find((x) => x.status === 'active')
+  check(active?.key === 'range', '★ 重新开始 → active = range（第 2 步）', active?.key ?? '(无)')
+  check(!isStepDone('range', restarted), '★ 重新开始后第 2 步不算"已完成"')
+
+  // 反证：只清结果、不清 roi → active 直接跳到第 3 步（就是用户看到的那个 bug）
+  const leaky: WorkflowInput = { ...restarted, hasRoi: true }
+  check(
+    computeSteps(leaky).find((x) => x.status === 'active')?.key === 'detect',
+    '反证：漏清 roi → active 直接跳到 detect（用户报的就是这个）',
+  )
 }
 
 // ---------- 汇总 ----------

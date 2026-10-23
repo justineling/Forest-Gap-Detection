@@ -52,6 +52,15 @@
  * 也就是说 #310 那个"hook 数变化"的路径在这里会被真实走一遍。
  * 离开检测态走 `DetectBar` 的「中止检测」按钮：浏览器模式下
  * `cancelDetect()` 直接返回一句提示、`finally` 里 `detectReset()` 把 running 置回 false。
+ *
+ * ## 场景 4 / 5（2026-10-24 步骤流转 UX 修复的回归）
+ *
+ *  · 场景 4：`?settings=1` 打开检测参数窗 → 「下一步」卡片必须**默认折叠**
+ *    （`.next-pill` 在、`.next-card` 不在），关掉参数窗后自动展开回来。
+ *  · 场景 5：`?roi=1`（本次新增的预览开关，只作用于浏览器）伪造一个"已圈选"状态
+ *    → 卡片停在第 3 步且带「清除圈选，改跑整幅」→ 点它之后卡片必须回到第 2 步。
+ *    没有这个开关就**测不到**那条分支（浏览器里没有真实绘制结果），
+ *    而"截图里没有、上线才发现"这个项目已经踩过一次。
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -436,6 +445,140 @@ async function main() {
     const crash = errs.filter(isCrash)
     ok(crash.length === 0, '★ 反向切换也没有 React 崩溃', crash.slice(0, 2).join(' | '))
     shotPath = await shot('3-detect-exited')
+  }
+
+  // ================= 场景 4：参数窗打开 → 卡片默认折叠 =================
+  //
+  // 用户原话：「在开始检测时，（检测参数弹窗）出现后，应该把中间右下角那个
+  // 可展开/折叠的弹窗给默认折叠，这是 ux 交互很重要的一点，减少画面的信息量。」
+  //
+  // `?settings=1` 是已有的预览开关（App 启动 effect 里 `setShowSettings(true)`），
+  // 所以这个场景**不需要新增任何开关**，走的就是真实路径。
+  console.log('\n=== 场景 4：★ 参数窗打开时「下一步」卡片默认折叠 ===')
+  {
+    const ready = await goto('?mock=ready&settings=1&noResume=1')
+    ok(ready, '界面渲染完成')
+    const hasDialog = await mustExist('.detect-settings', '检测参数窗')
+    if (hasDialog) {
+      const st = await evalJs(`
+        return {
+          card: !!document.querySelector('.next-card'),
+          pill: !!document.querySelector('.next-pill'),
+          pillText: (document.querySelector('.next-pill')?.textContent ?? '').trim(),
+          pillLocked: !!document.querySelector('.next-pill.np-locked'),
+          step: document.querySelector('.sr-item.active .sr-label')?.textContent ?? null,
+        };
+      `)
+      ok(!st.card, '★ 参数窗打开时没有展开的卡片（.next-card 不存在）')
+      ok(st.pill, '★ 卡片折叠成胶囊（.next-pill 存在）', `当前第 ${st.step} 步`)
+      // 折叠不能把信息全吞掉：胶囊上仍要写清"现在停在哪一步"
+      ok(st.pillText.length > 0, '★ 胶囊没有丢文案（仍能看出停在第几步）', st.pillText)
+      ok(st.pillLocked, '胶囊处于"参数窗打开"的锁定态（不是可点的死按钮）')
+    }
+
+    // 关掉参数窗 → 卡片要自己展开回来
+    const closed = await evalJs(`
+      const dlg = document.querySelector('.detect-settings');
+      if (!dlg) return { ok: false, why: '没有参数窗' };
+      const btns = [...dlg.querySelectorAll('button')];
+      const b =
+        btns.find((x) => (x.getAttribute('title') || '') === '关闭') ||
+        btns.find((x) => x.textContent.trim() === '✕');
+      if (!b) {
+        return { ok: false, why: '按钮文案：' + btns.map((x) => x.textContent.trim()).join('/') };
+      }
+      b.click();
+      return { ok: true, why: b.getAttribute('title') || b.textContent.trim() };
+    `)
+    ok(closed.ok, '★ 前置：找到并点击参数窗的关闭按钮（按 title / 文字定位）', closed.why ?? '')
+    await sleep(600)
+    const back = await evalJs(`
+      return {
+        dialog: !!document.querySelector('.detect-settings'),
+        card: !!document.querySelector('.next-card'),
+        pill: !!document.querySelector('.next-pill'),
+      };
+    `)
+    ok(!back.dialog, '参数窗已关闭')
+    ok(back.card && !back.pill, '★ 关掉参数窗后卡片自动展开回来（.next-card 回来）')
+    const errs4 = await collectErrors()
+    const crash4 = errs4.filter(isCrash)
+    ok(crash4.length === 0, '参数窗开关没有引发 React 崩溃', crash4.slice(0, 2).join(' | '))
+    shotPath = await shot('4-settings-collapsed')
+  }
+
+  // ================= 场景 5：圈选之后还能改回跑整幅 =================
+  //
+  // 用户原话：「我选择了「固定范围」后选择了 polygon，然后我又反悔了，打算画整幅，
+  // 却无法跳回第二步」「现在用户在第二步手动创建 polygon 就会无法跑整幅了」。
+  //
+  // `?roi=1` 是本次新增的预览开关（App 启动 effect 里 `setRoi(一个假多边形)`），
+  // 理由同 `?p1=` / `?detect=1`：浏览器里没有真实绘制结果，不开这个口子，
+  // "已圈选"这条分支**永远测不到**。
+  console.log('\n=== 场景 5：★ 圈选之后仍能改回跑整幅（回到第 2 步）===')
+  {
+    const ready = await goto('?mock=ready&roi=1&noResume=1')
+    ok(ready, '界面渲染完成')
+    const st = await evalJs(`
+      const card = document.querySelector('.next-card');
+      return {
+        card: !!card,
+        step: (card?.querySelector('.nc-step')?.textContent ?? '').trim(),
+        btns: [...(card?.querySelectorAll('.nc-actions button') ?? [])].map((x) =>
+          x.textContent.trim(),
+        ),
+      };
+    `)
+    ok(st.card, '★ 有圈选时卡片是展开态', st.step)
+    ok(st.step.includes('第 3 步'), '★ 卡片停在第 3 步「运行检测」', st.step)
+    ok(
+      st.btns.some((t) => t.includes('清除圈选')),
+      '★ 第 3 步有「清除圈选，改跑整幅」按钮',
+      st.btns.join(' / '),
+    )
+
+    const clicked = await evalJs(`
+      const card = document.querySelector('.next-card');
+      if (!card) return { ok: false, why: '没有卡片' };
+      const btns = [...card.querySelectorAll('.nc-actions button')];
+      const b = btns.find((x) => x.textContent.includes('清除圈选'));
+      if (!b) {
+        return { ok: false, why: '按钮：' + btns.map((x) => x.textContent.trim()).join('/') };
+      }
+      b.click();
+      return { ok: true };
+    `)
+    ok(clicked.ok, '前置：找到并点击「清除圈选，改跑整幅」', clicked.why ?? '')
+    await sleep(700)
+
+    const after = await evalJs(`
+      const card = document.querySelector('.next-card');
+      return {
+        card: !!card,
+        step: (card?.querySelector('.nc-step')?.textContent ?? '').trim(),
+        btns: [...(card?.querySelectorAll('.nc-actions button') ?? [])].map((x) =>
+          x.textContent.trim(),
+        ),
+        active: document.querySelector('.sr-item.active .sr-label')?.textContent ?? null,
+      };
+    `)
+    ok(after.card, '点完之后卡片仍在（没有变白屏 / 没有崩）')
+    ok(after.step.includes('第 2 步'), '★ 清除圈选后卡片回到第 2 步「确定范围」', after.step)
+    ok(
+      after.btns.some((t) => t.includes('跳过，跑整幅')),
+      '★ 「跳过，跑整幅」入口重新出现（用户能改跑整幅了）',
+      after.btns.join(' / '),
+    )
+    ok(
+      after.btns.some((t) => t.includes('圈定范围')),
+      '主按钮回到「圈定范围」',
+      after.btns.join(' / '),
+    )
+    ok(after.active === '确定范围', '步骤条上的 active 也回到「确定范围」', after.active ?? '(无)')
+    const errs5 = await collectErrors()
+    const crash5 = errs5.filter(isCrash)
+    ok(crash5.length === 0, '清除圈选没有引发 React 崩溃', crash5.slice(0, 2).join(' | '))
+    shotPath = await shot('5-roi-cleared')
   }
 
   // ================= 收尾 =================

@@ -19,8 +19,9 @@ import {
   shouldLoadAfterWizard,
   SUSPECT_EMPTY_DETAIL,
 } from '../src/lib/gapsLoad'
+import { computeSteps, toInput } from '../src/lib/workflow'
 import { useAppStore } from '../src/store/useAppStore'
-import type { GapFeature } from '../src/types'
+import type { GapFeature, PolygonGeometry } from '../src/types'
 
 let failures = 0
 function check(ok: boolean, label: string, detail = ''): void {
@@ -274,6 +275,102 @@ console.log('\nJ. ★★ 三种情形：主动选过 / 只是预填 / 首次使�
         shouldLoadAfterWizard({ gapsProvided: picked.gapsPicked }),
     '★ 「预填」与「主动选过」的字段非空状态相同，但判定必须相反（判据只能是动作）',
   )
+}
+
+// ---------- K. ★ 向导「重新开始」必须把步骤送回第 2 步 ----------
+//
+// 守的是 2026-10-24 用户实测的 bug：
+//   「我在第三步…点击第一步（选择影像）后，如果是同一个的 tif 并点击重新开始后，
+//     直接跳到第三步了。」
+//
+// 根因不在 workflow.ts 的规则，而在**调用方漏清了一样东西**：
+// `onWizardDone` 的"重新开始"分支只做了 `setGaps([])`，没清 roi。
+// 而 `isStepDone('range')` 里 `hasRoi` 仍为 true → 第 2 步算"已完成"
+// → active 直接落到第 3 步「运行检测」。
+//
+// 所以这条用**真的 store** 走一遍 App 里那两行（顺序与源码一致），
+// 而不是再拼一个纯对象 —— 纯对象测不出"调用方漏了哪一行"。
+console.log('\nK. ★ 重新开始 = 清结果 + 清圈选（store 层复现）')
+{
+  const st = () => useAppStore.getState()
+  const feat = (id: string): GapFeature => ({
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [0, 0],
+          [0, 0.001],
+          [0.001, 0.001],
+          [0, 0],
+        ],
+      ],
+    },
+    properties: { gap_id: id, class: 'open_patch' } as never,
+  })
+  /** 一个假的范围（几何形状对"第几步"无意义） */
+  const fakeRoi = (): PolygonGeometry => ({
+    type: 'Polygon',
+    coordinates: [
+      [
+        [0, 0],
+        [0, 0.002],
+        [0.002, 0.002],
+        [0, 0],
+      ],
+    ],
+  })
+  /** 与 App.tsx 里 `workflowInput` 的拼法逐字段对齐 */
+  const wf = () =>
+    toInput({
+      backendOnline: st().backendOnline,
+      gaps: st().gaps,
+      hasResult: st().workflow.loaded,
+      roi: st().roi,
+      detectRunning: st().detect.running,
+      detected: st().workflow.detected,
+      reviewed: st().workflow.reviewed,
+      exported: st().workflow.exported,
+      manualAdded: st().manualAdded,
+      manualDeleted: st().manualDeleted,
+      manualEdited: st().manualEdited,
+    })
+  const activeKey = () =>
+    computeSteps(wf()).find((x) => x.status === 'active')?.key ?? '(无)'
+
+  // 造出"用户停在后面几步、屏幕上还有上一轮结果和圈选"的状态
+  st().setBackend({ online: true })
+  st().setGaps([feat('a'), feat('b')], null)
+  st().setRoi(fakeRoi())
+  st().markWorkflow({ detected: true })
+  check(st().roi !== null && st().gaps.length === 2, '准备：有圈选 + 2 块旧结果 + 跑过检测')
+
+  // ★ App.onWizardDone 的"重新开始"分支（两行，顺序与源码一致）
+  st().setGaps([])
+  st().setRoi(null)
+
+  check(st().roi === null, '★ 重新开始后圈选已清除（这一行以前是漏的）')
+  check(
+    activeKey() === 'range',
+    '★ 重新开始后 active 回到第 2 步「确定范围」（不是 detect）',
+    activeKey(),
+  )
+
+  // 反证：只做第一步（旧代码的行为）→ active 直接跳到第 3 步
+  st().setRoi(fakeRoi())
+  st().setGaps([feat('c')])
+  st().markWorkflow({ detected: true })
+  st().setGaps([]) // 只清结果，不清 roi —— 就是那个 bug
+  check(
+    activeKey() === 'detect',
+    '反证：只清结果不清 roi → active = detect（用户看到"直接跳到第三步"）',
+    activeKey(),
+  )
+
+  // 收尾：把 store 恢复成"干净"状态，免得影响后面（或将来新增）的用例
+  st().setRoi(null)
+  st().setGaps([])
+  st().markWorkflow({ detected: false, reviewed: false, exported: false })
 }
 
 // ---------- 汇总 ----------

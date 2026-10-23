@@ -30,7 +30,7 @@ import {
   runDetect,
   type AppStatus,
 } from './api/backend'
-import { toInput, type ActionKind, type StepKey } from './lib/workflow'
+import { nextAction, toInput, type ActionKind, type StepKey } from './lib/workflow'
 import { decideGapsLoad, shouldLoadAfterWizard } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
@@ -610,6 +610,32 @@ export default function App() {
       }
       // 浏览器模式下 `?settings=1` 打开检测参数面板（截图 / 回归用）
       if (!isTauri() && qs.has('settings')) setShowSettings(true)
+      // 浏览器模式下 `?roi=1` 伪造"刚圈完范围、还没跑检测"的状态（截图 / 回归用）
+      //
+      // 为什么需要它：卡片第 3 步的次按钮「清除圈选，改跑整幅」只在 `hasRoi` 为真时
+      // 才出现，而浏览器里没有真实的绘制结果 —— 不加这个开关，那条分支**永远截不到、
+      // 也永远测不到**（本项目已经踩过一次"截图里没有、上线才发现"）。
+      // 配合 `?mock=ready` 使用（要有影像才会走到第 3 步）。
+      //
+      // ⚠️ 顺手把**已有结果清空**：机器上真跑着瓦片服务时 `/gaps` 会返回 1,726 块，
+      //    卡片会停在第 4 步「复核结果」—— 那样这个场景就"换台机器就红/绿"了，
+      //    等于没测。与 `?noResume=1` 是同一类隔离手段。
+      // 只影响浏览器预览，**桌面端 URL 不带它**。
+      if (!isTauri() && qs.has('roi')) {
+        useAppStore.getState().setGaps([])
+        useAppStore.getState().setRoi({
+          type: 'Polygon',
+          coordinates: [
+            [
+              [111.1990, 1.1800],
+              [111.1990, 1.1860],
+              [111.2060, 1.1860],
+              [111.2060, 1.1800],
+              [111.1990, 1.1800],
+            ],
+          ],
+        })
+      }
       // 浏览器模式下 `?p2=export` 直接打开导出对话框（截图 / 回归用）
       if (!isTauri() && qs.get('p2') === 'export') setShowExport(true)
       // 浏览器模式下 `?p1=1` 预选 3 块 / `?p1=box` 进框选模式（截图 / 回归用）
@@ -713,10 +739,20 @@ export default function App() {
       // （启动弹窗的「继续复核」/「⋯ 更多 → 重新载入结果」）。
       setGaps([])
       setGapsError(null)
+      // ⚠️ 圈选也必须一起清（2026-10-24 用户反馈）：
+      //    「我在第三步…点击第一步（选择影像）后，如果是同一个 tif 并点重新开始，
+      //      直接跳到第三步了」。
+      //    根因：`isStepDone('range')` 里 `hasRoi` 仍为 true → 第 2 步算"已完成"
+      //    → active 直接落到第 3 步「运行检测」。重新开始 = 从第 1 步重走，
+      //    第 2 步必须重新变成 active，所以这里要把 roi 清掉。
+      //
+      //    ⚠️ **分支 A（用户主动指定了结果文件）不能清** —— 那条路是"我要看这份结果"，
+      //    结果与范围是一起导出的，清掉 roi 只会破坏两者的对应关系。
+      setRoi(null)
       skipNextLoad.current = true
       await probeAndLoad()
     },
-    [probeAndLoad, setGaps],
+    [probeAndLoad, setGaps, setRoi],
   )
 
   // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 进度条 / 日志 / 自动重载结果
@@ -1005,7 +1041,25 @@ export default function App() {
         case 'pickRoi':
           void onImportRoi()
           break
+        case 'clearRoi':
+          // 「清除圈选，改跑整幅」—— 圈错了的唯一反悔入口（2026-10-24 用户反馈：
+          // 「我选了固定范围、画了 polygon，然后又反悔了，打算跑整幅，却无法跳回第二步」）。
+          //
+          // 清掉 roi 之后 `hasRoi` 变 false → `computeSteps` 的 active 自然回到
+          // 第 2 步「确定范围」，卡片重新给出「圈定范围 / 导入 KML / 跳过，跑整幅」。
+          // 也就是说：**这个动作本身就是"跳回第二步"**，不需要额外改 active。
+          // ⚠️ 只清内存里的圈选，不动影像、不动已有结果 —— 撤销（Ctrl+Z）管的是数据，
+          //    这里管的是"这次检测要跑多大范围"，两件事不能混。
+          setRoi(null)
+          pushLog('已清除圈选 —— 回到第 2 步，可直接「跳过，跑整幅」')
+          break
         case 'detect':
+          // 同一个 kind 有三个来源：第 2 步次按钮「跳过，跑整幅」、第 3 步主按钮
+          // 「开始检测」、第 4 步「重新检测」。日志要写对，所以先看**当前卡片**
+          // 停在哪一步（`nextAction` 与卡片用的是同一个纯函数，不会走偏）。
+          if (nextAction(workflowInput).step === 'range') {
+            pushLog('已选择「跳过，跑整幅」—— 确认参数后开始检测（约 6 分钟）')
+          }
           void onDetect()
           break
         case 'boxSelect':
@@ -1033,7 +1087,7 @@ export default function App() {
           break
       }
     },
-    [appStatus, onDetect, onImportRoi, markWorkflow, outputDir, pushLog],
+    [appStatus, onDetect, onImportRoi, markWorkflow, outputDir, pushLog, setRoi, workflowInput],
   )
 
   /**
@@ -1162,6 +1216,9 @@ export default function App() {
               outputDir={outputDir || null}
               onAction={onWorkflowAction}
               loadError={gapsError}
+              /* 参数窗一开就把卡片收成胶囊：参数窗已经占了半屏，背后再挂一张
+                 写着「开始检测」的卡片，等于同一个问题问两遍（2026-10-24 用户反馈）。 */
+              settingsOpen={showSettings}
             />
           </ErrorBoundary>
         </div>

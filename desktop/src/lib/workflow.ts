@@ -23,6 +23,8 @@
  *      次按钮额外给「跳过，跑整幅」把这条捷径写明。
  *      会不会把人卡死？不会 —— `isStepDone('range')` 把"已经跑过检测 /
  *      磁盘上已有结果"也算完成，跑整幅的人自然就通过了这一步。
+ *      而"圈了又想反悔"的人由第 3 步的次按钮「清除圈选，改跑整幅」送回第 2 步
+ *      （`clearRoi` → `setRoi(null)`）—— 每一步都必须能回头，见 G 组测试。
  *    · ④ 复核结果 —— **阻塞**（但可一键跳过）。它是最该被引导的一步
  *      （1,726 块里混着误报，不看不该直接交出去）；跳过的方式是点主按钮
  *      「复核完成，去导出」，而不是让界面悄悄越过它。
@@ -184,6 +186,8 @@ export type ActionKind =
   | 'openData'
   | 'pickRoi'
   | 'drawRoi'
+  /** 清掉已圈的 Target Block，改回跑整幅（第 3 步的"反悔"入口） */
+  | 'clearRoi'
   | 'detect'
   | 'boxSelect'
   | 'goExport'
@@ -206,6 +210,9 @@ export interface NextAction {
    * 做的是同一件事（不圈范围直接检测），但必须**显式写出来** —— 用户看到
    * 主按钮「开始检测」时并不知道自己正在跳过第 2 步，会以为界面漏了东西。
    * 其余步骤仍卡在 2 个以内：主按钮 + 2 个次按钮已经是"一眼看得完"的极限。
+   *
+   * 第 3 步（已圈选、还没跑）也给 1 个次按钮「清除圈选，改跑整幅」——
+   * 那是"圈错了想反悔"的唯一入口，见 nextAction 里 detect 分支的注释。
    */
   secondaries?: { label: string; kind: ActionKind }[]
   /** 主按钮是否禁用（例如检测中） */
@@ -272,7 +279,18 @@ export function nextAction(s: WorkflowInput, exportedDir?: string | null): NextA
   }
 
   if (!s.hasResult && !s.detected) {
-    // 已经圈过了（否则会落进上面的分支）—— 直接开跑
+    // 已经圈过了（否则会落进上面的分支）—— 直接开跑。
+    //
+    // ⚠️ 但必须留一条**反悔**的路（2026-10-24 用户反馈）：
+    //    「我选了固定范围、画了 polygon，然后又反悔了，打算跑整幅，却无法跳回第二步」。
+    //    圈选之后 `isStepDone('range')` 立刻为 true → 卡片进第 3 步 → 上面那个
+    //    「跳过，跑整幅」的入口**消失了**，用户被自己 30 秒前的操作锁死。
+    //    所以这里给一个次按钮「清除圈选，改跑整幅」：它调 `setRoi(null)`，
+    //    `hasRoi` 变 false → 第 2 步重新成为 active（卡片自动跳回第 2 步，
+    //    「圈定范围 / 导入 KML / 跳过，跑整幅」三个入口全部回来）。
+    //
+    //    为什么不在检测前"临时忽略 roi"：那会让界面上的圈选与实际执行的范围不一致 ——
+    //    用户看到框还在，结果却是整幅的，比多点一次糟得多。
     return {
       step: 'detect',
       finished: false,
@@ -280,6 +298,7 @@ export function nextAction(s: WorkflowInput, exportedDir?: string | null): NextA
       kind: 'detect',
       pill: '开始检测',
       body: '只分析圈定的范围，会快很多。开始前会自动检查数据是否齐全。',
+      secondaries: [{ label: '清除圈选，改跑整幅', kind: 'clearRoi' }],
     }
   }
 
