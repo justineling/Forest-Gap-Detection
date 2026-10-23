@@ -1294,3 +1294,20 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 
     **推论**：任何"把数据换个地方"的迁移，都要问
     **"配置文件里的绝对路径谁来更新？"**
+
+57. **`explorer.exe` 不认 `\\?\` 前缀 —— 会静默退化成打开父目录**
+
+    `open_path` 原样把路径交给 explorer：
+
+    ```rust
+    cmd.arg(target.as_os_str());   // \\?\D://Forest Gap Detection\data
+    ```
+
+    结果打开的是 `D://Forest Gap Detection`（父目录）—— **不报错**，
+    只是"差一级"，用户以为功能坏了（2026-10-23 实测）。
+
+    修：`strip_long_prefix_str()` 剥掉 `\\?\`（UNC 还原成 `\\server\share`），
+    `open_path` 与 `bundled_data_root` 两处都剥。
+
+    **推论**：凡把路径交给**外部程序**（explorer / 编辑器 / CLI 工具）的地方，
+    都要先剥前缀。这类失败不会抛错，只会行为差一点。
