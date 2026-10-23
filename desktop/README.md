@@ -1209,11 +1209,17 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 51. **"运行时新鲜"≠"运行时完整" —— 必须过 `--self-test`**
 
     `ensure_py_runtime` 原来只比时间戳。但 PyInstaller 在 **COLLECT 阶段被打断**
-    会留下**半截 `_internal`**（实测 1161 个文件 vs 正常 1459），缺 `unicodedata`：
+    会留下**半截 `_internal`**（实测打断后 1161 个文件），缺 `unicodedata`：
 
     ```json
     {"rasterio": "IMPORT_FAIL: ModuleNotFoundError: No module named 'unicodedata'", "ok": false}
     ```
+
+    ⚠️ **文件数不能当绝对判据**（2026-10-23 修正）：正常值**随机器不同** ——
+    实测家机 1446 个、公司机 1459 个，两边 `--self-test` 都是 `"ok": true`。
+    以前文档写死"正常 1459"，会把家机的好包判成坏包。
+    **判据以 `desktop_entry.exe --self-test` 输出 `"ok": true` 为准**；
+    文件数只在**同一台机器**上前后对比才有意义（同机这次 1446、下次 1300 才是被打断）。
 
     而 exe 时间戳是**新的** → 下一次构建照样复用 → 打出 rasterio 不可用的坏包，
     真机上报"影像读取失败"，完全看不出是打包问题。
