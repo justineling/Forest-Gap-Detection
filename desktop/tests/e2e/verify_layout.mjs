@@ -10,6 +10,11 @@
  * 截图默认写到 `tmp/shots-layout/`（`tmp/` 已被 .gitignore 忽略），
  * 可用 `SHOT_DIR=...` 覆盖。
  *
+ * **隔离性**（2026-10-23 复核后补）：`/gaps` 一律由 PATCH 拦下（空集合 / `gaps=3`
+ * 时 3 块），**不落到真实后端**；场景 2~7 的 URL 带 `?noResume=1`，
+ * `goto()` 里再关一次 `.help-mask`。以前脚本隐含依赖"本机没有后端"，
+ * 用户装了软件在跑时会出现 4 项假失败（详见 tests/e2e/README.md「二号大坑」）。
+ *
  * 覆盖：
  *   1. 启动询问弹窗：命中时界面必须是**空地图 + 停在第 2 步**（不是先载入再问）
  *   2. 检测参数「恢复推荐值」：写回默认值 + 2 秒轻量反馈 + 推荐标记复现
@@ -37,7 +42,17 @@ const ok = (cond, label, detail = '') => {
 /**
  * 前置补丁：
  *  · `/meta` → 结构完整的假 meta（缺 bounds_wgs84 会让整块地图被 ErrorBoundary 顶掉）；
- *  · `/gaps` → 只有 URL 带 `gaps=3` 时才返回 3 块（用来验证"先问、再载入"）。
+ *  · `/gaps` → **一律拦下，绝不落到真实后端**（2026-10-23 复核后改）：
+ *      `gaps=3` → 3 块（验证"先问、再载入"）；其余 → 空集合。
+ *
+ * ⚠️ 为什么 `/gaps` 必须拦（以前是"不匹配就 return _f(...)"放行）：
+ *    用户装了软件、8765 上真跑着 `fgd-tile-server` 时，放行会让 `/gaps` 返回
+ *    真实 1,726 块 → `shouldAskResume` 命中 → 启动询问弹窗（`.help-mask`，
+ *    `z-index: 1050` + 全屏半透明底）盖住整屏。实测 `elementFromPoint` 命中
+ *    三个 `.resizer` 的结果**全是 help-mask**，于是拖拽 120→120、
+ *    本脚本出现 4 项"假失败"。功能没坏，是脚本不 hermetic。
+ *
+ * ⚠️ 但 `/meta` 的**形状**必须完整 —— 这一条是坑 ①，别为了隔离把它删简。
  */
 const PATCH = `
 (() => {
@@ -52,24 +67,27 @@ const PATCH = `
       area_sqm: 420.5, source: 'algo', edited: false
     }
   });
+  const json = (body) => Promise.resolve(new Response(JSON.stringify(body),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }));
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : (input && input.url) || '';
     if (url.includes('/meta')) {
-      return Promise.resolve(new Response(JSON.stringify({
+      return json({
         ok: true, source: 'WGR17-002.tif', width: 47130, height: 44686,
         bands: 4, crs: 'EPSG:4326', res_m: 0.033,
         bounds_wgs84: [111.15, 1.14, 111.25, 1.22], center: [111.2, 1.18],
         zoom: 14, has_overviews: true, tile_url: '/tiles/{z}/{x}/{y}.png'
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      });
     }
     if (url.includes('/gaps')) {
       const want = new URLSearchParams(location.search).get('gaps');
-      if (want === '3') {
-        return Promise.resolve(new Response(JSON.stringify({
-          type: 'FeatureCollection',
-          features: [feat('G1', 111.18, 1.16), feat('G2', 111.19, 1.17), feat('G3', 111.20, 1.18)]
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-      }
+      // 只有显式 gaps=3 才给要素，其余一律空 —— 不依赖本机有没有真后端
+      return json({
+        type: 'FeatureCollection',
+        features: want === '3'
+          ? [feat('G1', 111.18, 1.16), feat('G2', 111.19, 1.17), feat('G3', 111.20, 1.18)]
+          : []
+      });
     }
     return _f(input, init);
   };
@@ -152,6 +170,46 @@ async function main() {
   }
 
   /**
+   * 关掉可能出现的启动弹窗（`.help-mask`：继续上次结果 / 帮助）。
+   *
+   * `?mock=ready` 只伪造 `/meta`，`/gaps` 已在 PATCH 里隔离成空集合，
+   * 所以正常情况下不该有弹窗。但**保险仍然保留**：
+   *  · 将来加了别的启动弹窗（帮助 / 更新提示）时，这一道能避免"整屏点不到"；
+   *  · 场景 1 故意要那个弹窗，它自己负责关，这里会返回 'none'。
+   *
+   * ⚠️ 找不到可点的按钮必须 **FAIL**，不能静默继续 ——
+   *    遮罩还在的话，后面那些拖拽断言会变成"看起来失败但其实是点不到"。
+   */
+  const dismissOverlay = async (label) => {
+    const r = await evalJs(`
+      const mask = document.querySelector('.help-mask');
+      if (!mask) return { state: 'none' };
+      const btns = [...mask.querySelectorAll('button')];
+      const b =
+        btns.find((x) => x.textContent.includes('继续复核')) ||
+        btns.find((x) => x.textContent.includes('关闭')) ||
+        btns.find((x) => (x.getAttribute('aria-label') || '') === '关闭');
+      if (!b) {
+        return {
+          state: 'fail',
+          why: '弹窗在，但没有可点的按钮；按钮文案：' +
+            btns.map((x) => (x.textContent || '').trim()).join('/'),
+        };
+      }
+      b.click();
+      return { state: 'closed', why: b.textContent.trim() };
+    `)
+    if (r.state === 'closed') {
+      await sleep(900)
+      const still = await evalJs(`return !!document.querySelector('.help-mask');`)
+      ok(!still, `前置：关掉启动弹窗「${label}」`)
+      return still ? 'fail' : 'closed'
+    }
+    ok(r.state === 'none', `前置：没有遮挡的启动弹窗「${label}」`, r.why ?? '')
+    return r.state
+  }
+
+  /**
    * 导航 + **等到界面真的渲染出来**再返回。
    *
    * 为什么不能只 sleep：vite **冷启动**时首屏要现编译模块，固定等 3 秒不够 ——
@@ -159,7 +217,7 @@ async function main() {
    * 一个"时灵时不灵"的验证脚本没人会信，所以这里轮询到关键元素出现为止
    * （最多 15 秒），超时才继续（让后续断言给出真实的失败信息）。
    */
-  const goto = async (query) => {
+  const goto = async (query, keepOverlay = false) => {
     await send('Page.navigate', { url: BASE + query })
     const deadline = Date.now() + 15000
     while (Date.now() < deadline) {
@@ -176,6 +234,8 @@ async function main() {
       if (ready) {
         // 再给一帧渲染 + effect 跑完的时间（resume 判定在 effect 里）
         await sleep(600)
+        // 场景 1 需要那个弹窗，用 `keepOverlay` 跳过保险；其余场景一律清场
+        if (!keepOverlay) await dismissOverlay(query)
         return
       }
       await sleep(250)
@@ -242,7 +302,8 @@ async function main() {
   // ================= 场景 1：先问、再载入 =================
   console.log('\n=== 场景 1：启动询问弹窗（先问、再载入）===')
   {
-    await goto('?mock=ready&gaps=3')
+    // 场景 1 的目标态就是「弹窗还在」→ 跳过 goto 里的清场保险
+    await goto('?mock=ready&gaps=3', true)
     const st = await layout()
     ok(st.dialog, '★ 弹出了「发现上次的检测结果」')
     ok(st.step === '确定范围', '★ 弹窗期间停在第 2 步「确定范围」（不是先跳到第 4 步）', `active=${st.step}`)
@@ -269,7 +330,7 @@ async function main() {
   // ================= 场景 2：默认布局 + 缩放控件位置 =================
   console.log('\n=== 场景 2：默认布局 / 缩放控件不再被卡片压住 ===')
   {
-    await goto('?mock=ready')
+    await goto('?mock=ready&noResume=1')
     const st = await layout()
     ok(!!st.nav, '缩放控件存在')
     if (st.nav && st.card) {
@@ -305,7 +366,7 @@ async function main() {
   // ================= 场景 4：拖宽左右面板 =================
   console.log('\n=== 场景 4：拖拽左右面板宽度 ===')
   {
-    await goto('?mock=ready')
+    await goto('?mock=ready&noResume=1')
     const before = await layout()
     await drag('.rs-left', 70, 0)
     const wider = await layout()
@@ -328,7 +389,7 @@ async function main() {
   {
     // 先把两块都拖到很宽，再缩窗口 —— 这是唯一能让"两块加起来超宽"的路径
     await send('Emulation.clearDeviceMetricsOverride')
-    await goto('?mock=ready')
+    await goto('?mock=ready&noResume=1')
     await drag('.rs-left', 190, 0)
     await drag('.rs-right', -220, 0)
     const wide = await layout()
@@ -372,7 +433,7 @@ async function main() {
   // ================= 场景 6：检测参数「恢复推荐值」 =================
   console.log('\n=== 场景 6：检测参数「恢复推荐值」===')
   {
-    await goto('?mock=ready&settings=1')
+    await goto('?mock=ready&settings=1&noResume=1')
     const opened = await evalJs(`
       const panel = document.querySelector('.detect-settings');
       if (!panel) return null;
@@ -425,7 +486,7 @@ async function main() {
   // ================= 场景 7：有「没有加速结构」横幅时 =================
   console.log('\n=== 场景 7：顶部横幅出现时，缩放控件让开 ===')
   {
-    await goto('?mock=ready&noOvr=1')
+    await goto('?mock=ready&noOvr=1&noResume=1')
     const st = await evalJs(`
       const b = document.querySelector('.ovr-banner');
       const n = document.querySelector('.maplibregl-ctrl-top-right');
