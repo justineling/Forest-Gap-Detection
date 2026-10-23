@@ -502,6 +502,27 @@ fn resolve_backend(app: &tauri::AppHandle) -> Option<Backend> {
 ///
 /// 打包版没有"仓库根"，而 `tile_server` 的默认探测（`drone data/`、`output/`）
 /// 都是相对路径。所以这里给一个明确的工作目录，并把相对路径参数补成绝对路径。
+/// 去掉 Windows 的 `\\?\` 长路径前缀（`\\?\UNC\` 还原成 `\\`）。
+///
+/// 为什么需要：Rust 的 `canonicalize` / Tauri 的 `resource_dir` 会返回 `\\?\` 形式，
+/// 但**很多外部程序不认**——最典型的是 `explorer.exe`：给它
+/// `\\?\D://a//b`，它会退化成打开 `D://a`（父目录）。
+fn strip_long_prefix_str(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    s.to_string()
+}
+
+fn strip_long_prefix(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    let out = strip_long_prefix_str(&s);
+    PathBuf::from(out)
+}
+
 /// 实测目录可写（写探针再删）。Windows 上"目录存在"不代表能写 ——
 /// 装到 Program Files 时安装目录是只读的，必须实测。
 fn dir_is_writable(dir: &std::path::Path) -> bool {
@@ -618,7 +639,9 @@ fn bundled_data_root(app: &tauri::AppHandle) -> PathBuf {
             if usable && dir_is_writable(&d) {
                 // 首次切换：把旧位置的小数据搬过来（幂等，已存在就跳过）
                 migrate_from_localappdata(&d);
-                return d;
+                // 剥掉 `\\?\` 前缀：这个值会显示在向导底部（"数据目录：…"），
+                // 也会传给 `open_path`。带前缀既难看、explorer 又不认。
+                return strip_long_prefix(d);
             }
         }
     }
@@ -2229,8 +2252,14 @@ fn open_path(path: String) -> Result<String, String> {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // ⚠️ explorer.exe **不认 `\\?\` 前缀**（LongPath 形式）：
+        //    传 `\\?\D://...//data` 给它，它会退化成打开**父目录**
+        //    （2026-10-23 实测：「打开输出目录」跳到了 D://Forest Gap Detection，
+        //     而不是 D://Forest Gap Detection\data）。
+        //    必须剥掉前缀；UNC 路径要还原成 `\\server\share`。
+        let shown = strip_long_prefix_str(&target.to_string_lossy());
         let mut cmd = Command::new("explorer");
-        cmd.arg(target.as_os_str());
+        cmd.arg(&shown);
         cmd.creation_flags(CREATE_NO_WINDOW);
         cmd.spawn().map_err(|e| format!("打开资源管理器失败：{e}"))?;
     }
