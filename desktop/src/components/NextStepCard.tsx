@@ -37,19 +37,32 @@ export default function NextStepCard({ input, outputDir, onAction, loadError }: 
   // 底部批量操作栏（BatchBar）在有选中项时出现，居中于地图区。
   // 卡片在右下角，窄地图下两者会压到一起 —— 有选中项就上移让位。
   const hasSelection = useAppStore((s) => s.selectedIds.length > 0)
-  // 用户手动折叠后，一旦进入新的步骤就自动展开 —— 否则他永远看不到引导
+  const action = nextAction(input, outputDir)
+
+  // 「结果文件没找到」是**数据链路**异常，不是"这一步没做"。
+  const abnormal = !!loadError
+
+  // 用户手动折叠后，一旦进入新的步骤就自动展开 —— 否则他永远看不到引导。
+  //
+  // ⚠️ 所有 hook 必须在下面的 `return null` **之前**调用：
+  //    React 要求每次渲染的 hook 数量一致。检测开始时若先 `return null`
+  //    再跳过这个 effect，hook 数量从 3 变 2 → `Minified React error #310`
+  //    （2026-10-23 真机踩到：点「开始检测」直接白屏报错）。
+  useEffect(() => {
+    setCollapsed(false)
+  }, [action.step, action.kind, abnormal])
+
   // ⚠️ 检测运行中**不显示卡片**：此时顶部已有进度条（DetectBar）说明"在干什么"，
   //    再挂一张写着「检测中…」的禁用卡片，等于同一件事说两遍，还挡地图。
-  //    （2026-10-23 用户反馈：点了「开始检测」后卡片还杵在那儿，应该关掉。）
+  //    **不要把这个 return 挪到任何 hook 上面**。
   if (input.detectRunning) return null
 
-  const action = nextAction(input, outputDir)
   const step = computeSteps(input).find((s) => s.key === action.step)
 
   // 「结果文件没找到」是**数据链路**异常，不是"这一步没做"。
   // 这时不能沿用 action.body（那会写成"共 0 块空地"），要说清怎么补救。
   // 现有结果被保留时也要讲明白 —— 否则用户会以为屏幕上的是新结果。
-  const abnormal = !!loadError
+  // （`abnormal` 已在函数顶部定义 —— 它被上面的 effect 依赖，必须提前。）
   // ⚠️ loadError 本身已经是完整句子（"未找到检测结果文件（已查找：…）"），
   //    这里**不要再套一层"没找到…（$loadError）"** —— 会变成
   //    "没找到检测结果文件（未找到检测结果文件（已查找：…））"。
@@ -60,10 +73,6 @@ export default function NextStepCard({ input, outputDir, onAction, loadError }: 
         ? `（界面上的 ${input.gapCount.toLocaleString()} 块是上一次的结果，已保留）`
         : '')
     : action.body
-
-  useEffect(() => {
-    setCollapsed(false)
-  }, [action.step, action.kind, abnormal])
 
   if (collapsed) {
     return (

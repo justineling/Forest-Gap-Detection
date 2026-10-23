@@ -570,10 +570,15 @@ fn migrate_from_localappdata(target: &std::path::Path) {
     if !old.is_dir() || old == target {
         return;
     }
-    let src_cfg = old.join("settings.json");
+    // settings.json 的历史位置是 %LOCALAPPDATA%\fgd\settings.json（**不在 data/ 下**），
+    // 所以这里要从上一级找，而不是 old.join("settings.json")。
     let dst_cfg = target.join("settings.json");
-    if src_cfg.is_file() && !dst_cfg.exists() {
-        let _ = std::fs::copy(&src_cfg, &dst_cfg);
+    if !dst_cfg.exists() {
+        if let Some(src_cfg) = legacy_config_path() {
+            if src_cfg.is_file() {
+                let _ = std::fs::copy(&src_cfg, &dst_cfg);
+            }
+        }
     }
     let src_out = old.join("output");
     let dst_out = target.join("output");
@@ -667,23 +672,60 @@ struct AppConfig {
     tile_source: Option<String>,
 }
 
-fn config_path() -> Option<PathBuf> {
+/// 配置文件**应该存在**的位置。
+///
+/// 便携模式（程序旁 `data/` 可写）→ `程序目录/data/settings.json`，
+/// 跟数据放一起：用户能看见、能备份、换机器时拷一个目录就够。
+/// 否则回退 `%LOCALAPPDATA%\fgd\settings.json`（老位置）。
+///
+/// ⚠️ 2026-10-23 之前配置**一直**在 `%LOCALAPPDATA%\fgd\settings.json`（不在 data/ 下），
+/// 所以"数据目录搬到 D 盘"时只搬了 output/，settings 没跟过去 ——
+/// 用户打开新目录只看到 output/。现在统一到数据根下。
+fn config_target() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let d = dir.join("data");
+            if d.is_dir() && dir_is_writable(&d) {
+                return Some(d.join("settings.json"));
+            }
+        }
+    }
     let local = std::env::var("LOCALAPPDATA").ok()?;
     Some(PathBuf::from(local).join("fgd").join("settings.json"))
 }
 
+/// 老位置（只用于一次性迁移与兜底读取）。
+fn legacy_config_path() -> Option<PathBuf> {
+    let local = std::env::var("LOCALAPPDATA").ok()?;
+    Some(PathBuf::from(local).join("fgd").join("settings.json"))
+}
+
+fn config_path() -> Option<PathBuf> {
+    config_target()
+}
+
 fn load_config() -> AppConfig {
-    let Some(p) = config_path() else {
+    // 1) 目标位置优先
+    if let Some(p) = config_target() {
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            return serde_json::from_str(&text).unwrap_or_default();
+        }
+    }
+    // 2) 目标不存在 → 读老位置，并**顺手迁移过去**（一次就够，之后走上面那条）
+    let Some(old) = legacy_config_path() else {
         return AppConfig::default();
     };
-    let Ok(text) = std::fs::read_to_string(&p) else {
+    let Ok(text) = std::fs::read_to_string(&old) else {
         return AppConfig::default();
     };
-    serde_json::from_str(&text).unwrap_or_default()
+    let cfg: AppConfig = serde_json::from_str(&text).unwrap_or_default();
+    // 迁移失败不影响本次使用（下次启动还会再试）
+    let _ = save_config(&cfg);
+    cfg
 }
 
 fn save_config(cfg: &AppConfig) -> Result<(), String> {
-    let p = config_path().ok_or("拿不到 LOCALAPPDATA 环境变量")?;
+    let p = config_target().ok_or("拿不到可写的配置目录")?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败：{e}"))?;
     }
