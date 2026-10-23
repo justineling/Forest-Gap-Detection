@@ -1243,3 +1243,35 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
     exe 不存在时 `FG_PYR_STALE` 未定义 → 直接跳"就绪" → 跳过重建 →
     tauri build 拿**空目录**打包 → 打出 **2.3 MB** 的安装包（正常 71 MB）。
     **改 if 块结构必须穷举分支：存在 / 缺失 / 过期 / 损坏，并用桩测跑一遍。**
+
+54. **early return 不能出现在任何 hook 之前 —— 会白屏报 React error #310**
+
+    为了"检测中隐藏卡片"，在 `NextStepCard` 里写了：
+
+    ```tsx
+    if (input.detectRunning) return null   // ← 早退
+    const action = nextAction(...)
+    useEffect(...)                          // ← 家机原有的 effect，在它后面
+    ```
+
+    检测一开始，组件从 3 个 hook 变成 2 个 →
+    `Minified React error #310: Rendered more hooks than during the previous render`
+    → **整块区域白屏**（地图/工具栏还在，只有卡片区域挂掉）。
+
+    **规则**：所有 `useState / useEffect / useMemo / useCallback / useAppStore`
+    必须在任何 `return` 之前调用。改完组件 grep 一遍这些行号，确认全在 return 上面。
+
+    ⚠️ **`npm test` 抓不到这个**：项目的单测是纯函数/纯逻辑（不渲染组件），
+    `tsc` 只查类型。目前**没有**任何自动化手段能发现"组件渲染崩了"——
+    这是已知缺口，待补组件级渲染冒烟测试。
+
+55. **`settings.json` 在 `%LOCALAPPDATA%\fgd\`，不在 `data/` 里**
+
+    `config_path()` 返回的是 `%LOCALAPPDATA%\fgd\settings.json`，
+    而数据根是 `%LOCALAPPDATA%\fgd\data` —— **差一级**。
+
+    做"数据目录迁移"时如果按 `data/settings.json` 去找，永远找不到，
+    表现就是"新目录里只有 output/，没有 settings.json"（2026-10-23 实测）。
+
+    现在：`config_target()` 便携优先（`程序目录/data/settings.json`），
+    `load_config()` 目标不存在时读 `legacy_config_path()` 并顺手迁移过去。

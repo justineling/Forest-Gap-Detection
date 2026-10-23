@@ -385,6 +385,31 @@ QA 穷举 8 个布尔位 × 2 种 gapCount 命中。修法是把主按钮改成�
 （所以不提示"没有加速结构"是对的，目录里那个 1.1 GB 的 <code>.ovr</code> 是另一张图的）；
 重启后界面出现的一片多边形是<b>内置演示样例</b>，已改为只在 <code>?demo=1</code> 时加载。
 状态栏现在会显示 <code>加速：内部金字塔 ×6</code> / <code>外置 .ovr ×6</code> / <code>⚠️ 无加速结构</code>。</p>
+<h2>8.6 四个真机 bug 与一条最贵的教训（2026-10-23）</h2>
+<p>这一轮全是用户装包后实际点出来的问题，没有一个能靠单元测试发现：</p>
+<table>
+<thead><tr><th>现象</th><th>根因</th><th>修法</th></tr></thead>
+<tbody>
+<tr><td>点「开始检测」白屏报 <code>React error #310</code></td>
+<td>为了"检测中隐藏卡片"，把 <code>return null</code> 写在了 <code>useEffect</code> <b>之前</b> → hook 数量从 3 变 2</td>
+<td>所有 hook 提到 <code>return</code> 之前；删掉重复的 effect</td></tr>
+<tr><td>换影像选同一张 tif，仍跳第 4 步</td>
+<td>三层叠加：后端要求"影像变了"才清配置、前端同规则、加载时又把 <code>output/</code> 里的旧结果拉回来</td>
+<td>向导提交 = 重新开始（无条件清）+ 跳过紧随其后的那次自动载入</td></tr>
+<tr><td>跳步后引导卡片是折叠的</td>
+<td><code>collapsed</code> 是组件内部 state，折叠过一次就一直折叠</td>
+<td>步骤变化时自动展开</td></tr>
+<tr><td>数据存在 C 盘、<code>data/</code> 里没有 <code>settings.json</code></td>
+<td><code>config_path()</code> 一直在 <code>%LOCALAPPDATA%\fgd\</code>（data 的<b>上一级</b>）</td>
+<td>数据根改为"程序旁的 data/"（实测可写才用）+ 配置跟着数据根走 + 首次自动迁移</td></tr>
+</tbody>
+</table>
+<p><b>最贵的教训</b>：<b>任何 early return 都不能出现在 hook 之前</b>。
+<code>npm test</code> 是纯单元测试（不渲染组件），<code>tsc</code> 只查类型 ——
+两者都抓不到"组件渲染崩了"。目前项目<b>没有</b>这条基线，
+计划补「组件级渲染冒烟测试」（headless 渲染关键组件，覆盖检测中/检测后/空状态）。</p>
+<p><b>另一条</b>：<code>settings.json</code> 与 <code>data/</code> 差一级，
+做"数据目录迁移"时按 <code>data/settings.json</code> 找会永远找不到。</p>
 <h2>十三、现在还不能做什么（说实话）</h2>
 
 <table>
