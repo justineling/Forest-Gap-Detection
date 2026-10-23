@@ -38,6 +38,11 @@ export default function NextStepCard({ input, outputDir, onAction, loadError }: 
   // 卡片在右下角，窄地图下两者会压到一起 —— 有选中项就上移让位。
   const hasSelection = useAppStore((s) => s.selectedIds.length > 0)
   // 用户手动折叠后，一旦进入新的步骤就自动展开 —— 否则他永远看不到引导
+  // ⚠️ 检测运行中**不显示卡片**：此时顶部已有进度条（DetectBar）说明"在干什么"，
+  //    再挂一张写着「检测中…」的禁用卡片，等于同一件事说两遍，还挡地图。
+  //    （2026-10-23 用户反馈：点了「开始检测」后卡片还杵在那儿，应该关掉。）
+  if (input.detectRunning) return null
+
   const action = nextAction(input, outputDir)
   const step = computeSteps(input).find((s) => s.key === action.step)
 

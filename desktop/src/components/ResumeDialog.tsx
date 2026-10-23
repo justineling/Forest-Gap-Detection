@@ -28,6 +28,7 @@ export default function ResumeDialog({
   generatedAt,
   onContinue,
   onRestart,
+  onPickNew,
 }: {
   /** 读到的结果块数 */
   count: number
@@ -37,6 +38,8 @@ export default function ResumeDialog({
   onContinue: () => void
   /** 重新开始（清空界面上已加载的结果，从「确定范围」重走） */
   onRestart: () => void
+  /** 换一张影像（回到第 1 步，重选 .tif） */
+  onPickNew: () => void
 }) {
   // ESC = 继续（不丢数据那一支）。挂在 window 上而不是 div 上：
   // 弹窗刚出现时焦点还不一定在里面，挂在 div 上会漏掉第一次 ESC。
@@ -81,17 +84,28 @@ export default function ResumeDialog({
 
         <div className="help-body">
           <p className="resume-note">
-            继续复核可以接着上次的进度；重新开始会清空当前结果，从「确定范围」重新走一遍。
+            继续复核可以接着上次的进度；重新开始会清空界面上的结果，从第 2 步重走一遍；
+            要换成另一张航拍图就选第 1 步。
+          </p>
+          <p className="resume-note dim">
+            三个选项都**不会删除**磁盘上的结果文件 —— 想找回来随时可以再载入。
           </p>
         </div>
 
-        <div className="help-foot">
-          <span className="dim">不确定选哪个就先继续，随时可以再重跑一次检测</span>
-          <button className="btn primary" onClick={onContinue} autoFocus>
-            继续复核上次结果
+        <div className="help-foot resume-foot">
+          <button className="btn" onClick={onPickNew} title="回到第 1 步，重新选择航拍影像（.tif）">
+            换一张影像 <span className="step-tag">第 1 步</span>
           </button>
-          <button className="btn" onClick={onRestart}>
-            重新开始
+          <button className="btn" onClick={onRestart} title="清空界面上的结果，回到第 2 步「确定范围」">
+            重新开始 <span className="step-tag">第 2 步</span>
+          </button>
+          <button
+            className="btn primary"
+            onClick={onContinue}
+            autoFocus
+            title="保留上次的结果，直接进入第 4 步「复核结果」"
+          >
+            继续复核 <span className="step-tag">第 4 步</span>
           </button>
         </div>
       </div>

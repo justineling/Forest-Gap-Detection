@@ -611,6 +611,23 @@ export default function App() {
     setGapsError(null)
   }, [setGaps])
 
+  /**
+   * 「换一张影像」：回到第 1 步重选 .tif。
+   *
+   * 为什么要这个按钮（2026-10-23 用户反馈）：以前弹窗只有"继续 / 重新开始"，
+   * 想换园区的人只能先点 × 关掉弹窗，再自己去「⋯ 更多 → 更换影像」——
+   * 而"关掉"等于"继续"，界面里那 1,726 块旧结果会一直留着，看着像没换成功。
+   * 这里直接把用户送到第 1 步，并顺手清空旧结果（旧结果属于上一张影像）。
+   */
+  const onPickNewResume = useCallback(() => {
+    resumePending.current = false
+    setPendingResume(null)
+    setResumeAsk(null)
+    setGaps([])
+    setGapsError(null)
+    setWizard(appStatus ?? ({} as AppStatus))
+  }, [appStatus, setGaps])
+
   const onWizardDone = useCallback(async () => {
     setWizard(null)
     const st = await getStatus()
@@ -1113,6 +1130,7 @@ export default function App() {
             generatedAt={resumeAsk.generatedAt}
             onContinue={onContinueResume}
             onRestart={onRestartResume}
+          onPickNew={onPickNewResume}
           />
         </ErrorBoundary>
       )}

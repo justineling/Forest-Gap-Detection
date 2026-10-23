@@ -138,6 +138,33 @@ kbd {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.resume-foot {
+  /* 三个按钮 + 步骤标签：靠右排，主按钮在最右（阅读终点） */
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.step-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.5;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--dim, #9aa4b2);
+  white-space: nowrap;
+}
+
+.btn.primary .step-tag {
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  opacity: 0.85;
+}
+
 .ds-actions {
   display: flex;
   justify-content: flex-end;
