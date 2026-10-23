@@ -4,7 +4,7 @@
 ## 为什么需要它
 
 477 个断言全靠"我记得跑一下" —— 单人项目最大的敌人不是不会写，是**忘了跑**。
-这个脚本就是那条防线：跑一次 80 秒，覆盖 11 层。
+这个脚本就是那条防线：跑一次 80 秒，覆盖 12 层（全量多一层契约测试，共 13 层）。
 
 ## 用法
 
@@ -23,6 +23,7 @@
 | **`--help` 冒烟** | **CLI 构造期的异常**（argparse 配置错、模块级 NameError） | ~2 s |
 | `cargo test` | Rust 单测（预检 + 瓦片服务探活） | ~10 s |
 | **金字塔体检** | **`--overviews-only` 的参数转发链路**（Rust 拼命令 → 入口分发 → argparse） | ~5 s |
+| **多区块选结果** | **同名影像串台**（切回 block A 却读到 block B 的空地，不报错） | ~0.3 s |
 
 > 各层的项数**刻意不写死**：每加一条断言就要来改一遍，忘了就是自检输出里
 > 一个假数字（这比不写更糟 —— 看的人会以为测试没跑全）。项数以 `npm test` /
@@ -240,9 +241,19 @@ def main() -> int:
         print("         修法：git checkout <上一个还存在的提交> -- " + keep)
         rec("gitkeep", False, time.time() - t0)
 
-    # ---- 12. 契约测试 ----
+    # ---- 12. 多区块选结果（同名影像不得串台）----
+    # 守的是"切回 block A 却看到 block B 的空地"：数字自洽、没有报错，
+    # 只有到现场放样才发现坑挖错地方。纯路径判定，秒级，所以进 --fast。
+    print("\n[12] 多区块选结果（同名影像不串台）")
+    ok, dt = run(
+        [str(PY), "scripts/test_block_jobs.py"],
+        ROOT, "test_block_jobs（按区块选结果）",
+    )
+    rec("block-jobs", ok, dt)
+
+    # ---- 13. 契约测试 ----
     if not args.fast:
-        print("\n[12] 契约测试")
+        print("\n[13] 契约测试")
         ok, dt = run([str(PY), "scripts/test_sidecar_contract.py"], ROOT,
                      "test_sidecar_contract（95 项）")
         rec("contract", ok, dt)
