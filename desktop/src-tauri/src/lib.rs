@@ -694,6 +694,32 @@ fn config_target() -> Option<PathBuf> {
     Some(PathBuf::from(local).join("fgd").join("settings.json"))
 }
 
+/// 路径失效但**同名文件在数据根下**时，返回修正后的绝对路径。
+///
+/// 为什么需要（2026-10-23 实测）：数据目录从 `%LOCALAPPDATA%\fgd\data`
+/// 搬到程序旁的 `data/` 时，`migrate_from_localappdata` 只**复制文件**，
+/// 不会改 `settings.json` 里那些绝对路径 —— 于是向导里"✓ 结果文件"看着是好的，
+/// 一点「开始使用」就报「结果文件不存在：C:\Users\…\wgr17-desktop-gaps.geojson」，
+/// 而那个文件其实就在 `D:\…\data\output\` 下。
+///
+/// 策略：拿文件名去数据根下的 `output/` 和根目录各找一次，找到就用新路径。
+/// **只改路径、不搬文件**，所以对用户是安全的。
+fn rebase_to_data_root(old: &str) -> Option<String> {
+    let name = Path::new(old).file_name()?;
+    let root = config_target()?.parent()?.to_path_buf();
+    for sub in ["output", ""] {
+        let cand = if sub.is_empty() {
+            root.join(name)
+        } else {
+            root.join(sub).join(name)
+        };
+        if cand.is_file() {
+            return Some(cand.display().to_string());
+        }
+    }
+    None
+}
+
 /// 老位置（只用于一次性迁移与兜底读取）。
 fn legacy_config_path() -> Option<PathBuf> {
     let local = std::env::var("LOCALAPPDATA").ok()?;
@@ -708,7 +734,19 @@ fn load_config() -> AppConfig {
     // 1) 目标位置优先
     if let Some(p) = config_target() {
         if let Ok(text) = std::fs::read_to_string(&p) {
-            return serde_json::from_str(&text).unwrap_or_default();
+            let mut cfg: AppConfig = serde_json::from_str(&text).unwrap_or_default();
+            // 自愈：gaps 指向的位置失效、但同名文件在数据根下 → 改成新路径并写回。
+            // （数据目录搬迁后 settings 里的绝对路径会过期，见 rebase_to_data_root 注释）
+            if let Some(g) = cfg.gaps.clone() {
+                if !Path::new(&g).exists() {
+                    if let Some(fixed) = rebase_to_data_root(&g) {
+                        log_line(&format!("结果路径已过期，自动修正：{g} → {fixed}"));
+                        cfg.gaps = Some(fixed);
+                        let _ = save_config(&cfg);
+                    }
+                }
+            }
+            return cfg;
         }
     }
     // 2) 目标不存在 → 读老位置，并**顺手迁移过去**（一次就够，之后走上面那条）
@@ -2095,10 +2133,16 @@ fn set_data_paths(
     }
     if let Some(g) = gaps {
         let pb = PathBuf::from(&g);
-        if !pb.exists() {
+        if pb.exists() {
+            cfg.gaps = Some(g);
+        } else if let Some(fixed) = rebase_to_data_root(&g) {
+            // 前端可能还拿着搬迁前的旧绝对路径（settings 缓存 / 向导里的显示值）。
+            // 同名文件在数据根下 → 用新路径，不打断用户。
+            log_line(&format!("结果路径已过期，改用数据根下的同名文件：{g} → {fixed}"));
+            cfg.gaps = Some(fixed);
+        } else {
             return Err(format!("结果文件不存在：{g}"));
         }
-        cfg.gaps = Some(g);
     }
     save_config(&cfg)?;
     log_line(&format!(
