@@ -44,7 +44,9 @@ export default function StepRail({ input, onJump }: Props) {
               }
               aria-current={s.status === 'active' ? 'step' : undefined}
             >
-              <span className="sr-no">{s.status === 'done' ? '✓' : s.no}</span>
+              {/* 索引而不是对勾：这套体系里"第几号"就是状态，完成/当前/待办
+                  靠字色与那条青色下划线区分（见 ark.css 的 .sr-item.*）。 */}
+              <span className="sr-no">{String(s.no).padStart(2, '0')}</span>
               <span className="sr-text">
                 <span className="sr-label">{s.label}</span>
                 {(s.summary || s.optional) && (

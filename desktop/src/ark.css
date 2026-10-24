@@ -1,0 +1,998 @@
+/* ============================================================================
+   Ark UI 设计层（工业信息系统 · 近黑底 / 纸白字 / 青色信号）
+   ----------------------------------------------------------------------------
+   追加在 styles.css 之后（main.tsx 里按顺序 import），只负责"语法"：
+   外壳、舞台、索引、细线、信号色、动效。布局规则仍留在 styles.css。
+
+   设计契约
+     family  ark       —— 黑白青工业信息系统
+     depth   moderate  —— 外壳 + 一层蓝图舞台 + 共享控件；工具面保持原生惯例
+     证据    design-language.md「Stage plus instrumentation / Editorial hierarchy /
+             Controlled accent / Layered flatness」+ recipes.md「Ark」+ depth 2 清单
+     不做什么 不做启动序列、不做角色美术、不加第二信号色、不用圆角/卡片/投影
+
+   三条硬规矩（改这个文件前先读）
+     1. 中性面占 75% 以上；青色只出现在"选中 / 进度 / 主操作 / 一条规则线"上。
+     2. 层级靠 1px 线 + 留白 + 字号差，不靠底色块、不靠投影。
+     3. 大字与微标签共存，中间尺寸的"填充文字"尽量少。
+   ============================================================================ */
+
+/* ---------- 0. 基础 ---------- */
+
+:root {
+  color-scheme: dark;
+  accent-color: var(--ark-signal);
+}
+
+body {
+  font-family: var(--ark-font-cjk);
+  /* 蓝图底纹：45° 细斜线，2% 不透明度 —— 只在深色屏上隐约可见，
+     作用是把"纯黑"变成"有材质的黑"，不是装饰图案。 */
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(244, 246, 246, 0.014) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+::selection {
+  background: var(--ark-signal);
+  color: var(--ark-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ark-signal);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ark-line-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ark-line-strong);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 数据一律等宽：坐标、块数、耗时不能跳宽 */
+.mono,
+code,
+kbd,
+.sr-no,
+.sr-sub,
+.sb-left,
+.block-btn-label,
+.ark-meta,
+.ark-index {
+  font-family: var(--ark-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 1. 外壳：黑顶栏 + 品牌 + 索引 ---------- */
+
+.toolbar {
+  background: var(--ark-ink);
+  border-bottom: 1px solid var(--ark-line);
+  min-height: 56px;
+  padding: 0 12px 0 14px;
+  gap: 0;
+}
+
+.tb-brand {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding-right: 16px;
+  margin-right: 16px;
+  border-right: 1px solid var(--ark-line);
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.tb-brand b {
+  font-family: var(--ark-font-cond);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ark-paper);
+}
+.tb-brand .tb-brand-sub {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ark-muted);
+}
+/* 品牌块左上角那道青色短线：外壳的"系统正在运行"标记 */
+.tb-brand::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 3px;
+  height: 28px;
+  background: var(--ark-signal);
+}
+
+/* ---------- 2. 索引条（元信息带，只用真实数据）---------- */
+
+.ark-kicker {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  background: var(--ark-panel);
+  border-bottom: 1px solid var(--ark-line);
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ark-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ark-kicker > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ark-kicker .k-sep {
+  width: 1px;
+  height: 10px;
+  background: var(--ark-line);
+  margin: 0 12px;
+}
+.ark-kicker .k-val {
+  color: var(--ark-paper);
+}
+.ark-kicker .k-signal {
+  color: var(--ark-signal);
+}
+.ark-kicker .k-right {
+  margin-left: auto;
+  color: var(--ark-muted);
+}
+/* 五步刻度：5 根 1px 竖线，当前那根是青色且更长 */
+.ark-ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.ark-ticks i {
+  display: block;
+  width: 1px;
+  height: 8px;
+  background: var(--ark-line-strong);
+}
+.ark-ticks i.done {
+  background: var(--ark-paper);
+}
+.ark-ticks i.now {
+  height: 14px;
+  background: var(--ark-signal);
+}
+
+/* ---------- 3. 步进器：索引 + 青色下划线 ---------- */
+
+.step-rail {
+  flex: 1 1 auto;
+  gap: 0;
+  padding: 0;
+  height: 100%;
+  align-items: stretch;
+}
+.sr-item-wrap {
+  align-items: stretch;
+}
+.sr-item {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  padding: 0 14px;
+  gap: 8px;
+  align-items: center;
+  height: 100%;
+  position: relative;
+  transition: color var(--ark-t-fast) var(--ark-ease);
+}
+.sr-no {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ark-muted);
+}
+.sr-label {
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  color: var(--ark-paper);
+}
+.sr-sub {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--ark-muted);
+}
+
+/* 完成：字降为中性白，序号仍灰 —— 不抢当前步 */
+.sr-item.done .sr-label {
+  color: var(--ark-paper);
+}
+.sr-item.done .sr-no {
+  color: var(--ark-muted);
+}
+
+/* 当前：青色下划线（2px）+ 青色序号 —— 全系统唯一的"我在哪"信号 */
+.sr-item.active .sr-no,
+.sr-item.active .sr-label {
+  color: var(--ark-signal);
+}
+.sr-item.active::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  background: var(--ark-signal);
+}
+
+.sr-item.todo .sr-label {
+  color: var(--ark-muted);
+}
+
+.sr-line {
+  width: 1px;
+  height: 14px;
+  background: var(--ark-line);
+  align-self: center;
+}
+.sr-line.done {
+  background: var(--ark-line-strong);
+}
+
+/* ---------- 4. 按钮：方形 + 1px 描边；主操作是青色块 ---------- */
+
+.btn {
+  background: transparent;
+  border: 1px solid rgba(244, 246, 246, 0.22);
+  border-radius: 0;
+  color: var(--ark-paper);
+  font-family: var(--ark-font-cjk);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  padding: 6px 12px;
+  transition: color var(--ark-t-fast) var(--ark-ease),
+    border-color var(--ark-t-fast) var(--ark-ease),
+    background var(--ark-t-fast) var(--ark-ease);
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--ark-signal);
+  color: var(--ark-signal);
+}
+.btn:active:not(:disabled) {
+  background: rgba(24, 209, 255, 0.12);
+}
+.btn:disabled {
+  border-color: var(--ark-line);
+  color: var(--ark-muted);
+  opacity: 1;
+}
+.btn:disabled:hover {
+  border-color: var(--ark-line);
+  color: var(--ark-muted);
+}
+
+/* 主操作：青色实心 + 深色字 + 左侧 3px 信号条（Ark 的 action button 语法） */
+.btn.primary {
+  background: var(--ark-signal);
+  border-color: var(--ark-signal);
+  color: var(--ark-ink);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 rgba(8, 10, 11, 0.35);
+}
+.btn.primary:hover:not(:disabled) {
+  background: #4adcff;
+  border-color: #4adcff;
+  color: var(--ark-ink);
+}
+.btn.primary:active:not(:disabled) {
+  background: var(--ark-signal-dim);
+  border-color: var(--ark-signal-dim);
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ark-muted);
+}
+.btn.ghost:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ark-signal);
+}
+
+.btn.icon {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ark-muted);
+  width: 32px;
+  height: 32px;
+}
+.btn.icon:hover:not(:disabled) {
+  background: transparent;
+  border-color: rgba(244, 246, 246, 0.22);
+  color: var(--ark-paper);
+}
+.btn.icon.active {
+  border-color: var(--ark-signal);
+  color: var(--ark-signal);
+}
+.icon-n {
+  color: var(--ark-muted);
+}
+
+/* ---------- 5. 面板：索引标题 + 1px 细线，不做卡片 ---------- */
+
+.panel {
+  background: var(--ark-ink);
+}
+.panel-head {
+  border-bottom: 1px solid var(--ark-line);
+  padding: 10px 0 8px;
+}
+.panel-head h3,
+.panel-head .panel-title {
+  font-family: var(--ark-font-cjk);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ark-paper);
+}
+/* 左右面板各带自己的索引（Ark 的 section index），用伪元素加，不动 DOM */
+.panel.left .panel-head h3::before {
+  content: '01 / ';
+  font-family: var(--ark-font-mono);
+  color: var(--ark-signal);
+  letter-spacing: 0.08em;
+}
+.panel.right .panel-head h3::before {
+  content: '02 / ';
+  font-family: var(--ark-font-mono);
+  color: var(--ark-signal);
+  letter-spacing: 0.08em;
+}
+
+/* 分组小标题：微标签，灰 */
+.group-head,
+.cls-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ark-muted);
+}
+
+/* 列表行：底部 1px 线，悬停只改字色 */
+.cls-list li,
+.group {
+  border-bottom: 1px solid rgba(244, 246, 246, 0.07);
+}
+.cls-list li:hover {
+  background: transparent;
+  color: var(--ark-signal);
+}
+
+/* 元信息对：KEY 微标签 / VALUE 等宽 */
+.kv {
+  border-bottom: 1px solid rgba(244, 246, 246, 0.07);
+}
+
+/* ---------- 6. 「下一步」卡片：唯一允许的浮层块 ---------- */
+
+.next-card {
+  background: rgba(8, 10, 11, 0.92);
+  border: 1px solid var(--ark-line);
+  border-left: 2px solid var(--ark-signal);
+  border-radius: 0;
+  backdrop-filter: blur(8px);
+}
+.nc-step {
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ark-signal);
+}
+.nc-body {
+  font-size: 12px;
+  line-height: 1.7;
+  color: rgba(244, 246, 246, 0.78);
+}
+.nc-warn {
+  border-left: 2px solid var(--ark-warn);
+  padding-left: 8px;
+  color: var(--ark-paper);
+}
+.nc-opt {
+  color: var(--ark-muted);
+  font-size: 11px;
+}
+.nc-opt:hover {
+  color: var(--ark-signal);
+}
+.next-pill {
+  background: rgba(8, 10, 11, 0.92);
+  border: 1px solid var(--ark-line);
+  color: var(--ark-paper);
+  backdrop-filter: blur(8px);
+}
+.np-dot {
+  background: var(--ark-signal);
+}
+
+/* ---------- 7. 状态栏：底部元信息基线 ---------- */
+
+.statusbar {
+  background: var(--ark-ink);
+  border-top: 1px solid var(--ark-line);
+  font-family: var(--ark-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--ark-muted);
+}
+.sb-left {
+  color: var(--ark-muted);
+}
+.sep {
+  width: 1px;
+  height: 10px;
+  background: var(--ark-line);
+}
+.dot.ok {
+  background: var(--ark-state);
+}
+.dot.bad {
+  background: var(--ark-muted);
+}
+/* 过期：琥珀左沿 + 纸白字（不用整条色带，避免抢主操作） */
+.sb-stale {
+  background: rgba(255, 176, 32, 0.1);
+  border-left: 2px solid var(--ark-warn);
+  color: var(--ark-paper);
+}
+.sb-logs {
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  color: rgba(141, 147, 150, 0.85);
+}
+
+/* ---------- 8. 弹窗：黑面 + 青色顶线 + 遮罩 ---------- */
+
+.help-mask {
+  background: rgba(8, 10, 11, 0.78);
+  backdrop-filter: blur(3px);
+}
+.help-dialog {
+  background: var(--ark-panel);
+  border: 1px solid var(--ark-line-strong);
+  border-radius: 0;
+  /* 顶部 2px 青色规则线：Ark 的"这个面板是系统的当前焦点" */
+  border-top: 2px solid var(--ark-signal);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  /* 遮罩式入场：clip-path 从上往下揭开（位移 + 裁切，不是缩放） */
+  animation: ark-reveal var(--ark-t-in) var(--ark-ease);
+}
+@keyframes ark-reveal {
+  from {
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(-6px);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: none;
+  }
+}
+.help-head {
+  border-bottom: 1px solid var(--ark-line);
+  padding-bottom: 10px;
+}
+.help-head h2 {
+  font-family: var(--ark-font-cjk);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  color: var(--ark-paper);
+}
+.help-intro {
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ark-muted);
+}
+.help-close {
+  border: 1px solid transparent;
+  color: var(--ark-muted);
+}
+.help-close:hover {
+  border-color: rgba(244, 246, 246, 0.22);
+  color: var(--ark-paper);
+}
+.help-body {
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: rgba(244, 246, 246, 0.86);
+}
+.help-foot {
+  border-top: 1px solid var(--ark-line);
+}
+.step-tag {
+  background: transparent;
+  border: 1px solid rgba(244, 246, 246, 0.2);
+  color: var(--ark-muted);
+  font-family: var(--ark-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.btn.primary .step-tag {
+  border-color: rgba(8, 10, 11, 0.35);
+  color: rgba(8, 10, 11, 0.7);
+}
+
+/* ---------- 9. 菜单：黑面 + 细线，悬停青色 ---------- */
+
+.more-menu,
+.block-menu {
+  background: rgba(8, 10, 11, 0.97);
+  border: 1px solid var(--ark-line-strong);
+  border-top: 2px solid var(--ark-signal);
+  border-radius: 0;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.more-group-title {
+  font-family: var(--ark-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ark-muted);
+}
+.more-menu button {
+  border: 0;
+  background: transparent;
+  color: var(--ark-paper);
+  border-bottom: 1px solid rgba(244, 246, 246, 0.07);
+}
+.more-menu button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ark-signal);
+}
+.more-menu button:disabled {
+  color: var(--ark-muted);
+}
+.more-item-desc {
+  color: var(--ark-muted);
+  font-size: 11px;
+}
+.mm-note {
+  font-family: var(--ark-font-mono);
+  color: var(--ark-muted);
+}
+.block-btn {
+  background: transparent;
+  border: 1px solid rgba(244, 246, 246, 0.22);
+  color: var(--ark-paper);
+  font-family: var(--ark-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.block-btn:hover:not(:disabled) {
+  border-color: var(--ark-signal);
+  color: var(--ark-signal);
+}
+.block-btn.active {
+  border-color: var(--ark-signal);
+  color: var(--ark-signal);
+}
+.block-tag {
+  background: transparent;
+  border: 1px solid var(--ark-signal);
+  color: var(--ark-signal);
+  font-family: var(--ark-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.block-warn {
+  color: var(--ark-warn);
+  font-size: 10.5px;
+}
+
+/* ---------- 10. 提示条：琥珀左沿，不是整条色带 ---------- */
+
+.notice-bar {
+  background: rgba(255, 176, 32, 0.08);
+  border-bottom: 1px solid var(--ark-line);
+  border-left: 2px solid var(--ark-warn);
+  color: var(--ark-paper);
+  font-size: 12px;
+}
+.notice-icon {
+  color: var(--ark-warn);
+}
+.notice-more {
+  color: var(--ark-muted);
+}
+
+/* ---------- 11. 检测进度：仪器读数 ---------- */
+
+.detect-bar {
+  background: var(--ark-panel);
+  border-bottom: 1px solid var(--ark-line);
+}
+.db-head {
+  font-family: var(--ark-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  color: var(--ark-muted);
+}
+.db-track {
+  background: var(--ark-line);
+  height: 2px;
+}
+.db-fill {
+  background: var(--ark-signal);
+}
+/* 运行中：填充块做 1.8s 呼吸（全系统唯一的循环动画） */
+.detect-bar.running .db-fill {
+  animation: ark-breathe 1.8s var(--ark-ease) infinite;
+}
+@keyframes ark-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* ---------- 12. 地图舞台：四角括号 + 坐标网格（moderate 的那一层蓝图）---------- */
+
+.map-cell {
+  position: relative;
+  border-left: 1px solid var(--ark-line);
+  border-right: 1px solid var(--ark-line);
+  background: var(--ark-ink);
+}
+/* 四角括号：宣告"这块区域是被系统框定的样本"，不是装饰 */
+.map-cell::before,
+.map-cell::after {
+  content: '';
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+  z-index: 6;
+  border-color: rgba(24, 209, 255, 0.55);
+  border-style: solid;
+  border-width: 0;
+}
+.map-cell::before {
+  top: 10px;
+  left: 10px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.map-cell::after {
+  bottom: 10px;
+  right: 10px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+.ovr-banner {
+  background: rgba(8, 10, 11, 0.92);
+  border: 1px solid var(--ark-line);
+  color: var(--ark-paper);
+  backdrop-filter: blur(8px);
+}
+.batch-bar {
+  background: rgba(8, 10, 11, 0.94);
+  border: 1px solid var(--ark-line-strong);
+  border-top: 2px solid var(--ark-signal);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------- 13. MapLibre 控件：方形仪器 ---------- */
+
+.maplibregl-ctrl-group {
+  background: rgba(8, 10, 11, 0.9);
+  border: 1px solid var(--ark-line-strong);
+  border-radius: 0;
+  box-shadow: none;
+}
+.maplibregl-ctrl-group button {
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border-bottom: 1px solid var(--ark-line);
+}
+.maplibregl-ctrl-group button:last-child {
+  border-bottom: 0;
+}
+.maplibregl-ctrl-group button:hover {
+  background: rgba(24, 209, 255, 0.12);
+}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  /* MapLibre 的 +/- 是深灰 PNG：暗底上反相才看得见 */
+  filter: invert(1) brightness(0.92);
+  opacity: 0.75;
+}
+.maplibregl-ctrl-scale {
+  background: rgba(8, 10, 11, 0.8);
+  border: 1px solid var(--ark-line);
+  border-top: 0;
+  color: var(--ark-muted);
+  font-family: var(--ark-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  padding: 0 5px;
+}
+
+/* ---------- 14. 输入 / 复选框 ---------- */
+
+input,
+select,
+textarea {
+  background: var(--ark-field);
+  border: 1px solid var(--ark-line-strong);
+  border-radius: 0;
+  color: var(--ark-paper);
+  font-family: var(--ark-font-cjk);
+  font-size: 13px;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--ark-muted);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--ark-signal);
+  outline-offset: 1px;
+  border-color: var(--ark-signal);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--ark-line-strong);
+  background: transparent;
+  display: inline-block;
+  vertical-align: -2px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+input[type='checkbox']:checked {
+  background: var(--ark-signal)
+    no-repeat center / 9px 9px
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1 5.2 3.6 7.8 9 2' fill='none' stroke='%23080a0b' stroke-width='1.8'/%3E%3C/svg%3E");
+  border-color: var(--ark-signal);
+}
+input[type='checkbox']:hover,
+input[type='radio']:hover {
+  border-color: var(--ark-signal);
+}
+input[type='radio'] {
+  border-radius: 50%;
+}
+input[type='radio']:checked {
+  border: 4px solid var(--ark-signal);
+  background: var(--ark-ink);
+}
+
+/* ---------- 15. 可访问性 ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- 16. 读数块：不做盒子，做"大数字 + 微标签" ----------
+   skill 的 Editorial hierarchy：一个超大字 + 一串小标签，中间尺寸的填充文字尽量少。
+   这里把 KPI 从"带边框的卡片"改成"一条细线 + 一个大数字"：
+   盒子会把 8 个模块读成 8 个平级卡片，而它们其实是同一张读数表的不同行。 */
+
+.card {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--ark-line);
+  border-radius: 0;
+  padding: 12px 0 10px;
+}
+/* 关键读数（需补种面积）用信号色顶线：全屏只有这一处，用来指"这行最重要" */
+.card.kpi-card {
+  border-top-color: var(--ark-signal);
+}
+.kpi-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 1px 0;
+}
+.kpi-row span {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ark-muted);
+}
+.kpi-row b {
+  font-family: var(--ark-font-cond);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ark-paper);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.kpi-hint {
+  margin-top: 7px;
+  font-size: 10.5px;
+  line-height: 1.65;
+  color: var(--ark-muted);
+}
+
+/* 分组：只用横线分隔，不用盒子（盒子会让 4 个分组读成 4 张卡片） */
+.group {
+  border: 0;
+  border-top: 1px solid rgba(244, 246, 246, 0.07);
+  padding: 9px 0 8px;
+  background: transparent;
+}
+.group:first-child {
+  border-top: 0;
+}
+.group-hint {
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--ark-muted);
+}
+.chk {
+  font-size: 12.5px;
+  color: var(--ark-paper);
+}
+.chk:hover {
+  color: var(--ark-signal);
+}
+
+/* 面板标题右边的"?"：小方框，别做成大按钮 */
+.ph-help {
+  border: 1px solid var(--ark-line);
+  color: var(--ark-muted);
+  background: transparent;
+}
+.ph-help:hover {
+  border-color: var(--ark-signal);
+  color: var(--ark-signal);
+}
+
+/* 标签页：下划线（styles.css 已是这个结构），选中项青色 + 计数等宽 */
+.panel-head.tabs .tab {
+  color: var(--ark-muted);
+  letter-spacing: 0.04em;
+}
+.panel-head.tabs .tab.active {
+  color: var(--ark-signal);
+  border-bottom-color: var(--ark-signal);
+}
+.tab-n {
+  font-family: var(--ark-font-mono);
+  color: var(--ark-muted);
+}
+.panel-head.tabs .tab.active .tab-n {
+  color: var(--ark-signal);
+}
+
+/* 步进器：给足横向留白，下划线贴住工具栏底边（视觉上"挂在"当前步下面） */
+.sr-item {
+  padding: 0 16px;
+}
+.sr-item.active::after {
+  left: 16px;
+  right: 16px;
+}
+.sr-text {
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* 面板标题行：标题与计数之间要留气口，否则读成"图层与类别0 个多边形" */
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.panel-head .dim {
+  margin-left: auto;
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ark-muted);
+}
+
+/* ---------- 17. 窄窗 / 竖屏重排（不靠"把桌面版缩小"） ----------
+   本项目是桌面端（Tauri 固定窗），但窗口可以被拖窄到 800px 左右，且用户可能
+   用带鱼屏竖放。这一段做的是**重排**而不是缩放：
+     · 品牌只留主标，副标隐藏（把宽度让给步进器）
+     · 步进器横向滚动，当前步贴左可见（不再等分）
+     · 索引条只保留 BLOCK / STEP 两项，右侧刻度与状态让位
+     · 面板标题的索引仍在，但计数换成换行显示
+   规则：任何一项被隐藏的都是**重复信息**（副标、RECORDS 计数、SERVICE 状态在
+   状态栏里都还有），不是决策数据 —— 这条是 skill 对 minimal/reduced 的硬要求。 */
+
+@media (max-width: 1080px) {
+  .tb-brand {
+    padding-right: 12px;
+    margin-right: 10px;
+  }
+  .tb-brand .tb-brand-sub {
+    display: none;
+  }
+  .sr-item {
+    padding: 0 10px;
+  }
+  .sr-item.active::after {
+    left: 10px;
+    right: 10px;
+  }
+  .ark-kicker {
+    padding: 0 10px;
+  }
+  .ark-kicker .k-right {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  /* 索引条：只留 BLOCK / STEP（RECORDS 在左面板与状态栏都有） */
+  .ark-kicker > span:nth-child(5),
+  .ark-kicker > span:nth-child(6) {
+    display: none;
+  }
+  .sr-sub {
+    display: none;
+  }
+  .kpi-row b {
+    font-size: 18px;
+  }
+}
+
+/* styles.css 在 1180px 断点把「除当前步以外」的步骤标签全藏了，
+   于是导航退化成 01 02 03 04 05 五个光秃秃的编号 —— 那正是 skill 明令禁止的
+   "把决策 UI 压成没有标签的图标/编号"。这里恢复标签，让步进器横向滚动；
+   真正可省的只有 .sr-sub 那行副信息（当前块/已就绪），因为它在索引条里也有。 */
+@media (max-width: 1180px) {
+  .sr-text {
+    display: flex;
+  }
+  .sr-sub {
+    display: none;
+  }
+}
