@@ -46,7 +46,13 @@ Rust 侧 `chm_owner_at` / `usable_chm` / `job_slot_is_free` 第三判据 / 预�
 ⚠️ 提示**不能"取走即清空"**：向导路径会忽略 `set_data_paths` 的返回值，清了就丢消息。
 ⚠️ 单实例用 `windows-sys` 的 `CreateMutexW`（`Local\fgd-desktop-single-instance`），
 不要换 `tauri-plugin-single-instance`（要联网拉 crate）；`CreateMutexW` 被 **`Win32_Security`** 门控，少这个 feature 会 unresolved import。
-栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。验收基线：`npm test` **801** 断言 · `cargo test` **81** 项 · `test_block_jobs` **60** · 契约 95/95 · `test_overviews` **42** 项 · `verify_render` **171**（需 dev server）。
+栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。
+**视觉 = Ark UI 工业信息系统**（2026-10-24，分支 `feat/ui-ark`，family=ark × depth=2）：
+CSS 分两层 —— `styles.css` 管布局、`ark.css` 管语法（**必须后 import，顺序反了静默失效**）；
+旧变量名保留为别名。规范见 `docs/08-桌面端/界面设计规范-ArkUI.md`。
+另有平行方案 `feat/ui-rhine-lab`（Rhine Lab 纸感，`rhine.css`），两者都从 main 起、未合并。
+⚠️ 改视觉只改 ark.css；⚠️ 类别色唯一来源 `lib/classes.ts` 的 CLASS_STYLES。
+⚠️ 窄窗验证用 `desktop/tests/e2e/shot-narrow.mjs`（CDP 精确视口 + 溢出断言）。验收基线：`npm test` **801** 断言 · `cargo test` **81** 项 · `test_block_jobs` **60** · 契约 95/95 · `test_overviews` **42** 项 · `verify_render` **171**（需 dev server）。
 **端口不再写死 8765**（坑 48）：`pick_backend_port()` 试 8765~8776，空闲就用/自己的服务复用/别人的跳过；实际端口在 `ACTIVE_PORT`，前端用 `backend.ts` 的 `ensurePort()` + `backendUrl()` 跟随，`MapCanvas` 用 `tileUrlTemplate()`。
 致命 5 条：① `output/*.geojson` 是 `blocks[].gaps` 结构、无顶层 features；② 结果路径只按"扫目录+名含 gaps+mtime 取最新"，候选目录必须含 `cwd/output`，`/gaps` 空时绝不能 `applyRerun([])`；③ 检测前必须预检（W1001/W1004/W3001 都是"算偏不报错"）；④ Tauri↔sidecar 两线程分读 stdout/stderr（64 KB 管道填满→死锁）；⑤ 撤销栈 1.5 s 时间窗合并 TerraDraw change，框选必须传 `visibleClasses`。
 ⚠️ 第 6 条（2026-10-20 交付事故）：**8765 有人监听 ≠ 我们的服务在跑** —— 复用前必须验 `/meta` 的 `app` 字段；子进程 stderr 必须落 `app.log`（release 无控制台，`eprintln!` 是黑洞）并用 `try_wait` 记退出码；启动失败要当场抛回前端。详见坑 47。
