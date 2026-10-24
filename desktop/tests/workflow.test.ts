@@ -85,6 +85,24 @@ console.log('\nB. 可选步骤（②确定范围 / ④复核）不得把流程�
   check(isStepDone('range', { ...blank, detected: true }), '跑整幅检测过 → ② 也算 done')
   check(isStepDone('range', { ...blank, hasResult: true }), '磁盘上已有结果 → ② 也算 done')
   check(!isStepDone('range', blank), '什么都没做 → ② 未完成（不能凭空算完成）')
+  // 检测进行中：范围决策已经做出（圈了 / 明确选择跑整幅），第 2 步必须立刻算完成。
+  // 不加这条时，用户看到的是「02 灰着 + 03 亮着」，像流程跳过了第 2 步。
+  check(
+    isStepDone('range', { ...blank, detectRunning: true }),
+    '★ 检测进行中 → ② 也算完成（否则步骤条看起来跳过了第 2 步）',
+  )
+  {
+    const running: WorkflowInput = { ...withImage, detectRunning: true }
+    const stR = statusOf(running)
+    check(stR.range === 'done', '★ 检测中：02 是 done', stR.range)
+    check(stR.detect === 'active', '★ 检测中：03 是 active', stR.detect)
+    const rangeStep = computeSteps(running).find((x) => x.key === 'range')
+    check(
+      rangeStep?.summary === '未圈选',
+      '★ 检测中：02 的副标题是「未圈选」而不是「可选」（否则"已完成 + 可选"自相矛盾）',
+      String(rangeStep?.summary),
+    )
+  }
 
   // 有人工编辑 → 复核自动算完成（不必强制点"复核完成"）
   check(isStepDone('review', { ...blank, edited: true }), '有编辑痕迹 → ④ 自动算 done')
@@ -125,21 +143,21 @@ console.log('\nD. 下一步动作（每个阶段只给一个主行动）')
   check(a1.step === 'data' && !a1.finished, '阶段 = data')
 
   const a2 = nextAction(withImage)
-  // 主按钮 = 第 2 步该做的事（圈定范围），「跳过，跑整幅」是次按钮。
-  // ⚠️ 不能把主按钮设成 detect 再在次按钮里放一个同 kind 的「跳过」——
-  //    两个按钮行为完全一样（都只是打开参数窗），"跳过"没跳过任何东西
-  //    （QA 2026-10-22 穷举 16 组输入抓到的真缺陷）。
-  check(a2.kind === 'drawRoi' && a2.label === '圈定范围', '有影像 → 主按钮是「圈定范围」', a2.label)
+  // 主按钮 = 「开始检测」（跑整幅），圈范围降为次按钮。
+  // 2026-10-24 用户反馈：默认高亮"圈定范围"不符合 UI 体验 —— 圈范围是可选的加速手段，
+  // 不是必经动作；把唯一的实心块给"进入绘制模式"，等于暗示"你必须先画多边形"。
+  check(a2.kind === 'detect' && a2.label === '开始检测', '有影像 → 主按钮是「开始检测」', a2.label)
   check(a2.step === 'range', '未圈选时卡片标题是第 2 步「确定范围」', a2.step)
   check(
     a2.secondaries?.length === 2 &&
-      a2.secondaries[0].kind === 'pickRoi' &&
-      a2.secondaries[1].kind === 'detect' &&
-      a2.secondaries[1].label === '跳过，跑整幅',
-    '未圈选时给两个次按钮：导入 KML / 跳过，跑整幅',
+      a2.secondaries[0].kind === 'drawRoi' &&
+      a2.secondaries[0].label === '圈定范围' &&
+      a2.secondaries[1].kind === 'pickRoi',
+    '未圈选时给两个次按钮：圈定范围 / 导入 KML',
     JSON.stringify(a2.secondaries),
   )
   check(a2.body.includes('整幅'), '文案说明会跑整幅')
+  check(a2.body.includes('圈'), '文案同时说明可以先圈范围（可选路径不能消失）')
 
   // ★ 通用护栏：主按钮与次按钮的 kind 不得重复。
   //   重复 = 两个按钮做同一件事，用户点哪个都一样，"跳过"类文案会撒谎。
@@ -166,9 +184,8 @@ console.log('\nD. 下一步动作（每个阶段只给一个主行动）')
   check(a3.body.includes('圈定'), '已圈选时文案改说"只分析圈定范围"', a3.body)
 
   const a4 = nextAction(withImage, null)
-  // 有影像、没圈选、没结果 → 停在第 2 步，主按钮是「圈定范围」。
-  // （旧断言写的是 detect，那时主按钮确实叫「开始检测」；口径已改为"第 2 步做主按钮"。）
-  check(a4.kind === 'drawRoi', '未跑检测前 → 主按钮是「圈定范围」', a4.kind)
+  // 有影像、没圈选、没结果 → 停在第 2 步，主按钮是「开始检测」（2026-10-24 口径）。
+  check(a4.kind === 'detect', '未跑检测前 → 主按钮是「开始检测」', a4.kind)
 
   // 检测中：主按钮禁用
   const a5 = nextAction({ ...withImage, detectRunning: true })
@@ -262,11 +279,13 @@ console.log('\nG. ★ 圈选之后必须还能改回跑整幅（每一步都能�
     '清除圈选后第 3 步回到 todo（不能还停在"可以开跑"）',
   )
   const a2 = nextAction(afterClear)
-  check(a2.kind === 'drawRoi', '清除圈选后主按钮回到「圈定范围」', a2.kind)
+  check(a2.kind === 'detect', '清除圈选后主按钮回到「开始检测」', a2.kind)
+  // 第 2 步的三个入口：开始检测（主）/ 圈定范围 / 导入 KML —— 清除圈选后全部回来。
+  const backKinds = [a2.kind, ...(a2.secondaries ?? []).map((x) => x.kind)]
   check(
-    (a2.secondaries ?? []).some((x) => x.kind === 'detect' && x.label.includes('跳过')),
-    '★ 清除圈选后「跳过，跑整幅」重新出现（第 2 步的三个入口都回来了）',
-    JSON.stringify(a2.secondaries),
+    backKinds.join(',') === 'detect,drawRoi,pickRoi',
+    '★ 清除圈选后第 2 步的三个入口都回来了（开始检测 / 圈定范围 / 导入 KML）',
+    backKinds.join(','),
   )
 
   // 已经有结果的人不该看到这个按钮：结果与范围是一起导出的，

@@ -570,14 +570,15 @@ async function main() {
     `)
     ok(after.card, '点完之后卡片仍在（没有变白屏 / 没有崩）')
     ok(after.step.includes('第 2 步'), '★ 清除圈选后卡片回到第 2 步「确定范围」', after.step)
+    // 2026-10-24 口径：第 2 步主按钮是「开始检测」（跑整幅），圈范围是次按钮。
     ok(
-      after.btns.some((t) => t.includes('跳过，跑整幅')),
-      '★ 「跳过，跑整幅」入口重新出现（用户能改跑整幅了）',
+      after.btns.some((t) => t.includes('开始检测')),
+      '★ 主按钮回到「开始检测」（能改跑整幅了）',
       after.btns.join(' / '),
     )
     ok(
       after.btns.some((t) => t.includes('圈定范围')),
-      '主按钮回到「圈定范围」',
+      '「圈定范围」作为次按钮仍在（可选路径没有消失）',
       after.btns.join(' / '),
     )
     ok(after.active === '确定范围', '步骤条上的 active 也回到「确定范围」', after.active ?? '(无)')
@@ -1079,6 +1080,29 @@ async function main() {
       ds.texts.join(' / '),
     )
     ok(ds.hasClose, '★ 底部按钮叫「关闭」', ds.texts.join(' / '))
+
+    // ★ 底部操作条必须与窗底**贴齐**（2026-10-24 用户反馈）：
+    //   之前容器有 14px 下内边距 + 操作条负 margin，滚动到底时按钮下面漏出 14px，
+    //   正文从缝里透出来。这里滚到底再量一次几何差。
+    const footGeo = await evalJs(`
+      const dlg = document.querySelector('.detect-settings');
+      const acts = dlg?.querySelector('.ds-actions');
+      if (!dlg || !acts) return { ok: false };
+      dlg.scrollTop = dlg.scrollHeight;   // 滚到最底
+      const a = acts.getBoundingClientRect();
+      const d = dlg.getBoundingClientRect();
+      // 索引是 CSS ::before 生成的（不进 textContent），所以读计算样式
+      const h = dlg.querySelector('.ds-head b');
+      const idx = h ? getComputedStyle(h, '::before').content : '';
+      return { ok: true, gap: Math.round(d.bottom - a.bottom), idx };
+    `)
+    ok(footGeo.ok, '前置：参数窗里有底部操作条（.ds-actions）')
+    ok(footGeo.gap <= 1, '★ 滚到底时操作条与窗底贴齐（不漏正文）', `gap=${footGeo.gap}px`)
+    ok(
+      String(footGeo.idx ?? '').includes('03'),
+      '★ 参数窗标题带步骤索引（03 / 检测参数）',
+      String(footGeo.idx),
+    )
     ok(
       ds.hint,
       '★ 说明文案在：改动会立即生效并记住；想回到默认值点「恢复推荐值」',
@@ -1560,6 +1584,74 @@ async function main() {
     const crash12 = errs12.filter(isCrash)
     ok(crash12.length === 0, '导出接线没有引发 React 崩溃', crash12.slice(0, 2).join(' | '))
     shotPath = await shot('12-export-wiring')
+  }
+
+  // ================= 场景 13：检测参数窗是居中模态，且只滚自己 =================
+  //
+  // 用户反馈（2026-10-24）：
+  //   ① 滚轮往下，整个界面都在滚，不是窗内内容；
+  //   ② 它应该像「开始检测」那样居中，而不是贴在右上角。
+  //
+  // 根因是 `position: absolute` + 无高度上限：内容一长就把文档撑出滚动条
+  // （绝对定位的后代同样计入可滚动区域）。现在改成 fixed 遮罩 + 居中 + 窗内自滚，
+  // 所以这里要验的是**三件事**：居中、页面不滚、窗内真的能滚。
+  console.log('\n=== 场景 13：★ 参数窗居中 + 滚轮只滚窗内（页面不动）===')
+  {
+    const ready = await goto('?mock=ready&settings=1&noResume=1')
+    ok(ready, '界面渲染完成')
+
+    const geo = await evalJs(`
+      const mask = document.querySelector('.ds-mask');
+      const panel = document.querySelector('.detect-settings');
+      if (!mask || !panel) return { mask: !!mask, panel: !!panel };
+      const r = panel.getBoundingClientRect();
+      const vw = window.innerWidth, vh = window.innerHeight;
+      return {
+        mask: true, panel: true,
+        zIndex: getComputedStyle(mask).zIndex,
+        dx: Math.abs((r.left + r.right) / 2 - vw / 2),
+        dy: Math.abs((r.top + r.bottom) / 2 - vh / 2),
+        inView: r.top >= 0 && r.bottom <= vh + 1,
+        overflow: panel.scrollHeight > panel.clientHeight + 1,
+        pageScrollable: document.documentElement.scrollHeight > document.documentElement.clientHeight + 1,
+      };
+    `)
+    ok(geo.mask && geo.panel, '★ 参数窗有自己的遮罩层（.ds-mask），不再是裸弹出层')
+    ok(Number(geo.zIndex) >= 1050, '★ 遮罩 z-index 与其它模态同层（>=1050）', geo.zIndex)
+    ok(geo.dx < 4, '★ 水平居中（|中心差| < 4px）', String(geo.dx))
+    ok(geo.dy < 4, '★ 垂直居中（|中心差| < 4px）', String(geo.dy))
+    ok(geo.inView, '★ 整窗在视口内（不越界）')
+    ok(!geo.pageScrollable, '★ 页面本身不可滚（这是"滚整个界面"的根因）')
+
+    // 真实滚轮：落在窗内 → 只滚窗；再断言页面 scrollY 没变
+    const box = await evalJs(`
+      const r = document.querySelector('.detect-settings').getBoundingClientRect();
+      return { x: Math.round((r.left + r.right) / 2), y: Math.round((r.top + r.bottom) / 2) };
+    `)
+    await send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x: box.x,
+      y: box.y,
+      deltaX: 0,
+      deltaY: 240,
+      pointerType: 'mouse',
+    })
+    await sleep(400)
+    const after = await evalJs(`
+      const panel = document.querySelector('.detect-settings');
+      return { panelTop: panel.scrollTop, pageY: window.scrollY };
+    `)
+    ok(
+      geo.overflow ? after.panelTop > 0 : true,
+      '★ 滚轮滚的是窗内内容（panel.scrollTop > 0）',
+      `overflow=${geo.overflow} scrollTop=${after.panelTop}`,
+    )
+    ok(after.pageY === 0, '★ 页面没有被滚动（window.scrollY 仍为 0）', String(after.pageY))
+
+    const errs13 = await collectErrors()
+    const crash13 = errs13.filter(isCrash)
+    ok(crash13.length === 0, '参数窗没有引发 React 崩溃', crash13.slice(0, 2).join(' | '))
+    shotPath = await shot('13-settings-modal')
   }
 
   // ================= 收尾 =================

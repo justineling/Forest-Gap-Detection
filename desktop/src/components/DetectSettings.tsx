@@ -125,7 +125,23 @@ export default function DetectSettings({
   }
 
   return (
-    <div className="detect-settings" role="dialog" aria-label="检测参数">
+    /* 遮罩：参数窗是**模态**，不是挂在工具栏下沿的弹出层。
+       以前它 position:absolute + 无高度上限，内容一长就把整页撑出滚动条 ——
+       于是滚轮滚的是整个界面，而不是窗内（2026-10-24 用户反馈）。
+       改成 fixed 遮罩 + 居中 + 窗内自滚（见 ark.css 的 .ds-mask / .detect-settings）。 */
+    <div
+      className="ds-mask"
+      onMouseDown={(e) => {
+        // 点遮罩 = 关闭（与其它弹窗一致；窗内点击不会冒泡到这里）
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        className="detect-settings"
+        role="dialog"
+        aria-modal="true"
+        aria-label="检测参数"
+      >
       <div className="ds-head">
         <b>检测参数</b>
         <div className="ds-head-actions">
@@ -322,6 +338,7 @@ export default function DetectSettings({
           </button>
         </div>
       )}
+      </div>
     </div>
   )
 }

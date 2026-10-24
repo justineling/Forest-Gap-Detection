@@ -996,3 +996,139 @@ input[type='radio']:checked {
     display: none;
   }
 }
+
+/* ---------- 18. 检测参数窗：改成居中模态（原来挂在工具栏下沿） ----------
+   用户反馈两件事：
+     ① 滚轮往下滚的是整个界面，不是窗内内容；
+     ② 它应该像「开始检测」那样是个居中弹窗，而不是贴在右上角。
+   根因：原来 `position: absolute; top: 100%+6px; width: 330px` 且**没有高度上限** ——
+   内容一长就把文档撑出滚动条（绝对定位的后代同样计入可滚动区域），
+   于是滚轮滚的是页面。改成 fixed 遮罩 + 居中 + 窗内自滚，两个问题一起消失。 */
+
+.ds-mask {
+  position: fixed;
+  inset: 0;
+  /* 与 .help-mask 同层（1050）：它是模态，不是弹出层。
+     低于这个值会被「下一步」卡片/框选提示压住，高于它又会盖住确认框。 */
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 10, 12, 0.72);
+  backdrop-filter: blur(3px);
+  animation: ark-fade var(--ark-t-out) var(--ark-ease);
+}
+@keyframes ark-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.detect-settings {
+  /* 覆盖原来的 absolute + 右上角定位：现在由 .ds-mask 居中 */
+  position: static;
+  top: auto;
+  right: auto;
+  width: 460px;
+  max-width: 100%;
+  /* 高度上限 + 窗内滚动：滚轮只滚这里。
+     overscroll-behavior: contain 是关键 —— 滚到底也不会把滚动"接力"给页面。 */
+  max-height: min(84vh, 780px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 0;
+  border: 1px solid var(--ark-line-strong);
+  border-top: 2px solid var(--ark-signal);
+  background: var(--ark-panel);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+  padding: 0 18px 14px;
+  animation: ark-reveal var(--ark-t-in) var(--ark-ease);
+}
+
+/* 标题行吸顶：滚动时「恢复推荐值 / ✕」始终够得着 */
+.ds-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 -18px 12px;
+  padding: 12px 18px 10px;
+  background: var(--ark-panel);
+  border-bottom: 1px solid var(--ark-line);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+.ds-head b {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+/* 底部主操作吸底：滚到哪都能直接开跑 */
+.ds-actions {
+  position: sticky;
+  bottom: 0;
+  margin: 10px -18px -14px;
+  padding: 10px 18px 14px;
+  background: var(--ark-panel);
+  border-top: 1px solid var(--ark-line);
+}
+
+/* 窗内其余块：这套体系里不用圆角、不用投影 */
+.ds-current,
+.ds-flash,
+.ds-hint,
+.ds-foot {
+  border-radius: 0;
+}
+.ds-flash {
+  background: rgba(24, 209, 255, 0.1);
+  border-left: 2px solid var(--ark-signal);
+  color: var(--ark-paper);
+}
+.ds-foot {
+  color: var(--ark-muted);
+  font-size: 10.5px;
+  line-height: 1.7;
+}
+
+/* ---------- 19. 顶栏两处遮挡修复 ---------- */
+
+/* ① 工具栏必须有**确定高度**：原来只有 min-height，步进器 height:100% 解析成 auto，
+      当前步的 2px 下划线就贴在第二行文字上（截图里"运行中"被线切了）。 */
+.toolbar {
+  height: 56px;
+  min-height: 56px;
+}
+
+/* ② 品牌块左侧的青色信号条原来 left:0，和第一个字母同一 x —— 直接压在 F 上。
+      给文字让出 12px，线就落在文字左边。 */
+.tb-brand {
+  padding-left: 12px;
+}
+
+/* ---------- 20. 参数窗：标题加 03 索引 + 底部操作吸底贴齐 ---------- */
+
+/* 标题左侧的步骤索引，与面板的 `01 /`、`02 /` 同一套编号系统 */
+.ds-head b::before {
+  content: '03 / ';
+  font-family: var(--ark-font-mono);
+  font-weight: 400;
+  color: var(--ark-signal);
+  letter-spacing: 0.08em;
+}
+
+/* ⚠️ 底部的「关闭 / 开始检测」必须与窗底**贴齐**。
+   原来的写法是：容器 padding-bottom: 14px + .ds-actions 负 margin -14px，
+   看起来等价，但 sticky 元素是对齐到滚动视口的底边 —— 于是滚动到底时，
+   按钮下面还漏出 14px，正文从缝里透出来（用户截图里那行小字）。
+   现在：容器不留上下内边距（左右留 18px），操作条自己负责底部内边距。 */
+.detect-settings {
+  padding: 0 18px;
+}
+.ds-actions {
+  margin: 10px -18px 0;
+  padding: 10px 18px 12px;
+}
