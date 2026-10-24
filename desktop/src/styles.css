@@ -2902,3 +2902,124 @@ kbd {
   line-height: 1.75;
   color: var(--text);
 }
+
+/* ---------------------------------------------------------------------------
+   数据提示条（NoticeBar）
+   ---------------------------------------------------------------------------
+   位置：整个应用的最顶上、占**一行**。刻意不用浮层：
+   浮层会压住地图/工具栏，而这条消息说的是"你的数据被改动过"，
+   用户可能正在看别的地方，压住反而不礼貌；占一行则谁也挡不住。
+
+   配色用 --warn（琥珀）而不是 --danger：这些事**不是错误**
+   （程序没崩、结果还在），只是"你需要知道"，红色会让人以为出大事了。
+--------------------------------------------------------------------------- */
+.notice-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px;
+  background: rgba(240, 180, 41, 0.1);
+  border-bottom: 1px solid rgba(240, 180, 41, 0.35);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.6;
+  /* 多条展开时也不会把地图挤没 */
+  max-height: 30vh;
+  overflow-y: auto;
+  flex: 0 0 auto;
+}
+.notice-icon {
+  color: var(--warn);
+  font-size: 13px;
+  line-height: 1.6;
+  flex: 0 0 auto;
+}
+.notice-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.notice-line {
+  word-break: break-word;
+}
+.notice-more {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  color: var(--dim);
+}
+.notice-more li {
+  margin: 2px 0;
+  word-break: break-word;
+}
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--dim);
+}
+.btn.ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--line);
+}
+.notice-toggle,
+.notice-close {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------------------------
+   区块切换（BlockSwitcher）
+   ---------------------------------------------------------------------------
+   按钮是**带文字**的：图标表达不了"我现在在哪一块"，而这是多区块下
+   用户最常问的一句话。宽度按内容走，区块名过长时由 JS 截断（lib/blocks.ts）。
+--------------------------------------------------------------------------- */
+.block-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.block-btn {
+  max-width: 190px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.block-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.block-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+}
+.block-btn-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.block-menu {
+  width: 320px;
+}
+.block-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--dim);
+}
+.block-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(61, 220, 151, 0.16);
+  color: var(--accent);
+  font-size: 10px;
+  vertical-align: 1px;
+}
+/* 「影像不在了」这类"点了会失败"的风险：单独一行、琥珀色，
+   与灰色的说明文字区分开 —— 否则用户会照点，然后拿到一句报错 */
+.block-warn {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--warn);
+}

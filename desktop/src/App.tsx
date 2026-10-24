@@ -28,6 +28,8 @@ import {
   probeBackend,
   readTextFile,
   runDetect,
+  switchBlock as apiSwitchBlock,
+  waitBackend,
   type AppStatus,
 } from './api/backend'
 import { nextAction, toInput, type ActionKind, type StepKey } from './lib/workflow'
@@ -36,6 +38,7 @@ import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
 import ResumeDialog from './components/ResumeDialog'
 import Resizer from './components/Resizer'
+import NoticeBar from './components/NoticeBar'
 import { pickGeneratedAt, shouldAskResume } from './lib/resume'
 import {
   LEFT_LIMIT,
@@ -77,6 +80,42 @@ export default function App() {
   const [, setLoadingGaps] = useState(false)
   /** 当前应用状态（后端形态 / 影像路径 / 是否要引导） */
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null)
+  /**
+   * 后端在启动阶段攒下的"用户该知道的事"（配置损坏 / 迁移 / 缓存合并 / 归属异常）。
+   *
+   * 为什么由后端给而不是前端自己判断：这些事发生在窗口建好之前，
+   * 前端那时还没起来，事件会丢。后端会**一直**把它们放在 `get_status` 里
+   * （不清空，清了就会丢消息），前端按内容去重后显示一次。
+   */
+  const [notices, setNotices] = useState<string[]>([])
+  /** 正在切换区块（禁用下拉，避免连点触发两次服务重启） */
+  const [switchingBlock, setSwitchingBlock] = useState(false)
+
+  /**
+   * 收下后端状态，同时把"启动提示"并进横幅。
+   *
+   * 为什么统一走这里：`get_status` 在**启动 / 向导完成 / 切区块**三处都会调，
+   * 各自 `setAppStatus` 的话，提示会在其中某两处悄悄丢掉 ——
+   * 而丢掉的恰好是"你的数据被改动过"这类最该看见的消息。
+   *
+   * 为什么要 `seenNotices` 去重：后端**不清空**提示列表（清了就会丢消息，
+   * 见 Rust 的 `current_notices` 注释）。所以每次 `get_status` 都会把老提示
+   * 再送一遍 —— 用户关掉横幅后切个区块，横幅不能又冒出来。
+   */
+  const seenNotices = useRef<Set<string>>(new Set())
+  /** 往横幅里塞一条（同一句只塞一次，关掉之后不再冒出来） */
+  const pushNotice = useCallback((msg: string) => {
+    if (seenNotices.current.has(msg)) return
+    seenNotices.current.add(msg)
+    setNotices((prev) => [...prev, msg])
+  }, [])
+  const absorbStatus = useCallback(
+    (st: AppStatus) => {
+      setAppStatus(st)
+      for (const m of st.notices ?? []) pushNotice(m)
+    },
+    [pushNotice],
+  )
   /** 非 null 时显示首次使用引导 */
   const [wizard, setWizard] = useState<AppStatus | null>(null)
   /**
@@ -502,7 +541,7 @@ export default function App() {
     ;(async () => {
       pushLog('启动：检查数据与影像服务…')
       const st = await getStatus()
-      setAppStatus(st)
+      absorbStatus(st)
       // 浏览器模式下 `?wizard=1` 可强制预览引导页（方便截图 / 演示）
       const qs = new URLSearchParams(window.location.search)
       const force = !isTauri() && qs.has('wizard')
@@ -702,7 +741,7 @@ export default function App() {
     async (info?: { gapsProvided: boolean }) => {
       setWizard(null)
       const st = await getStatus()
-      setAppStatus(st)
+      absorbStatus(st)
 
       if (shouldLoadAfterWizard(info)) {
         // —— 分支 A：用户在向导第 2 步**明确指定了结果文件** → 真的要载入 ——
@@ -787,6 +826,55 @@ export default function App() {
       await probeAndLoad()
     },
     [probeAndLoad, setGaps, setRoi, appStatus?.image],
+  )
+
+  /**
+   * 切到另一个区块（工具栏「区块」下拉）。
+   *
+   * 与"在向导里重选影像"是**两条不同的路**：
+   *   · 向导 → 用户要去文件对话框里翻出那张 3.5 GB 的 tif；
+   *   · 这里 → 后端从结果文件里记的影像路径直接挂上，不用选文件。
+   *
+   * 失败必须**当场说出来**（例如影像被挪走了），不能静默留在原地：
+   * 用户点了一个菜单项、界面什么都没变，他只会以为软件坏了。
+   */
+  const onSwitchBlock = useCallback(
+    async (job: string) => {
+      setSwitchingBlock(true)
+      pushLog(`正在切换到区块 ${job}…`)
+      try {
+        const st = await apiSwitchBlock(job)
+        absorbStatus(st)
+        // 先把上一块的结果清掉：载入是异步的，空窗期留着旧结果
+        // 看起来像"切换没生效"，而且容易被误当成新块的成果。
+        setGaps([])
+        setGapsError(null)
+        skipNextLoad.current = false
+        resumePending.current = false
+        setPendingResume(null)
+        setResumeAsk(null)
+        // 圈选属于上一个区块（范围与结果一起交付），不能带过来
+        setRoi(null)
+        // 后端刚重启了瓦片服务，**必须等它应答**再载入。
+        // 不等的话 `probeBackend` 必然拿到"未连接"，界面会显示
+        // "影像服务未连接" + 没有多边形 —— 看起来像切换失败。
+        const ok = await waitBackend(60_000)
+        if (!ok) {
+          pushNotice(
+            '切换区块后影像服务 60 秒内没有应答。请点右上角状态灯重试，或查看 app.log。',
+          )
+        }
+        await probeAndLoad({ fromWizard: true })
+        pushLog(`已切换到区块 ${job}`)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        pushLog(`切换区块失败：${msg}`)
+        pushNotice(`切换区块失败：${msg}`)
+      } finally {
+        setSwitchingBlock(false)
+      }
+    },
+    [absorbStatus, probeAndLoad, pushLog, pushNotice, setGaps, setRoi],
   )
 
   // 检测事件：Tauri 宿主里 sidecar 的 NDJSON 事件流 → 进度条 / 日志 / 自动重载结果
@@ -1177,6 +1265,12 @@ export default function App() {
 
   return (
     <div className="app" style={layoutVars}>
+      {/* 后端启动阶段的提示（配置损坏 / 迁移 / 缓存合并 / 归属异常）。
+          放在最顶上、占一行：不压地图、不抢焦点，但一定看得见。 */}
+      <ErrorBoundary area="数据提示">
+        <NoticeBar items={notices} onDismiss={() => setNotices([])} />
+      </ErrorBoundary>
+
       {/* 每个区域各自兜底：地图挂了，工具栏 / 图层面板 / 状态栏仍可用 */}
       {/* 工具栏 + 参数弹层包在一起：弹层用 top:100% 挂在工具栏下沿，
           工具栏因窄窗口换行时也不会错位 */}
@@ -1192,6 +1286,9 @@ export default function App() {
             onAddGap={() => setDrawIntent('add_gap')}
             onBoxSelect={() => setDrawIntent('box_select')}
             onEstimate={runEstimate}
+            blockJob={appStatus?.job ?? null}
+            onSwitchBlock={(job) => void onSwitchBlock(job)}
+            blockBusy={switchingBlock}
             onOpenLog={() => {
               // 日志目录：开发态在仓库根，打包态在 %LOCALAPPDATA%\fgd\logs
               // 这里只打开"最可能存在的那个"—— 让 Rust 侧判存在性

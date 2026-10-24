@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore'
 import { probeBackend } from '../api/backend'
 import StepRail from './StepRail'
 import MoreMenu from './MoreMenu'
+import BlockSwitcher from './BlockSwitcher'
 import HelpDialog from './HelpDialog'
 import { HEADER_HELP } from '../lib/helpContent'
 import type { StepKey, WorkflowInput } from '../lib/workflow'
@@ -18,6 +19,12 @@ interface Props {
   onBoxSelect: () => void
   onEstimate: () => void
   onOpenLog: () => void
+  /** 当前区块名（多区块切换用；null = 还没跑过检测） */
+  blockJob?: string | null
+  /** 切到另一个区块 */
+  onSwitchBlock?: (job: string) => void
+  /** 正在切换（禁用下拉，避免连点触发两次重启） */
+  blockBusy?: boolean
 }
 
 /**
@@ -54,6 +61,9 @@ export default function TopToolbar({
   onBoxSelect,
   onEstimate,
   onOpenLog,
+  blockJob,
+  onSwitchBlock,
+  blockBusy,
 }: Props) {
   const [help, setHelp] = useState(false)
   const backendOnline = useAppStore((s) => s.backendOnline)
@@ -85,6 +95,16 @@ export default function TopToolbar({
       <StepRail input={workflow} onJump={onJumpStep} />
 
       <div className="tb-right">
+        {/* 区块切换：多区块下唯一能回答"我跑过哪几块、现在在哪块"的东西。
+            放在状态灯左边 —— 它属于"我现在看的是什么数据"，与状态灯同一类。 */}
+        {onSwitchBlock && (
+          <BlockSwitcher
+            current={blockJob ?? null}
+            onSwitch={onSwitchBlock}
+            busy={blockBusy}
+          />
+        )}
+
         <button
           type="button"
           className="btn icon"

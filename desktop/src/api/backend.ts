@@ -480,6 +480,14 @@ export interface AppStatus {
   data_root: string
   /** true = 还没有可用影像，应显示「选择影像」引导 */
   needs_setup: boolean
+  /**
+   * 启动阶段"用户该知道的事"（迁移结果 / 配置损坏 / 缓存合并 / 归属异常）。
+   *
+   * 为什么由后端给：这些事发生在窗口建好之前，前端那时还没起来，
+   * 事件会丢。后端攒着，`get_status` 时取走一份（一次性）。
+   * 老版本 Rust 没有这个字段 → `undefined`，前端按空数组处理。
+   */
+  notices?: string[]
 }
 
 const BROWSER_STATUS: AppStatus = {
@@ -510,6 +518,56 @@ export async function setDataPaths(opts: {
     image: opts.image ?? null,
     gaps: opts.gaps ?? null,
   })
+}
+
+/**
+ * 一个区块在磁盘上的样子（`list_blocks` 的返回项，与 Rust 的 `BlockInfo` 对齐）。
+ *
+ * 字段全部来自**磁盘**，不来自 settings.json：清单要回答的是"跑过哪几块"，
+ * 而配置里只有一个"当前" —— 两者不一致正是需要显示出来的信息。
+ */
+export interface BlockInfo {
+  /** 区块名（= 结果文件名前缀 = 缓存目录名） */
+  job: string
+  /** 结果文件里记的影像路径（可能已失效：用户挪过目录） */
+  image: string | null
+  /** 那个影像现在还在不在 */
+  image_exists: boolean
+  /** 结果文件绝对路径 */
+  gaps: string
+  /** 高度图绝对路径（没有则 null） */
+  chm: string | null
+  /** 结果文件修改时间（unix 秒；0 = 读不到） */
+  modified: number
+  /** 结果文件大小（MB，1 位小数） */
+  size_mb: number
+  /** 是不是界面当前正在用的那一块 */
+  current: boolean
+}
+
+/** 列出磁盘上所有区块（按修改时间倒序）。浏览器模式返回空数组。 */
+export async function listBlocks(): Promise<BlockInfo[]> {
+  if (!isTauri()) return []
+  try {
+    return await tauriInvoke<BlockInfo[]>('list_blocks')
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 切到某个区块：后端会把它的影像 / 结果 / 高度图一起挂上并重启瓦片服务。
+ *
+ * 与 `setDataPaths` 的区别：这条路上**不需要**用户再去文件对话框里找 tif ——
+ * 影像路径从结果文件里记的快照读出来。失败会**抛出带人话的错误**（例如
+ * "区块的影像找不到了，请重新选择"），调用方要把这句话显示给用户。
+ */
+export async function switchBlock(job: string): Promise<AppStatus> {
+  // 浏览器模式没有后端：给一句人话，而不是让 `invoke` 抛
+  // "Cannot read properties of undefined (reading 'invoke')" —— 那句话
+  // 会原样显示在提示条里，用户完全看不懂。
+  if (!isTauri()) throw new Error('切换区块需要在桌面应用里操作')
+  return tauriInvoke<AppStatus>('switch_block', { job })
 }
 
 export type PickKind = 'image' | 'gaps'
