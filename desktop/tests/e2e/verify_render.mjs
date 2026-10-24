@@ -581,6 +581,77 @@ async function main() {
     shotPath = await shot('5-roi-cleared')
   }
 
+  // ================= 场景 6：区块切换下拉 =================
+  //
+  // 审计 C 条的回归：以前 16 个命令里**没有 list**，切区块只能重选影像。
+  // `?blocks=1` 是本次新增的预览开关（BlockSwitcher 里读，只作用于浏览器），
+  // 理由同 `?more=1` / `?roi=1`：`list_blocks` 是 Tauri 命令，
+  // 浏览器里直接返回空数组，"有区块 / 影像丢失"这两种形态永远测不到。
+  console.log('\n=== 场景 6：★ 区块切换下拉（清单 / 当前 / 影像丢失 / 失败要说出来）===')
+  {
+    const ready = await goto('?mock=ready&blocks=1&noResume=1')
+    ok(ready, '界面渲染完成')
+    const st = await evalJs(`
+      const btn = document.querySelector('.block-btn');
+      const menu = document.querySelector('.block-menu');
+      const items = [...(menu?.querySelectorAll('button[role="menuitem"]') ?? [])];
+      return {
+        btn: !!btn,
+        label: (btn?.querySelector('.block-btn-label')?.textContent ?? '').trim(),
+        items: items.map((b) => ({
+          text: b.textContent.replace(/\\s+/g, ' ').trim(),
+          disabled: b.disabled,
+        })),
+      };
+    `)
+    ok(st.btn, '★ 工具栏有「区块」按钮（以前根本没有入口）')
+    ok(st.label === 'wgr17-002', '★ 按钮上显示当前区块名', st.label)
+    ok(st.items.length === 3, '★ 下拉里列出了 3 块', String(st.items.length))
+    ok(
+      st.items.some((it) => it.disabled && it.text.includes('当前')),
+      '★ 当前这一块被标出来且不可点',
+      st.items.map((i) => i.text).join(' | '),
+    )
+    ok(
+      st.items.some((it) => it.text.includes('不在原位置')),
+      '★ 影像被挪走的那一块有显式警告（点了会失败，不能和别的项长一样）',
+    )
+
+    // 先留一张"菜单展开"的截图（排障时看的就是这个形态）
+    await shot('6a-block-menu')
+
+    // 点一个非当前块：浏览器里没有后端 → 必须**当场报错**，
+    // 而不是界面毫无反应（那正是审计里说的"静默给个错答案"）。
+    const clicked = await evalJs(`
+      const menu = document.querySelector('.block-menu');
+      const items = [...(menu?.querySelectorAll('button[role="menuitem"]') ?? [])];
+      const b = items.find((x) => !x.disabled);
+      if (!b) return { ok: false, why: '没有可点的项' };
+      b.click();
+      return { ok: true };
+    `)
+    ok(clicked.ok, '前置：点了一个非当前区块', clicked.why ?? '')
+    await sleep(900)
+    const after = await evalJs(`
+      const bar = document.querySelector('.notice-bar');
+      return {
+        bar: !!bar,
+        text: (bar?.innerText ?? '').replace(/\\s+/g, ' ').trim(),
+        app: !!document.querySelector('.app'),
+      };
+    `)
+    ok(after.app, '★ 切换失败没有白屏')
+    ok(
+      after.bar && after.text.includes('切换区块失败'),
+      '★ 切换失败在界面上说出来了（不是静默无反应）',
+      after.text.slice(0, 80),
+    )
+    const errs6 = await collectErrors()
+    const crash6 = errs6.filter(isCrash)
+    ok(crash6.length === 0, '区块切换没有引发 React 崩溃', crash6.slice(0, 2).join(' | '))
+    shotPath = await shot('6-block-switcher')
+  }
+
   // ================= 收尾 =================
   chrome.kill()
   try {
