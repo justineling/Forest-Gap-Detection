@@ -171,6 +171,7 @@
     <tr><td><code>wgr17-002-gaps.geojson</code></td><td>A 块的结果</td></tr>
     <tr><td><code>wgr17-002-2-gaps.geojson</code></td><td>另一个也叫 WGR17-002 的图（自动加了个 2）</td></tr>
     <tr><td><code>caches\wgr17-002\</code></td><td>A 块的缓存</td></tr>
+    <tr><td><code>wgr17-002-chm.json</code></td><td>A 块高度图的"身份证"（几行字，说明它属于哪张图）</td></tr>
     <tr><td><code>desktop-export\wgr17-002\</code></td><td>A 块的交付包</td></tr>
   </tbody>
 </table>
@@ -182,10 +183,30 @@
   </p>
 </div>
 
+<div class="card ok">
+  <p style="margin:0">
+    <b>更省事的办法：点右上角那个写着区块名的按钮（「wgr17-002 ▾」）。</b>
+    它会列出你跑过的每一块，每行写着「多大 · 有没有高度图 · 什么时候跑的」，
+    现在这块标着<b>当前</b>。点另一块就切过去了 —— <b>不用再去找那张 3.5 GB 的 tif</b>，
+    也不会删掉任何东西。跑过十几块之后，这就是你唯一的"目录"。
+  </p>
+</div>
+
+<div class="card warn">
+  <p style="margin:0">
+    <b>把 tif 换了个文件夹放，结果还算你的。</b>
+    只要文件名没变（比如 <code>WGR17-002.tif</code>），旧结果仍然认得它，
+    不用重跑。下拉里那一块会标一句「影像不在原位置了」；真找不到时它会直接告诉你
+    「请重新选择影像」，而不是随便拿别的图顶上。
+  </p>
+</div>
+
 <div class="card warn">
   <p style="margin:0">
     <b>升级后第一次打开，它会自己把旧文件改名</b>（<code>jobs</code> → <code>caches</code>、
     旧结果加上区块名）。<b>只改名，不删东西</b>，所以不用担心丢数据。
+    如果它动了什么（改名 / 合并 / 发现有文件坏掉），
+    界面最上面会出现一条黄条告诉你 —— 看完点「知道了」就行。
   </p>
 </div>
 

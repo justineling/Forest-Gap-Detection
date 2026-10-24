@@ -257,6 +257,7 @@
     <tr><td>瓦片缓存</td><td><code>output\caches\&lt;区块&gt;\tiles\</code></td></tr>
     <tr><td>网格标定审计</td><td><code>output\caches\&lt;区块&gt;\grid-survey.json</code></td></tr>
     <tr><td>高度图</td><td><code>output\&lt;区块&gt;-chm.tif</code></td></tr>
+    <tr><td>高度图的归属元数据</td><td><code>output\&lt;区块&gt;-chm.json</code></td></tr>
     <tr><td>林地边界</td><td><code>output\&lt;区块&gt;-forest-mask*.geojson</code></td></tr>
     <tr><td>导出交付包</td><td><code>desktop-export\&lt;区块&gt;\</code></td></tr>
   </tbody>
@@ -271,6 +272,27 @@
   </p>
 </div>
 
+<div class="card ok">
+  <p style="margin:0">
+    <b>2026-10-24 起：工具栏上多了一个「区块」下拉，不用再翻文件对话框。</b>
+    它列出 <code>output\</code> 下所有 <code>&lt;区块&gt;-gaps.geojson</code>，
+    每一条显示「大小 · 有没有高度图 · 什么时候跑的」，当前在用的那块标
+    <b>当前</b>并置灰。点另一块 → 后端从结果文件里记的影像路径直接挂上
+    （影像 / 结果 / 高度图一起切），<b>不移动、不删除任何文件</b>。
+  </p>
+</div>
+
+<div class="card warn">
+  <p style="margin:0">
+    <b>影像被挪走/改名了怎么办？</b>
+    结果文件里记着影像的完整路径；那个路径失效时，后端会退回<b>按文件名</b>认领
+    —— 所以把 <code>WGR17-002.tif</code> 从 D 盘挪到 E 盘之后，旧结果仍然是"你的"，
+    不用重跑 6 分钟。下拉里那一块会标一句「影像不在原位置了」；
+    点它时后端会在数据根下按同名文件找，找不到会明确告诉你"请重新选择影像"
+    （而不是拿别的影像顶上）。
+  </p>
+</div>
+
 <div class="card warn">
   <p style="margin:0">
     <b>找结果的第一优先级是"本区块自己的文件"，不是"最新的文件"。</b>
@@ -280,12 +302,43 @@
   </p>
 </div>
 
+<div class="card ok">
+  <p style="margin:0">
+    <b>2026-10-24：高度图也带"归属"了（<code>&lt;区块&gt;-chm.json</code>）。</b>
+    高度图以前只靠文件名判归属，而"只生成过高度图、还没跑过检测"时磁盘上
+    没有任何占用证据 —— 两张<b>同名</b>影像会算出同一个区块名，
+    于是 A 用上 B 的树高：高程整体偏移、结果看着正常、<b>全程不报错</b>。
+    现在 <code>build_chm.py</code> 写完 tif 会顺手写一份
+    <code>{"source_image": …, "image_path": …}</code>，
+    区块名分配、预检、切区块三处都会读它：<b>明确是别人的就拒</b>
+    （预检里显示"这份高度图属于别的影像，已忽略"，提示你重算一次）。
+    没有元数据的老高度图仍然照用 —— 否则升级后每个人都要白等 42 秒重算。
+  </p>
+</div>
+
 <p class="dim">
 升级到这一版时，旧目录会做一次性改名：<code>output\jobs</code> → <code>output\caches</code>、
 <code>wgr17-desktop-gaps.geojson</code> → <code>&lt;区块&gt;-gaps.geojson</code>、
 <code>chm.tif</code> → <code>&lt;区块&gt;-chm.tif</code>。
 <b>只改名、不删任何文件</b>，目标已存在就跳过。
 </p>
+
+<p class="dim">
+2026-10-24 又放宽了两处（都不删数据，改动会写在界面顶部的提示条里）：
+</p>
+<ul class="dim">
+  <li>
+    老结果<b>不再只认一个历史名</b>。凡是 <code>*-gaps.geojson</code> 的文件名前缀与它自己
+    记的影像名对不上，都算老命名并按内容改名 —— <code>wgr17-final-gaps.geojson</code>
+    这类以前永远不会被采纳，用户看到的是"升级后数据没了"。
+  </li>
+  <li>
+    <code>jobs\</code> 与 <code>caches\</code> 同时存在时<b>按区块合并</b>：
+    只搬 <code>caches\</code> 里没有的子目录，同名的两边都留着。
+    以前是"什么都不动"，于是旧目录里的瓦片成了孤儿，切到那些区块时 528 块全量重算
+    （几十分钟），界面上没有任何解释。
+  </li>
+</ul>
 
 <h2>6. 另外两个常见困惑</h2>
 

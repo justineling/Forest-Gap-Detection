@@ -165,6 +165,17 @@
       </td>
     </tr>
     <tr>
+      <td><span class="mono">chm.json</span><br><span class="dim">高度图归属元数据</span></td>
+      <td><span class="mono">scripts/build_chm.py</span></td>
+      <td>
+        跟着高度图一起写出的几行 JSON：这份高度图是从<span class="mono">哪张正射影像</span>算出来的
+        （<span class="mono">image_path</span> + <span class="mono">source_image</span>）。<br>
+        桌面端靠它区分「同名但不同目录的两张影像」—— 没有它时，两张同名影像可能共用一份树高，
+        <b>结果看着正常、高程全错</b>。删了不会坏，只是切区块时判不出归属（会提示重算）。<br>
+        <span class="dim">文件名规则：把高度图的后缀换成 <span class="mono">.json</span>（<span class="mono">wgr17-002-chm.tif</span> → <span class="mono">wgr17-002-chm.json</span>）</span>
+      </td>
+    </tr>
+    <tr>
       <td><span class="mono">forest-mask-*.geojson</span><br><span class="dim">森林掩膜</span></td>
       <td><span class="mono">scripts/build_forest_mask.py</span></td>
       <td>
