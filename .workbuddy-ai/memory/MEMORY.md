@@ -36,12 +36,17 @@ Rust 侧 `chm_owner_at` / `usable_chm` / `job_slot_is_free` 第三判据 / 预�
 ⚠️ 文件名规则两边必须一致（Py `with_suffix(".json")` = Rust `with_extension("json")`）。
 ⚠️ **没有元数据 → 照用**（判不出就不拦）：否则"生成→检测"无限换名，且迁移后区块名会变。
 
+**取消必须是无操作**（2026-10-24）：向导 ×/Esc/遮罩=取消，弹窗 ×/Esc/遮罩=继续；
+**打开向导/弹窗不许预清状态**（`onPickNewResume` 曾先 `setGaps([])` → 点× 落到第2步）。
+续跑弹窗渲染条件 `resumeAsk && !wizard`；清 resume 状态放 `onWizardDone` 顶部。
+语义表 `docs/08-桌面端/五步流转与弹窗语义.md`。
+
 **多区块入口**（2026-10-24）：`list_blocks` / `switch_block` 两个命令 + 工具栏 `BlockSwitcher`；
 启动提示走 `AppStatus.notices`（后端 `current_notices()` **不清空**，前端 `seenNotices` 去重）→ `NoticeBar`。
 ⚠️ 提示**不能"取走即清空"**：向导路径会忽略 `set_data_paths` 的返回值，清了就丢消息。
 ⚠️ 单实例用 `windows-sys` 的 `CreateMutexW`（`Local\fgd-desktop-single-instance`），
 不要换 `tauri-plugin-single-instance`（要联网拉 crate）；`CreateMutexW` 被 **`Win32_Security`** 门控，少这个 feature 会 unresolved import。
-栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。验收基线：`npm test` **801** 断言 · `cargo test` **81** 项 · `test_block_jobs` **60** · 契约 95/95 · `test_overviews` **42** 项 · `verify_render` **58**（需 dev server）。
+栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。验收基线：`npm test` **801** 断言 · `cargo test` **81** 项 · `test_block_jobs` **60** · 契约 95/95 · `test_overviews` **42** 项 · `verify_render` **171**（需 dev server）。
 **端口不再写死 8765**（坑 48）：`pick_backend_port()` 试 8765~8776，空闲就用/自己的服务复用/别人的跳过；实际端口在 `ACTIVE_PORT`，前端用 `backend.ts` 的 `ensurePort()` + `backendUrl()` 跟随，`MapCanvas` 用 `tileUrlTemplate()`。
 致命 5 条：① `output/*.geojson` 是 `blocks[].gaps` 结构、无顶层 features；② 结果路径只按"扫目录+名含 gaps+mtime 取最新"，候选目录必须含 `cwd/output`，`/gaps` 空时绝不能 `applyRerun([])`；③ 检测前必须预检（W1001/W1004/W3001 都是"算偏不报错"）；④ Tauri↔sidecar 两线程分读 stdout/stderr（64 KB 管道填满→死锁）；⑤ 撤销栈 1.5 s 时间窗合并 TerraDraw change，框选必须传 `visibleClasses`。
 ⚠️ 第 6 条（2026-10-20 交付事故）：**8765 有人监听 ≠ 我们的服务在跑** —— 复用前必须验 `/meta` 的 `app` 字段；子进程 stderr 必须落 `app.log`（release 无控制台，`eprintln!` 是黑洞）并用 `try_wait` 记退出码；启动失败要当场抛回前端。详见坑 47。
