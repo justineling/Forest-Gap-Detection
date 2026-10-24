@@ -32,7 +32,7 @@ import {
   waitBackend,
   type AppStatus,
 } from './api/backend'
-import { nextAction, toInput, type ActionKind, type StepKey } from './lib/workflow'
+import { computeSteps, nextAction, toInput, type ActionKind, type StepKey } from './lib/workflow'
 import { decideGapsLoad, shouldLoadAfterWizard, shouldLoadJobResultOnSwitch } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
@@ -1223,6 +1223,9 @@ export default function App() {
       }),
     [backendOnline, gaps, roi, detect.running, wfFlags, manualAdded, manualDeleted, manualEdited],
   )
+  /** 当前步（给顶部索引条用；StepRail 内部自己也算一次，纯函数，各算各的最省心） */
+  const steps = useMemo(() => computeSteps(workflowInput), [workflowInput])
+  const curStep = steps.find((st) => st.status === 'active') ?? steps[steps.length - 1]
 
   /**
    * 「下一步」卡片的动作分发。
@@ -1386,6 +1389,36 @@ export default function App() {
             />
           </ErrorBoundary>
         )}
+      </div>
+
+      {/* 索引条：一行等宽小字，把"现在处理哪一块、第几步、多少块、哪张影像"钉在顶部。
+          ⚠️ 只放真实数据 —— 编造系统码/通道号是最容易露怯的地方（skill 的 Avoid 第一条）。 */}
+      <div className="ark-kicker" aria-label="运行状态">
+        <span>
+          BLOCK <b className="k-val">{appStatus?.job ?? '—'}</b>
+        </span>
+        <span className="k-sep" />
+        <span>
+          STEP <b className="k-signal">{String(curStep.no).padStart(2, '0')}</b>
+          <b className="k-val">/05</b> <b className="k-val">{curStep.label}</b>
+        </span>
+        <span className="k-sep" />
+        <span>
+          RECORDS <b className="k-val">{workflowInput.gapCount.toLocaleString()}</b>
+        </span>
+        <span className="k-right">
+          <span className="ark-ticks" aria-hidden>
+            {steps.map((st) => (
+              <i
+                key={st.key}
+                className={st.status === 'done' ? 'done' : st.status === 'active' ? 'now' : ''}
+              />
+            ))}
+          </span>
+          <span style={{ marginLeft: 10 }}>
+            {backendOnline ? 'SERVICE ONLINE' : 'SERVICE OFFLINE'}
+          </span>
+        </span>
       </div>
 
       <ErrorBoundary area="检测进度">

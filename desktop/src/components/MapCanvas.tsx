@@ -69,7 +69,7 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
       style: {
         version: 8,
         sources: {},
-        layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#0f1417' } }],
+        layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#080a0b' } }],
       },
       center: FALLBACK_CENTER,
       zoom: FALLBACK_ZOOM,
@@ -132,13 +132,13 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
         id: 'roi-fill',
         type: 'fill',
         source: 'roi',
-        paint: { 'fill-color': '#3ddc97', 'fill-opacity': 0.08 },
+        paint: { 'fill-color': '#18d1ff', 'fill-opacity': 0.1 },
       })
       map.addLayer({
         id: 'roi-line',
         type: 'line',
         source: 'roi',
-        paint: { 'line-color': '#3ddc97', 'line-width': 2, 'line-dasharray': [3, 2] },
+        paint: { 'line-color': '#18d1ff', 'line-width': 2, 'line-dasharray': [6, 3] },
       })
 
       // 补种点位（需求 5）
@@ -152,8 +152,8 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
         source: 'planting',
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 1.6, 18, 4],
-          'circle-color': '#00e0a4',
-          'circle-stroke-color': '#00322a',
+          'circle-color': '#c8eb21',
+          'circle-stroke-color': '#080a0b',
           'circle-stroke-width': 0.6,
           'circle-opacity': 0.9,
         },

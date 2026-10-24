@@ -87,9 +87,11 @@ export default function TopToolbar({
 
   return (
     <header className="toolbar">
+      {/* 品牌块：压缩体大写 + 一行微标签，左侧一道青色信号条（外壳的"系统在跑"标记）。
+          这套体系里**不放 logo、不放图标** —— 字本身就是标识。 */}
       <div className="tb-brand" title="Forest Gap Detection · 油棕园空地智能检测">
-        <b>FGD</b>
-        <span className="dim">油棕园空地检测</span>
+        <b>Forest Gap</b>
+        <span className="tb-brand-sub">Detection System</span>
       </div>
 
       <StepRail input={workflow} onJump={onJumpStep} />
