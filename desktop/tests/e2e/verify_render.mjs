@@ -506,6 +506,20 @@ async function main() {
       };
     `)
     ok(!back.dialog, '参数窗已关闭')
+
+    // ★ 步与步之间是**刻度线**，不是方块（2026-10-24 用户反馈"为什么左边有个正方形"）。
+    //   根因是 styles.css 的 `flex: 0 0 18px` —— flex-basis 优先于 width，
+    //   只改 width 改不动它，于是渲染成 18×14 的灰方块。
+    const tickGeo = await evalJs(`
+      const l = document.querySelector('.sr-line');
+      if (!l) return { ok: false };
+      const r = l.getBoundingClientRect();
+      const cs = getComputedStyle(l);
+      return { ok: true, w: Math.round(r.width), h: Math.round(r.height), flex: cs.flexBasis };
+    `)
+    ok(tickGeo.ok, '前置：步进器里有分隔刻度（.sr-line）')
+    ok(tickGeo.w <= 2, '★ 分隔是 1px 竖刻度，不是方块', `${tickGeo.w}×${tickGeo.h} flex-basis=${tickGeo.flex}`)
+    ok(tickGeo.h >= 8 && tickGeo.h <= 16, '★ 刻度高度在 8–16px（读数式，不抢主视觉）', `${tickGeo.h}px`)
     ok(back.card && !back.pill, '★ 关掉参数窗后卡片自动展开回来（.next-card 回来）')
     const errs4 = await collectErrors()
     const crash4 = errs4.filter(isCrash)

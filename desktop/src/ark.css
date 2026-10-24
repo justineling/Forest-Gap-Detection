@@ -247,14 +247,29 @@ kbd,
   color: var(--ark-muted);
 }
 
+/* 步与步之间那根分隔线 —— 做成"刻度"而不是方块。
+   ⚠️ 之前它渲染成 18×14 的方块，原因不在 width：styles.css 写的是
+      `flex: 0 0 18px`，而 **flex-basis 优先于 width**，所以 width:1px 根本没生效，
+      只有高度被我改成 14px —— 结果就是一条"没有含义的灰方块"。
+      这里把 flex-basis 也压成 1px，并给它一个明确的读数语义：
+        · 未走过 → 9px 高的暗刻线
+        · 已走过 → 14px 高的亮刻线（长度差就是"走过/没走过"的反馈）
+   这是 ark 的刻度轨语法：视觉只有 1px，靠长度与明度表达位置。 */
 .sr-line {
+  flex: 0 0 1px;
   width: 1px;
-  height: 14px;
-  background: var(--ark-line);
+  height: 9px;
+  margin: 0 12px;
+  background: var(--ark-line-strong);
   align-self: center;
+  transition: height var(--ark-t-fast) var(--ark-ease),
+    background var(--ark-t-fast) var(--ark-ease);
 }
 .sr-line.done {
-  background: var(--ark-line-strong);
+  height: 14px;
+  /* 走过的那一段用"半亮"而不是纯纸白：纯白在深底上太跳，
+     会和青色下划线抢注意力（刻度是背景，不是主角）。 */
+  background: rgba(244, 246, 246, 0.5);
 }
 
 /* ---------- 4. 按钮：方形 + 1px 描边；主操作是青色块 ---------- */
