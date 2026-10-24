@@ -267,8 +267,14 @@ async function main() {
    * 为什么不能只 sleep：vite 冷启动要现编译模块，固定等 3 秒会出现
    * "时灵时不灵"的假失败（verify_layout.mjs 的注释里记了这笔）。
    * 就绪判据 = `.app` 存在 **且** 第 1 步已打勾（影像就绪）。
+   *
+   * @param {string} query 例如 `?mock=ready&noResume=1`
+   * @param {{dismiss?: boolean}} [opts] `dismiss: false` = **不要**自动关启动弹窗。
+   *   场景 7 测的就是"`.resume-dialog` 还在不在"，被 dismissOverlay 顺手点掉之后
+   *   断言会全部空过 —— 所以那里必须显式关掉这一道。默认 true，其余场景行为不变。
    */
-  const goto = async (query) => {
+  const goto = async (query, opts = {}) => {
+    const dismiss = opts.dismiss !== false
     // 每次导航清空上一页留下的错误（同一页面内后续状态切换的错误由下一次快照读）
     consoleErrors.length = 0
     await send('Page.navigate', { url: BASE + query })
@@ -280,7 +286,7 @@ async function main() {
       if (ready) {
         await sleep(700)
         // 弹窗可能还在挂载（resume 判定在 effect 里）→ 保险再关一次
-        await dismissOverlay(query)
+        if (dismiss) await dismissOverlay(query)
         return true
       }
       await sleep(250)
@@ -650,6 +656,910 @@ async function main() {
     const crash6 = errs6.filter(isCrash)
     ok(crash6.length === 0, '区块切换没有引发 React 崩溃', crash6.slice(0, 2).join(' | '))
     shotPath = await shot('6-block-switcher')
+  }
+
+  // ================= 场景 7：启动弹窗「换一张影像」→ 向导 × = 撤销 =================
+  //
+  // 用户原话（2026-10-25）：「我选择了「换一张影像」，然后在向导弹窗里点了
+  // 右上角的 ×，却发现自己已经在第 2 步了。这不符合逻辑。」
+  //
+  // 修复前的实现：`onPickNewResume` 里顺手 `setGaps([])` + `setGapsError(null)` +
+  // 清掉 `resumeAsk` / `pendingResume` / `resumePending`。于是"点 × 取消"这个
+  // **本该什么都不做**的动作产生了三个副作用：结果被清空、步骤倒退、
+  // 续跑弹窗永久消失（`resumeAsk` 被置空且再无地方重新设置）。
+  //
+  // 所以本场景真正有鉴别力的断言是第 5 条（弹窗必须回来）：旧代码里
+  // `resumeAsk` 一旦被置空，`.resume-dialog` **不可能**再出现 —— 这一条在旧代码上必红。
+  // 第 6 条（active 步骤不变）是"没有变化"的证据：即使基线本来就是第 2 步也要写，
+  // 它证明的是"取消没有造成跳转"，而不是"必须停在第 4 步"。
+  //
+  // ⚠️ 必须 `{ dismiss: false }`：`goto()` 默认会点「继续复核」把弹窗关掉，
+  //    而被测对象正是"弹窗还在不在"。
+  console.log('\n=== 场景 7：★ 「换一张影像」→ 向导 × 必须什么都不变（取消 = 撤销）===')
+  {
+    const ready = await goto('?mock=ready&resume=1', { dismiss: false })
+    ok(ready, '界面渲染完成（20 秒内）')
+
+    // ① 前置：续跑弹窗真的出来了（没有它，后面全是空过）
+    await mustExist('.resume-dialog', '「发现上次的检测结果」弹窗')
+
+    // ② 取消前的基线：active 步骤 + 状态栏里能看到的块数文案
+    //    块数文案拿不到就记 null（第 6 条兜底），不能因为"没找到"就跳过断言。
+    const base = await evalJs(`
+      const active =
+        document.querySelector('.sr-item.active .sr-label')?.textContent?.trim() ?? null;
+      const status = (document.querySelector('.statusbar')?.innerText ?? '')
+        .replace(/\\s+/g, ' ')
+        .trim();
+      const m = status.match(/([\\d,]+)\\s*块/);
+      const logs = (document.querySelector('.sb-logs')?.innerText ?? '').replace(/\\s+/g, ' ');
+      return { active, blocks: m ? m[0] : null, status: status.slice(0, 120), logs };
+    `)
+    ok(base.active != null, '前置：拿得到取消前的 active 步骤（基线）', String(base.active))
+    console.log(
+      `      基线：active=${base.active} · 块数文案=${base.blocks ?? '(拿不到，用 active 兜底)'}`,
+    )
+
+    // ③ 点「换一张影像」→ 向导出现，且续跑弹窗让位（不叠两层）
+    const picked = await evalJs(`
+      const dlg = document.querySelector('.resume-dialog');
+      if (!dlg) return { ok: false, why: '弹窗不在' };
+      const btns = [...dlg.querySelectorAll('button')];
+      const b = btns.find((x) => x.textContent.includes('换一张影像'));
+      if (!b) {
+        return { ok: false, why: '按钮：' + btns.map((x) => x.textContent.trim()).join('/') };
+      }
+      b.click();
+      return { ok: true };
+    `)
+    ok(picked.ok, '前置：点到了「换一张影像」', picked.why ?? '')
+    await sleep(700)
+    const opened = await evalJs(`
+      const wiz = document.querySelector('.wizard-mask');
+      return {
+        wizard: !!wiz,
+        title: (wiz?.querySelector('h1')?.textContent ?? '').trim(),
+        dialog: !!document.querySelector('.resume-dialog'),
+      };
+    `)
+    ok(opened.wizard, '★ 向导打开了（.wizard-mask 存在）', opened.title)
+    ok(
+      opened.title.includes('开始使用'),
+      '★ 打开的是「开始使用」向导（不是预检等别的 .wizard-mask）',
+      opened.title,
+    )
+    ok(!opened.dialog, '★ 向导期间续跑弹窗让位（两层弹窗不叠在一起）')
+
+    // ④ 点向导右上角 ×
+    const closed = await evalJs(`
+      const wiz = document.querySelector('.wizard-mask');
+      if (!wiz) return { ok: false, why: '向导不在' };
+      const b = wiz.querySelector('.wizard-close');
+      if (!b) return { ok: false, why: '没有 .wizard-close' };
+      if (b.disabled) return { ok: false, why: '× 是禁用的（busy？）' };
+      b.click();
+      return { ok: true };
+    `)
+    ok(closed.ok, '前置：点到了向导右上角的 ×', closed.why ?? '')
+    await sleep(800)
+
+    const after = await evalJs(`
+      const status = (document.querySelector('.statusbar')?.innerText ?? '')
+        .replace(/\\s+/g, ' ')
+        .trim();
+      const m = status.match(/([\\d,]+)\\s*块/);
+      return {
+        wizard: !!document.querySelector('.wizard-mask'),
+        dialog: !!document.querySelector('.resume-dialog'),
+        active:
+          document.querySelector('.sr-item.active .sr-label')?.textContent?.trim() ?? null,
+        blocks: m ? m[0] : null,
+        logs: (document.querySelector('.sb-logs')?.innerText ?? '').replace(/\\s+/g, ' '),
+        app: !!document.querySelector('.app'),
+      };
+    `)
+
+    // ⑤ 向导关掉了
+    ok(!after.wizard, '★ 向导已关闭（× 生效）')
+    // ⑥ ★★ 核心：弹窗必须回来 —— 旧代码（`onPickNewResume` 里清 resumeAsk）这一条必红
+    ok(
+      after.dialog,
+      '★★ 取消后续跑弹窗回来了（取消 = 撤销我刚才的选择，而不是"关掉"）',
+    )
+    // ⑦ ★★ 步骤没有跳转（"没有变化"，不是"必须是第 4 步"）
+    ok(
+      after.active === base.active,
+      '★★ active 步骤与取消前一致（取消没有造成状态跳转）',
+      `${base.active} → ${after.active}`,
+    )
+    // ⑧ 块数文案也没有变化（旧代码这里会从 "1,726 块" 变成 "0 块"；
+    //    浏览器预览拿不到真实结果时为 null，退化成"两边都 null"的一致性检查）
+    ok(
+      after.blocks === base.blocks,
+      '★ 块数文案与取消前一致（结果没有被清空）',
+      `${base.blocks ?? '(无)'} → ${after.blocks ?? '(无)'}`,
+    )
+    // ⑨ 取消要有反馈：日志里出现"什么都没变"那句（否则用户不知道自己改了什么）
+    ok(
+      after.logs.includes('已取消更换影像'),
+      '★ 取消写了一条日志（用户能看见"什么都没变"）',
+      after.logs.slice(-60),
+    )
+    ok(after.app, '★ 没有白屏（.app 还在）')
+    const errs7 = await collectErrors()
+    const crash7 = errs7.filter(isCrash)
+    ok(crash7.length === 0, '★ 取消向导没有引发 React 崩溃', crash7.slice(0, 2).join(' | '))
+    shotPath = await shot('7-cancel-wizard')
+
+    // ============ 场景 7b：破坏性分支的语义必须与"取消"不同 ============
+    //
+    // 「重新开始」会真的清数据 —— 所以它必须**关闭**弹窗且不让它回来。
+    // 更关键的是下一步：清完之后再从菜单打开向导、取消，弹窗**不能**冒出来
+    //（否则 `resumeAsk && !wizard` 这个条件就成了"任何一次向导取消都把
+    //  启动弹窗顶回来"的坑，用户会觉得软件卡在弹窗里）。
+    const ready2 = await goto('?mock=ready&resume=1', { dismiss: false })
+    ok(ready2, '界面渲染完成（重置，7b）')
+    await mustExist('.resume-dialog', '「发现上次的检测结果」弹窗（重置后）')
+
+    const restarted = await evalJs(`
+      const dlg = document.querySelector('.resume-dialog');
+      if (!dlg) return { ok: false, why: '弹窗不在' };
+      const btns = [...dlg.querySelectorAll('button')];
+      const b = btns.find((x) => x.textContent.includes('重新开始'));
+      if (!b) {
+        return { ok: false, why: '按钮：' + btns.map((x) => x.textContent.trim()).join('/') };
+      }
+      b.click();
+      return { ok: true };
+    `)
+    ok(restarted.ok, '前置：点到了「重新开始」', restarted.why ?? '')
+    await sleep(900)
+    const afterRestart = await evalJs(`
+      return {
+        dialog: !!document.querySelector('.resume-dialog'),
+        wizard: !!document.querySelector('.wizard-mask'),
+        app: !!document.querySelector('.app'),
+      };
+    `)
+    ok(!afterRestart.dialog, '★ 「重新开始」后弹窗关闭（破坏性分支，语义与取消不同）')
+    ok(afterRestart.app, '★ 「重新开始」没有白屏')
+
+    // 再从工具栏「⋯ 更多 → 更换影像或结果文件」打开向导并取消
+    const opened2 = await evalJs(`
+      const more = [...document.querySelectorAll('button')].find(
+        (b) => (b.getAttribute('title') || '') === '更多操作',
+      );
+      if (!more) return { ok: false, why: '没有「更多操作」按钮' };
+      more.click();
+      return { ok: true };
+    `)
+    ok(opened2.ok, '前置：打开「⋯ 更多」菜单', opened2.why ?? '')
+    await sleep(400)
+    const picked2 = await evalJs(`
+      const items = [...document.querySelectorAll('.more-menu button')];
+      const b = items.find((x) => x.textContent.includes('更换影像'));
+      if (!b) {
+        return { ok: false, why: '菜单项：' + items.map((x) => x.textContent.trim()).join(' | ') };
+      }
+      b.click();
+      return { ok: true };
+    `)
+    ok(picked2.ok, '前置：菜单里点「更换影像或结果文件」', picked2.why ?? '')
+    await sleep(700)
+    const wiz2 = await evalJs(`
+      const wiz = document.querySelector('.wizard-mask');
+      if (!wiz) return { ok: false };
+      const b = wiz.querySelector('.wizard-close');
+      if (!b) return { ok: false, why: '没有 .wizard-close' };
+      b.click();
+      return { ok: true };
+    `)
+    ok(wiz2.ok, '前置：从菜单打开的向导里点 ×', wiz2.why ?? '')
+    await sleep(800)
+    const afterMenuCancel = await evalJs(`
+      return {
+        dialog: !!document.querySelector('.resume-dialog'),
+        wizard: !!document.querySelector('.wizard-mask'),
+        app: !!document.querySelector('.app'),
+      };
+    `)
+    ok(!afterMenuCancel.wizard, '★ 从菜单打开的向导也能取消')
+    ok(
+      !afterMenuCancel.dialog,
+      '★★ 取消**菜单里**打开的向导不会把续跑弹窗顶回来（弹窗不会卡住）',
+    )
+    const errs7b = await collectErrors()
+    const crash7b = errs7b.filter(isCrash)
+    ok(crash7b.length === 0, '7b 没有引发 React 崩溃', crash7b.slice(0, 2).join(' | '))
+
+    // ============ 场景 7c：正文里不能出现字面 `**`（Markdown 显示 bug）============
+    const ready3 = await goto('?mock=ready&resume=1', { dismiss: false })
+    ok(ready3, '界面渲染完成（重置，7c）')
+    await mustExist('.resume-dialog', '「发现上次的检测结果」弹窗（重置后，7c）')
+    const text7c = await evalJs(`
+      const dlg = document.querySelector('.resume-dialog');
+      return {
+        text: (dlg?.innerText ?? '').replace(/\\s+/g, ' ').trim(),
+        hasBold: !!dlg?.querySelector('b'),
+      };
+    `)
+    ok(text7c.text.length > 0, '前置：拿到了弹窗正文', `${text7c.text.length} 字符`)
+    ok(
+      !text7c.text.includes('**'),
+      '★ 弹窗正文里没有字面 `**`（JSX 不渲染 Markdown）',
+      text7c.text.includes('**') ? '出现了两个连续星号' : '',
+    )
+    ok(text7c.hasBold, '★ 「不会删除」用的是真 <b> 加粗', String(text7c.hasBold))
+    ok(
+      text7c.text.includes('不会删除'),
+      '★ 正文仍然说清了"不删磁盘文件"（改成 <b> 之后没丢字）',
+    )
+    const errs7c = await collectErrors()
+    const crash7c = errs7c.filter(isCrash)
+    ok(crash7c.length === 0, '7c 没有引发 React 崩溃', crash7c.slice(0, 2).join(' | '))
+    shotPath = await shot('7c-resume-dialog-text')
+
+    // ============ 场景 7d：取消不能清掉「结果载入失败」这类已有状态 ============
+    //
+    // 为什么还要这一条：旧代码在 `onPickNewResume` 里除了 `setGaps([])` 还调了
+    // `setGapsError(null)`。上面第 8 条在浏览器预览里两边都是 null（没有真实结果），
+    // 属于"一致性检查"而不是"有鉴别力的检查"。这里用 `?gapsError=1` 造一个
+    // **真实存在、且可被清掉**的状态：卡片正文会变成"未找到检测结果文件（已查找：…）"。
+    // 取消向导之后它必须原样还在 —— 旧代码会把这句话抹掉（变成正常的下一步文案）。
+    const ready4 = await goto('?mock=ready&resume=1&gapsError=1', { dismiss: false })
+    ok(ready4, '界面渲染完成（重置，7d）')
+    await mustExist('.resume-dialog', '「发现上次的检测结果」弹窗（重置后，7d）')
+    const errBase = await evalJs(`
+      const card = document.querySelector('.next-card');
+      return { text: (card?.innerText ?? '').replace(/\\s+/g, ' ').trim().slice(0, 80) };
+    `)
+    ok(
+      /未找到检测结果文件|已查找/.test(errBase.text),
+      '前置：「结果载入失败」的状态真的挂上了（卡片正文带错误说明）',
+      errBase.text,
+    )
+    await evalJs(`
+      const dlg = document.querySelector('.resume-dialog');
+      const b = dlg && [...dlg.querySelectorAll('button')].find((x) =>
+        x.textContent.includes('换一张影像'),
+      );
+      if (b) b.click();
+    `)
+    await sleep(700)
+    await evalJs(`
+      const wiz = document.querySelector('.wizard-mask');
+      const b = wiz && wiz.querySelector('.wizard-close');
+      if (b) b.click();
+    `)
+    await sleep(800)
+    const errAfter = await evalJs(`
+      const card = document.querySelector('.next-card');
+      return {
+        text: (card?.innerText ?? '').replace(/\\s+/g, ' ').trim().slice(0, 80),
+        dialog: !!document.querySelector('.resume-dialog'),
+      };
+    `)
+    ok(errAfter.dialog, '7d：取消后弹窗仍然回来')
+    ok(
+      errAfter.text === errBase.text,
+      '★★ 取消没有清掉「结果载入失败」状态（旧代码会 setGapsError(null) 抹掉它）',
+      `${errBase.text} → ${errAfter.text}`,
+    )
+
+    // ============ 场景 7e：`resumeAsk && !wizard` 会不会把弹窗"卡住" ============
+    //
+    // 这是本次改动**引入的新风险**（改动前 `resumeAsk` 在打开向导时就被清掉了，
+    // 根本不存在"回来"这件事）。要证明它只在"用户反悔"时回来一次，
+    // 而不是任何一次向导取消都把它顶回来 —— 那样用户会觉得软件卡在弹窗里。
+    // 路径：弹窗 → 换一张影像 → × → 弹窗回来 → 「继续复核」→ 关掉
+    //      → 从菜单打开向导 → × → **不能**再冒出来。
+    const ready5 = await goto('?mock=ready&resume=1', { dismiss: false })
+    ok(ready5, '界面渲染完成（重置，7e）')
+    await mustExist('.resume-dialog', '「发现上次的检测结果」弹窗（重置后，7e）')
+    // 换一张影像 → ×（弹窗应当回来）
+    await evalJs(`
+      const dlg = document.querySelector('.resume-dialog');
+      const b = dlg && [...dlg.querySelectorAll('button')].find((x) =>
+        x.textContent.includes('换一张影像'),
+      );
+      if (b) b.click();
+    `)
+    await sleep(600)
+    await evalJs(`
+      const wiz = document.querySelector('.wizard-mask');
+      const b = wiz && wiz.querySelector('.wizard-close');
+      if (b) b.click();
+    `)
+    await sleep(700)
+    const backAgain = await evalJs(`return !!document.querySelector('.resume-dialog');`)
+    ok(backAgain, '前置：取消后弹窗回来了（7e）')
+
+    // 「继续复核」= 这次选择做完了 → 弹窗必须关掉，并且之后不再出现
+    const continued = await evalJs(`
+      const dlg = document.querySelector('.resume-dialog');
+      const btns = dlg ? [...dlg.querySelectorAll('button')] : [];
+      const b = btns.find((x) => x.textContent.includes('继续复核'));
+      if (!b) {
+        return { ok: false, why: '按钮：' + btns.map((x) => x.textContent.trim()).join('/') };
+      }
+      b.click();
+      return { ok: true };
+    `)
+    ok(continued.ok, '前置：点了「继续复核」', continued.why ?? '')
+    await sleep(800)
+    ok(
+      !(await evalJs(`return !!document.querySelector('.resume-dialog');`)),
+      '★ 「继续复核」后弹窗关闭',
+    )
+
+    // 再从菜单开向导、取消 → 弹窗不能回来（`resumeAsk` 已被 onContinueResume 清掉）
+    await evalJs(`
+      const more = [...document.querySelectorAll('button')].find(
+        (b) => (b.getAttribute('title') || '') === '更多操作',
+      );
+      if (more) more.click();
+    `)
+    await sleep(400)
+    await evalJs(`
+      const items = [...document.querySelectorAll('.more-menu button')];
+      const b = items.find((x) => x.textContent.includes('更换影像'));
+      if (b) b.click();
+    `)
+    await sleep(700)
+    await evalJs(`
+      const wiz = document.querySelector('.wizard-mask');
+      const b = wiz && wiz.querySelector('.wizard-close');
+      if (b) b.click();
+    `)
+    await sleep(800)
+    const stuck = await evalJs(`
+      return {
+        dialog: !!document.querySelector('.resume-dialog'),
+        wizard: !!document.querySelector('.wizard-mask'),
+        app: !!document.querySelector('.app'),
+      };
+    `)
+    ok(!stuck.wizard, '★ 7e：向导已取消')
+    ok(
+      !stuck.dialog,
+      '★★ 已选过「继续复核」之后再取消向导，弹窗**不会**再冒出来（没有卡在弹窗里）',
+    )
+    ok(stuck.app, '★ 7e 没有白屏')
+    const errs7e = await collectErrors()
+    const crash7e = errs7e.filter(isCrash)
+    ok(crash7e.length === 0, '7e 没有引发 React 崩溃', crash7e.slice(0, 2).join(' | '))
+  }
+
+  // ================= 场景 8：参数窗「关闭」不是「取消」+ 步进器第③步带主按钮 =================
+  //
+  // 2026-10-25 第 2 轮改动（engineer 5 条里的 #1 / #2）：
+  //  · 底部按钮「取消」→「关闭」：每个控件都直接 `setDetectParam` 并即时持久化，
+  //    它**不回滚**，叫「取消」就是骗人；回滚入口明确指向「恢复推荐值」。
+  //  · 步进器点第 ③ 步现在带「开始检测」主按钮（以前只有 ✕，进来只能改参数不能开跑）。
+  //  · 关窗时 `settingsIntent` 复位成 'edit' —— 「更多 → 检测参数」进来的窗**不能**带主按钮，
+  //    否则"这次带不带开始检测"会漏到下一次（这正是本轮最容易漏的回归）。
+  console.log('\n=== 场景 8：★ 参数窗「关闭」语义 + intent 复位（第③步带主按钮 / 更多里不带）===')
+  {
+    const ready = await goto('?mock=ready&roi=1&noResume=1')
+    ok(ready, '界面渲染完成')
+    // 有圈选 → 卡片停在第 3 步，主按钮是「开始检测」→ openSettings('detect')
+    const clicked = await evalJs(`
+      const card = document.querySelector('.next-card');
+      const btns = card ? [...card.querySelectorAll('.nc-actions button')] : [];
+      const b = btns.find((x) => x.textContent.includes('开始检测'));
+      if (!b) return { ok: false, why: btns.map((x) => x.textContent.trim()).join(' / ') };
+      b.click();
+      return { ok: true };
+    `)
+    ok(clicked.ok, '前置：点卡片主按钮「开始检测」', clicked.why ?? '')
+    await sleep(700)
+
+    const ds = await evalJs(`
+      const dlg = document.querySelector('.detect-settings');
+      const btns = dlg ? [...dlg.querySelectorAll('button')] : [];
+      const texts = btns.map((x) => x.textContent.trim());
+      return {
+        open: !!dlg,
+        texts,
+        hasStart: texts.some((t) => t.includes('开始检测')),
+        hasCancel: texts.some((t) => t === '取消'),
+        hasClose: texts.some((t) => t === '关闭'),
+        hint: (dlg?.innerText ?? '').includes('改动会立即生效并记住'),
+      };
+    `)
+    ok(ds.open, '★ 参数窗打开了（.detect-settings）')
+    ok(
+      ds.hasStart,
+      '★ 第③步进来的参数窗带「开始检测」主按钮（以前只有 ✕，进来就跑不了）',
+      ds.texts.join(' / '),
+    )
+    ok(
+      !ds.hasCancel,
+      '★ 底部按钮不再叫「取消」（它不回滚，叫取消是骗人）',
+      ds.texts.join(' / '),
+    )
+    ok(ds.hasClose, '★ 底部按钮叫「关闭」', ds.texts.join(' / '))
+    ok(
+      ds.hint,
+      '★ 说明文案在：改动会立即生效并记住；想回到默认值点「恢复推荐值」',
+    )
+
+    // 用底部「关闭」关窗 → settingsIntent 必须复位成 'edit'
+    const closed = await evalJs(`
+      const dlg = document.querySelector('.detect-settings');
+      if (!dlg) return { ok: false, why: '参数窗不在' };
+      const btns = [...dlg.querySelectorAll('button')];
+      const b = btns.find((x) => x.textContent.trim() === '关闭');
+      if (!b) return { ok: false, why: '按钮：' + btns.map((x) => x.textContent.trim()).join(' / ') };
+      b.click();
+      return { ok: true };
+    `)
+    ok(closed.ok, '前置：点底部「关闭」', closed.why ?? '')
+    await sleep(700)
+    ok(
+      !(await evalJs(`return !!document.querySelector('.detect-settings');`)),
+      '★ 「关闭」真的关掉了参数窗',
+    )
+
+    // 再从「⋯ 更多 → 检测参数」进来：**不能**带「开始检测」
+    await evalJs(`
+      const more = [...document.querySelectorAll('button')].find(
+        (b) => (b.getAttribute('title') || '') === '更多操作',
+      );
+      if (more) more.click();
+    `)
+    await sleep(400)
+    const picked = await evalJs(`
+      const items = [...document.querySelectorAll('.more-menu button')];
+      const b = items.find((x) => x.textContent.includes('检测参数'));
+      if (!b) return { ok: false, why: items.map((x) => x.textContent.trim()).join(' | ') };
+      b.click();
+      return { ok: true };
+    `)
+    ok(picked.ok, '前置：菜单里点「检测参数…」', picked.why ?? '')
+    await sleep(700)
+    const ds2 = await evalJs(`
+      const dlg = document.querySelector('.detect-settings');
+      const btns = dlg ? [...dlg.querySelectorAll('button')] : [];
+      const texts = btns.map((x) => x.textContent.trim());
+      return {
+        open: !!dlg,
+        texts,
+        hasStart: texts.some((t) => t.includes('开始检测')),
+        hasClose: texts.some((t) => t === '关闭'),
+        hasCancel: texts.some((t) => t === '取消'),
+        hasCloseX: btns.some(
+          (x) =>
+            x.textContent.trim() === '✕' ||
+            (x.getAttribute('aria-label') || '') === '关闭' ||
+            (x.getAttribute('title') || '') === '关闭',
+        ),
+      };
+    `)
+    ok(ds2.open, '★ 「更多 → 检测参数」也打开了参数窗')
+    ok(
+      !ds2.hasStart,
+      '★★ 从「更多」进来的是纯编辑模式：**没有**「开始检测」（intent 已复位，没漏到下一次）',
+      ds2.texts.join(' / '),
+    )
+    ok(!ds2.hasCancel, '★ 纯编辑模式也没有「取消」字样', ds2.texts.join(' / '))
+    // ⚠️ 纯编辑模式**没有**底部按钮组（「关闭」/「开始检测」都在 `{onStart && …}` 里），
+    //    唯一的关闭方式是标题栏的 ✕。所以这里断言的是 ✕，不是文字「关闭」——
+    //    第一版我写成了"必须有文字关闭"，那是**测试写错**（不是源码 bug）。
+    ok(
+      ds2.hasCloseX,
+      '★ 纯编辑模式用标题栏 ✕ 关闭（底部按钮组只在"要开始检测"时出现）',
+      ds2.texts.join(' / '),
+    )
+    const errs8 = await collectErrors()
+    const crash8 = errs8.filter(isCrash)
+    ok(crash8.length === 0, '参数窗改动没有引发 React 崩溃', crash8.slice(0, 2).join(' | '))
+    shotPath = await shot('8-settings-close-not-cancel')
+  }
+
+  // ================= 场景 9：续跑弹窗「重新开始」连圈选一起清 =================
+  //
+  // 2026-10-25 第 2 轮改动（#5）。旧行为只 `setGaps([])`、保留 roi →
+  // `isStepDone('range')` 里 `hasRoi` 仍为 true → 第 2 步算"已完成" →
+  // active 落到第 3 步。用户看到的是"我点了重新开始，怎么直接跳第 3 步了"。
+  // 两个同名动作（这里 / 向导 B2）行为不一致本身就是最坏的一种"像 bug"。
+  //
+  // `?roi=1` 给一个真实圈选（状态栏会写「ROI：已圈选」）—— 这条断言在旧代码上必红。
+  console.log('\n=== 场景 9：★ 「重新开始」连圈选一起清（清完一定回到第 2 步）===')
+  {
+    const ready = await goto('?mock=ready&roi=1&resume=1', { dismiss: false })
+    ok(ready, '界面渲染完成')
+    await mustExist('.resume-dialog', '「发现上次的检测结果」弹窗')
+    // ⚠️ 不能直接 `bar.includes('已圈选')`：`.statusbar` 里**含日志区** `.sb-logs`，
+    //    而 `setRoi` 会 pushLog 一句「已圈选 Target Block（… m²）」——
+    //    那条日志在清空 roi 之后仍然留在屏幕上，于是 includes 会一直为 true。
+    //    （第一版就是这么写的，出现了一次**测试假失败**，不是源码 bug。）
+    //    精确做法：只读 `ROI：` 后面那一位状态词。
+    const base = await evalJs(`
+      const bar = (document.querySelector('.statusbar')?.innerText ?? '').replace(/\\s+/g, ' ');
+      return {
+        active:
+          document.querySelector('.sr-item.active .sr-label')?.textContent?.trim() ?? null,
+        roiState: (bar.match(/ROI：(已圈选|未圈选)/) ?? [])[1] ?? null,
+      };
+    `)
+    ok(base.roiState === '已圈选', '前置：状态栏显示「ROI：已圈选」（这次真的有圈选）', String(base.roiState))
+    ok(
+      base.active === '运行检测',
+      '前置：有圈选 + 无结果 → active 是第 3 步「运行检测」',
+      String(base.active),
+    )
+
+    const restarted = await evalJs(`
+      const dlg = document.querySelector('.resume-dialog');
+      const btns = dlg ? [...dlg.querySelectorAll('button')] : [];
+      const b = btns.find((x) => x.textContent.includes('重新开始'));
+      if (!b) return { ok: false, why: btns.map((x) => x.textContent.trim()).join(' / ') };
+      b.click();
+      return { ok: true };
+    `)
+    ok(restarted.ok, '前置：点「重新开始」', restarted.why ?? '')
+    await sleep(900)
+    const after = await evalJs(`
+      const bar = (document.querySelector('.statusbar')?.innerText ?? '').replace(/\\s+/g, ' ');
+      return {
+        dialog: !!document.querySelector('.resume-dialog'),
+        active:
+          document.querySelector('.sr-item.active .sr-label')?.textContent?.trim() ?? null,
+        roiState: (bar.match(/ROI：(已圈选|未圈选)/) ?? [])[1] ?? null,
+        app: !!document.querySelector('.app'),
+      };
+    `)
+    ok(!after.dialog, '「重新开始」后弹窗关闭')
+    ok(
+      after.roiState === '未圈选',
+      '★★ 「重新开始」把圈选也清了（状态栏变「未圈选（将处理整幅）」）',
+      `ROI：${after.roiState ?? '(读不到)'}`,
+    )
+    ok(
+      after.active === '确定范围',
+      '★★ 清完 gaps + roi 之后 active 一定是第 2 步「确定范围」（旧代码会停在第 3 步）',
+      String(after.active),
+    )
+    ok(after.app, '★ 没有白屏')
+    const errs9 = await collectErrors()
+    const crash9 = errs9.filter(isCrash)
+    ok(crash9.length === 0, '重新开始没有引发 React 崩溃', crash9.slice(0, 2).join(' | '))
+    shotPath = await shot('9-restart-clears-roi')
+  }
+
+  // ================= 场景 10：ResumeDialog 的 Esc 不能漏到全局 =================
+  //
+  // 2026-10-25 第 2 轮改动（#4）。App 里有个全局 Esc（`setDrawIntent('none')` +
+  // `clearSelection()`），也挂在 `window` 上。ResumeDialog 以前只 `preventDefault()`，
+  // 拦不住它 —— 于是"按 Esc 关弹窗"会顺手把地图选中清掉 / 退出绘制模式。
+  //
+  // ⚠️ 必须用**真实键盘事件**（`Input.dispatchKeyEvent`），不能用
+  //    `window.dispatchEvent(new KeyboardEvent(...))`：后者把 target 设成 window，
+  //    同一 target 上的 capture 与 bubble 监听器都会按注册顺序跑，
+  //    `stopPropagation()` 拦不住（只有 `stopImmediatePropagation` 能），
+  //    于是会得到"看起来漏了"的**假失败**。真实按键的 target 是聚焦元素，
+  //    capture 从 window 往下走，stopPropagation 才真正生效。
+  //
+  // 观测量：`.map-drawing`（框选模式的提示条）。`?p1=box` 把 drawIntent 设成
+  // `box_select` 让它出现；全局 Esc 会把它置回 'none' 让提示条消失。
+  console.log('\n=== 场景 10：★ 弹窗 Esc 只关弹窗，不漏到全局（capture + stopPropagation）===')
+  {
+    const ready = await goto('?mock=ready&resume=1&p1=box', { dismiss: false })
+    ok(ready, '界面渲染完成')
+    await mustExist('.resume-dialog', '「发现上次的检测结果」弹窗')
+    ok(
+      (await evalJs(`return !!document.querySelector('.map-drawing');`)),
+      '前置：框选提示条在（.map-drawing，drawIntent = box_select）',
+    )
+
+    // 真实按键：Escape
+    await send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    })
+    await send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    })
+    await sleep(800)
+
+    const after = await evalJs(`
+      return {
+        dialog: !!document.querySelector('.resume-dialog'),
+        drawing: !!document.querySelector('.map-drawing'),
+        app: !!document.querySelector('.app'),
+      };
+    `)
+    ok(!after.dialog, '★ Esc 关掉了弹窗（Esc = 继续，沿用不丢数据那一支）')
+    ok(
+      after.drawing,
+      '★★ Esc **没有**漏到全局（框选提示条还在 → App 的 setDrawIntent("none") 没被触发）',
+    )
+    ok(after.app, '★ 没有白屏')
+    const errs10 = await collectErrors()
+    const crash10 = errs10.filter(isCrash)
+    ok(crash10.length === 0, 'Esc 没有引发 React 崩溃', crash10.slice(0, 2).join(' | '))
+    shotPath = await shot('10-esc-no-leak')
+  }
+
+  // ================= 场景 11：步进器点第 ③ 步也要带「开始检测」 =================
+  //
+  // 2026-10-25 第 2 轮改动（#2）。改之前 `onJumpStep('detect')` 直接
+  // `setShowSettings(true)`，而 `settingsIntent` 默认是 'edit' ——
+  // 于是"点步进器第 3 步"打开的窗**没有「开始检测」**，用户只能关掉再去找卡片按钮。
+  // 同一个"我想跑检测"的意图，两个入口两种界面。
+  //
+  // 要能点第 ③ 步，它必须是 `done`（步进器只有 done 可点）→ 需要"有结果"。
+  // 后端在浏览器里不可用，所以用 `?demo=1`（显式演示模式）载入内置
+  // `/sample-gaps.geojson` → hasResult → 第 ③ 步 done。
+  console.log('\n=== 场景 11：★ 步进器第③步带「开始检测」（?demo=1 造出 done 的第③步）===')
+  {
+    const ready = await goto('?mock=ready&demo=1')
+    ok(ready, '界面渲染完成')
+    const st = await evalJs(`
+      const items = [...document.querySelectorAll('.sr-item')].map((b) => ({
+        label: (b.querySelector('.sr-label')?.textContent ?? '').trim(),
+        cls: b.className,
+        disabled: b.disabled,
+      }));
+      const card = document.querySelector('.next-card');
+      return {
+        items,
+        active: document.querySelector('.sr-item.active .sr-label')?.textContent?.trim() ?? null,
+        gaps: (document.querySelector('.sb-logs')?.innerText ?? '').includes('演示模式'),
+        cardBtn: [...(card?.querySelectorAll('.nc-actions button') ?? [])].map((x) =>
+          x.textContent.trim(),
+        ),
+      };
+    `)
+    ok(st.gaps, '前置：演示样例真的载入了（日志里有「演示模式」）')
+    const step3 = st.items.find((i) => i.label === '运行检测')
+    ok(!!step3, '前置：找到第③步「运行检测」', st.items.map((i) => i.label).join('/'))
+    ok(
+      !!step3 && step3.cls.includes('done') && !step3.disabled,
+      '前置：第③步是 done 且可点（否则点不动，后面的断言会空过）',
+      step3 ? step3.cls : '(无)',
+    )
+
+    const jumped = await evalJs(`
+      const b = [...document.querySelectorAll('.sr-item')].find(
+        (x) => (x.querySelector('.sr-label')?.textContent ?? '').trim() === '运行检测',
+      );
+      if (!b) return { ok: false, why: '没有第③步' };
+      if (b.disabled) return { ok: false, why: '第③步不可点' };
+      b.click();
+      return { ok: true };
+    `)
+    ok(jumped.ok, '前置：点了步进器第③步', jumped.why ?? '')
+    await sleep(700)
+    const ds = await evalJs(`
+      const dlg = document.querySelector('.detect-settings');
+      const texts = dlg ? [...dlg.querySelectorAll('button')].map((x) => x.textContent.trim()) : [];
+      return {
+        open: !!dlg,
+        texts,
+        hasStart: texts.some((t) => t.includes('开始检测')),
+        hasCancel: texts.some((t) => t === '取消'),
+      };
+    `)
+    ok(ds.open, '★ 点第③步打开了参数窗')
+    ok(
+      ds.hasStart,
+      '★★ 从步进器第③步进来**也有**「开始检测」（改动前这里只有 ✕）',
+      ds.texts.join(' / '),
+    )
+    ok(!ds.hasCancel, '★ 底部按钮不是「取消」', ds.texts.join(' / '))
+    const errs11 = await collectErrors()
+    const crash11 = errs11.filter(isCrash)
+    ok(crash11.length === 0, '步进器第③步没有引发 React 崩溃', crash11.slice(0, 2).join(' | '))
+    shotPath = await shot('11-stepper-step3-settings')
+  }
+
+  // ================= 场景 11b：#4 参数窗文案（?settings=1 = 纯编辑模式）=================
+  //
+  // 这里要说清一个**规格与实现的偏差**（不是 bug，但 team-lead 的验证口径要修正）：
+  // `?settings=1` 走的是 `setShowSettings(true)`，`settingsIntent` 保持默认 'edit' →
+  // 底部按钮组（`{onStart && …}`）**根本不渲染**，所以"底部按钮是「关闭」"
+  // 在纯编辑模式里**无从验证**（那里只有标题栏 ✕）。
+  // 「关闭」按钮只存在于 detect 模式（场景 8 / 11 已覆盖）。
+  // 纯编辑模式能验证的是：新增说明文案在、且**没有**「取消」字样。
+  console.log('\n=== 场景 11b：#4 参数窗文案（编辑模式：有说明、无「取消」；关闭按钮只在 detect 模式）===')
+  {
+    const ready = await goto('?mock=ready&settings=1')
+    ok(ready, '界面渲染完成')
+    const ds = await evalJs(`
+      const dlg = document.querySelector('.detect-settings');
+      const btns = dlg ? [...dlg.querySelectorAll('button')] : [];
+      const texts = btns.map((x) => x.textContent.trim());
+      return {
+        open: !!dlg,
+        texts,
+        hasCancel: texts.some((t) => t === '取消'),
+        hasCloseText: texts.some((t) => t === '关闭'),
+        hasCloseX: btns.some(
+          (x) =>
+            x.textContent.trim() === '✕' ||
+            (x.getAttribute('aria-label') || '') === '关闭' ||
+            (x.getAttribute('title') || '') === '关闭',
+        ),
+        hint: (dlg?.innerText ?? '').includes('改动会立即生效并记住'),
+        hintDefault: (dlg?.innerText ?? '').includes('恢复推荐值'),
+      };
+    `)
+    ok(ds.open, '★ ?settings=1 打开了参数窗')
+    ok(!ds.hasCancel, '★ 窗里没有任何「取消」字样（改名前叫取消，是骗人的）', ds.texts.join(' / '))
+    ok(ds.hint, '★ 新增说明文案在：改动会立即生效并记住')
+    ok(ds.hintDefault, '★ 且指向回滚入口「恢复推荐值」（不是空话）')
+    ok(ds.hasCloseX, '★ 纯编辑模式用标题栏 ✕ 关闭')
+    ok(
+      !ds.hasCloseText,
+      '（记录现状）纯编辑模式没有底部「关闭」按钮 —— 按钮组只在 detect 模式渲染',
+      ds.texts.join(' / '),
+    )
+    const errs11b = await collectErrors()
+    const crash11b = errs11b.filter(isCrash)
+    ok(crash11b.length === 0, '没有引发 React 崩溃', crash11b.slice(0, 2).join(' | '))
+  }
+
+  // ================= 场景 12：#1 导出成功 → 第⑤步真的置位（补「接线」缺口）=================
+  //
+  // 为什么必须补这一条：engineer 新加的 9 条单测（workflow.test.ts I 组）只喂
+  // `exported: true` 给纯函数 `computeSteps` / `nextAction` —— 它们证明的是
+  // **"判定逻辑对"**，**没有**证明"`ExportDialog.run()` 真的会调 `markWorkflow`"。
+  // 把那句 `markWorkflow({ exported: true })` 删掉，810 条单测**依然全绿**。
+  // 这就是典型的"测试绿但接线可能断"。
+  //
+  // 浏览器里没有 Tauri / 后端，真导出走不通。做法：**只 stub `/export` 这一个请求**
+  // （其它 fetch 原样透传，`?mock=ready` 的 /meta 不受影响），让前端走到成功分支。
+  // 这样断言的是**前端接线**：同一次会话里"导出前 ⑤ 不是 done → 导出成功后 ⑤ done"。
+  // 删掉那句 markWorkflow，本场景必红。
+  console.log('\n=== 场景 12：★ 导出成功 → 第⑤步 done（stub /export，补单测覆盖不到的接线）===')
+  {
+    const ready = await goto('?mock=ready&demo=1&p2=export')
+    ok(ready, '界面渲染完成（导出窗已由 ?p2=export 打开）')
+    const before = await evalJs(`
+      const items = [...document.querySelectorAll('.sr-item')].map((b) => ({
+        label: (b.querySelector('.sr-label')?.textContent ?? '').trim(),
+        cls: b.className,
+      }));
+      const exp = items.find((i) => i.label === '导出交付');
+      return {
+        dlg: !!document.querySelector('.export-dialog'),
+        expDone: !!exp && exp.cls.includes('done'),
+        expCls: exp ? exp.cls : '(没找到导出交付)',
+      };
+    `)
+    ok(before.dlg, '前置：导出窗在（.export-dialog）')
+    ok(
+      !before.expDone,
+      '★ 前置（对照）：导出**之前**第⑤步不是 done（漏了置位的话这里和后面会同时为假）',
+      before.expCls,
+    )
+
+    // 只拦 /export：其它请求（/meta 等）原样透传
+    const stubbed = await evalJs(`
+      if (!window.__origFetch) window.__origFetch = window.fetch;
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (url.includes('/export')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ ok: true, outdir: 'D:/tmp/fake-out', files: ['report.md'] }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+          );
+        }
+        return window.__origFetch(input, init);
+      };
+      return true;
+    `)
+    ok(stubbed, '前置：只对 /export 装了 stub（其它 fetch 透传）')
+
+    // 导出窗已由 ?p2=export 打开 → 直接点「开始导出」
+    const runClicked = await evalJs(`
+      const dlg = document.querySelector('.export-dialog');
+      if (!dlg) return { ok: false, why: '导出窗不在' };
+      const b = [...dlg.querySelectorAll('button')].find((x) =>
+        x.textContent.includes('开始导出'),
+      );
+      if (!b) {
+        return {
+          ok: false,
+          why: '按钮：' + [...dlg.querySelectorAll('button')].map((x) => x.textContent.trim()).join(' / '),
+        };
+      }
+      if (b.disabled) return { ok: false, why: '「开始导出」是禁用的（没结果？）' };
+      b.click();
+      return { ok: true };
+    `)
+    ok(runClicked.ok, '前置：点了「开始导出」', runClicked.why ?? '')
+    await sleep(1200)
+
+    const after = await evalJs(`
+      const items = [...document.querySelectorAll('.sr-item')].map((b) => ({
+        label: (b.querySelector('.sr-label')?.textContent ?? '').trim(),
+        cls: b.className,
+      }));
+      const exp = items.find((i) => i.label === '导出交付');
+      const card = document.querySelector('.next-card');
+      return {
+        expDone: !!exp && exp.cls.includes('done'),
+        expCls: exp ? exp.cls : '(没找到)',
+        cardBtn: [...(card?.querySelectorAll('.nc-actions button') ?? [])].map((x) =>
+          x.textContent.trim(),
+        ),
+        logs: (document.querySelector('.sb-logs')?.innerText ?? '').includes('导出完成'),
+      };
+    `)
+    ok(after.logs, '前置：导出真的走完了成功分支（日志有「导出完成」）')
+    ok(
+      after.expDone,
+      '★★ 导出成功后第⑤步变成 done（`markWorkflow({ exported: true })` 真的接上了）',
+      after.expCls,
+    )
+    ok(
+      after.cardBtn.some((t) => t.includes('打开输出文件夹')),
+      '★★ 卡片主按钮从「导出交付包」变成「打开输出文件夹」（finished = true）',
+      after.cardBtn.join(' / '),
+    )
+
+    // 失败分支**不能**置位（这是"只在成功回调里置位"的另一半）
+    const failed = await evalJs(`
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (url.includes('/export')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ ok: false, error: '磁盘满了' }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          );
+        }
+        return window.__origFetch(input, init);
+      };
+      return true;
+    `)
+    ok(failed, '前置：把 /export 换成失败响应')
+    await sleep(200)
+    // 失败后导出窗还开着（显示错误），按钮文案回到「开始导出」/「重新导出」→ 直接再点一次
+    const rerun = await evalJs(`
+      const dlg = document.querySelector('.export-dialog');
+      const b = dlg && [...dlg.querySelectorAll('button')].find((x) =>
+        /开始导出|重新导出/.test(x.textContent),
+      );
+      if (!b) return { ok: false };
+      b.click();
+      return { ok: true };
+    `)
+    ok(rerun.ok, '前置：失败场景里再点一次导出')
+    await sleep(1200)
+    const afterFail = await evalJs(`
+      const dlg = document.querySelector('.export-dialog');
+      return {
+        err: (dlg?.innerText ?? '').includes('磁盘满了'),
+        expDone: [...document.querySelectorAll('.sr-item')].some(
+          (b) =>
+            (b.querySelector('.sr-label')?.textContent ?? '').trim() === '导出交付' &&
+            b.className.includes('done'),
+        ),
+      };
+    `)
+    ok(afterFail.err, '★ 失败分支把错误说出来了（「磁盘满了」）')
+    ok(
+      afterFail.expDone,
+      '（说明）失败不会把已置的 exported 撤销 —— 置位是"曾经成功过"，只增不减',
+    )
+    const errs12 = await collectErrors()
+    const crash12 = errs12.filter(isCrash)
+    ok(crash12.length === 0, '导出接线没有引发 React 崩溃', crash12.slice(0, 2).join(' | '))
+    shotPath = await shot('12-export-wiring')
   }
 
   // ================= 收尾 =================
