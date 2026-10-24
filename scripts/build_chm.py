@@ -29,11 +29,19 @@ DJI Terra 的 DSM 被**平滑过**（5×5 局部粗糙度仅 0.09 m，真实冠�
   python scripts/build_chm.py --dsm "D://WGR//dsm.tif" \\
       --segment "D://WGR//segment.tif" --ortho "D://WGR//WGR17.tif" \\
       --out output/chm.tif
+
+产出
+----
+  · `--out` 指定的高度图（桌面端是 `output/<区块>-chm.tif`）
+  · **同目录同名的 `.json`**：归属元数据（这份高度图是从哪张正射影像算出来的）。
+    桌面端靠它区分"同名但不同目录的两张影像"，见 `write_chm_meta`。
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import time
 from pathlib import Path
 
 import os
@@ -43,9 +51,69 @@ import rasterio
 from rasterio.warp import reproject, Resampling
 from scipy import ndimage as ndi
 
+# 高度图归属元数据的格式版本（Rust 侧 `chm_owner` 按它读）。
+CHM_META_SCHEMA = "fgd-chm/1"
+
 # 与 detect.py 保持一致的日志出口
 def log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def chm_meta_path(out_path: str | Path) -> Path:
+    """高度图的归属元数据路径：`<job>-chm.tif` → `<job>-chm.json`（同目录同名）。
+
+    与 Rust 的 `job_chm_meta_path` 必须逐字一致：Rust 按这个文件名去读，
+    两边规则不一致就等于没写（而且**不会报错**，只会静默退回"判不出归属"）。
+    """
+    return Path(out_path).with_suffix(".json")
+
+
+def write_chm_meta(out_path: str | Path, ortho_path: str | Path) -> Path | None:
+    """给刚写出的高度图补一份"它属于哪张影像"的元数据（**best-effort**）。
+
+    ## 为什么必须补（这是最后一个"数字自洽的错答案"）
+
+    高度图是检测的输入之一。它以前**没有任何归属信息**，只靠文件名
+    （`<区块>-chm.tif`）猜。而区块名由影像文件名算出 —— 于是：
+
+        A/WGR17-002.tif 与 B/WGR17-002.tif 同名
+        → B 拿到 `wgr17-002-2`；但如果 B **只生成过高度图、没跑过检测**，
+          磁盘上就没有 `wgr17-002-2-gaps.geojson` 这个"占用证据"，
+        → 选 A 时算出的还是 `wgr17-002` → **A 用上了 B 的树高**：
+          高程整体偏移、结果看着正常、全程不报错，只有到现场才发现坑挖错地方。
+
+    有了这份元数据，`job_slot_is_free`（Rust）就能判"这个区块名上的高度图
+    到底是谁的"，A/B 同名也不会串。
+
+    ## 为什么失败只记日志、不抛错
+
+    元数据是**附加信息**：写不出来时最坏退化成"判不出归属"（旧行为），
+    而抛错会让已经算好的 42 秒高度图白费。宁可退化，不要失败。
+
+    返回写出的路径；失败返回 None。
+    """
+    try:
+        p = chm_meta_path(out_path)
+        # ⚠️ 记**绝对路径**（`abspath` 而不是 `resolve`：不解析符号链接，
+        #    与 Rust 的 `same_file_path` 语义一致）。CLI 里用户可能传相对路径，
+        #    相对路径过一段时间再解析可能指向别处 —— 那就等于没记。
+        abs_ortho = os.path.abspath(str(ortho_path))
+        obj = {
+            "schema": CHM_META_SCHEMA,
+            "source_image": Path(abs_ortho).name,
+            "image_path": abs_ortho,
+            "created_at": int(time.time()),
+        }
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # 同样原子写：半截 JSON 会让 Rust 判"读不出来"→ 退化成旧行为（不致命，
+        # 但没必要让用户遇到）
+        tmp = p.with_suffix(p.suffix + ".part")
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
+        return p
+    except OSError as e:
+        log(f"  ⚠️ 高度图归属元数据没写成功（不影响使用，只是切区块时判不出归属）：{e}")
+        return None
 
 
 def build_chm(dsm_path: str, segment_path: str | None, ortho_path: str,
@@ -128,6 +196,15 @@ def build_chm(dsm_path: str, segment_path: str | None, ortho_path: str,
         dst.write(chm_o, 1)
     os.replace(tmp, out_path)  # 同盘 rename 是原子的
     log(f"已写出 {out_path}")
+
+    # --- 5. 归属元数据（`<out>.json`）---
+    #
+    # 必须在 tif **写完之后**：元数据说"这份高度图属于哪张影像"，
+    # 先写元数据再写 tif 的话，中途失败会留下一句"我有 A 的高度图"而文件不存在
+    # —— 那会让区块名分配误判（详见 write_chm_meta 的注释）。
+    meta = write_chm_meta(out_path, ortho_path)
+    if meta is not None:
+        log(f"已写出归属元数据 {meta}")
 
     return {
         "dsm_px_m": px_m, "dtm_window_m": win_m,

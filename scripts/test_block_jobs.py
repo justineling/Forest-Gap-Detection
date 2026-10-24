@@ -382,6 +382,182 @@ def main() -> int:
             import shutil
 
             shutil.rmtree(tmp4, ignore_errors=True)
+        print("\nG. 影像挪目录后，旧结果仍属于它（审计 A，与 Rust 的 gaps_belongs_to 同规则）")
+        # 场景：用户把 3.5 GB 的影像从 D:/old 挪到 E:/new（或换盘），
+        # 结果文件里记的还是老路径。旧规则拿完整路径比 → 判 foreign →
+        # 旧结果成孤儿、白跑 6 分钟，而界面只表现为"没有空地"。
+        tmp5 = Path(tempfile.mkdtemp(prefix="fgd-blockjobs5-"))
+        try:
+            use_root(tmp5)
+            out5 = tmp5 / "output"
+            gone = tmp5 / "old" / "WGR17-002.tif"  # **刻意不创建**：影像已经不在了
+            now = tmp5 / "new" / "WGR17-002.tif"
+            now.parent.mkdir(parents=True, exist_ok=True)
+            now.write_bytes(b"moved")
+            moved_gaps = out5 / "wgr17-002-gaps.geojson"
+            write_result(moved_gaps, source_path=gone, marker="M-1")
+            check(
+                gaps_owner(moved_gaps, now) == "own",
+                "★ 记录里的路径已失效 → 退到文件名，仍判 own",
+            )
+            check(
+                gaps_belongs_to(moved_gaps, now),
+                "…gaps_belongs_to 也认（不是只有三态函数认）",
+            )
+
+            # 反证：两张同名影像**都真实存在**时必须仍然分开 ——
+            # 这是多区块功能赖以存在的场景，不能被 A 条的修法判穿。
+            other = tmp5 / "other" / "WGR17-002.tif"
+            other.parent.mkdir(parents=True, exist_ok=True)
+            other.write_bytes(b"other")
+            live_gaps = out5 / "wgr17-002-2-gaps.geojson"
+            write_result(live_gaps, source_path=now, marker="M-2")
+            check(gaps_owner(live_gaps, now) == "own", "记录的就是 now → own")
+            check(
+                gaps_owner(live_gaps, other) == "foreign",
+                "★ 两张都在时不能混为一谈（否则 B 认领 A 的结果）",
+            )
+
+            # 更老的产物连 source_image 都没有 → 用记录路径自己的文件名兜底
+            no_name = out5 / "block_a-gaps.geojson"
+            no_name.parent.mkdir(parents=True, exist_ok=True)
+            no_name.write_text(
+                json.dumps(
+                    {
+                        "type": "FeatureCollection",
+                        "inputs_snapshot": {
+                            "image": {"path": str(tmp5 / "gone" / "Block_A.tif")}
+                        },
+                        "features": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            img_a5 = tmp5 / "here" / "Block_A.tif"
+            img_a5.parent.mkdir(parents=True, exist_ok=True)
+            img_a5.write_bytes(b"a")
+            check(
+                gaps_owner(no_name, img_a5) == "own",
+                "★ 没有 source_image 时，用记录路径的文件名兜底",
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp5, ignore_errors=True)
+
+        print("\nH. 宿主锁定模式（--gaps-locked，审计 D）：不再自己发现")
+        # 口径：路径由 Rust 一份算好，Python 只负责按给定路径读。
+        # 以前两套发现逻辑并存，已经漂移过（搜索目录数 / 兜底判据都不一样），
+        # 症状是"界面显示的和报告用的不是同一份结果"，而且不报错。
+        tmp6 = Path(tempfile.mkdtemp(prefix="fgd-blockjobs6-"))
+        try:
+            use_root(tmp6)
+            out6 = tmp6 / "output"
+            img6 = tmp6 / "block" / "WGR17-002.tif"
+            img6.parent.mkdir(parents=True, exist_ok=True)
+            img6.write_bytes(b"img")
+            # ① 宿主锁定的那份（旧、名字不规范）
+            locked = out6 / "handmade-gaps.geojson"
+            write_result(locked, source_path=img6, marker="LOCKED", age_s=3600)
+            # ② 目录里还有一份**更新**的、同样属于这张影像的结果
+            newer = out6 / "wgr17-002-gaps.geojson"
+            write_result(newer, source_path=img6, marker="NEWER", age_s=10)
+
+            srv_lock = TileServer(img6, locked, gaps_locked=True)
+            got = srv_lock._pick_gaps()
+            check(
+                got is not None and got.name == "handmade-gaps.geojson",
+                "★ 锁定模式：用宿主给的路径，不被更新的文件顶掉",
+                got.name if got else "(None)",
+            )
+            check(
+                served_markers(srv_lock) == ["LOCKED"],
+                "★ 内容层面也只有锁定的那份",
+                str(served_markers(srv_lock)),
+            )
+
+            # 对照：不锁定（老行为）→ 更新的那份会接管
+            srv_free = TileServer(img6, locked)
+            got_free = srv_free._pick_gaps()
+            check(
+                got_free is not None and got_free.name == "wgr17-002-gaps.geojson",
+                "对照：未锁定时更新的本区块结果会接管（说明上面那条真的在起作用）",
+                got_free.name if got_free else "(None)",
+            )
+
+            # 自愈：锁定的文件被删了 → 必须解锁并退回自动发现，
+            # 否则"删掉结果 → 重新检测"会永远读不到新结果（服务不重启）。
+            srv_heal = TileServer(img6, out6 / "deleted-gaps.geojson", gaps_locked=True)
+            healed = srv_heal._pick_gaps()
+            check(
+                healed is not None and healed.name == "wgr17-002-gaps.geojson",
+                "★ 锁定失效 → 自愈解锁并自动发现",
+                healed.name if healed else "(None)",
+            )
+            check(srv_heal.gaps_locked is False, "…并且状态真的解锁了（下次不再走锁定分支）")
+
+            # 锁定到一个属于别人的结果 → 也不能用（foreign 必须拒）
+            other_img = tmp6 / "other" / "WGR17-003.tif"
+            other_img.parent.mkdir(parents=True, exist_ok=True)
+            other_img.write_bytes(b"x")
+            srv_foreign = TileServer(other_img, newer, gaps_locked=True)
+            got_foreign = srv_foreign._pick_gaps()
+            check(
+                got_foreign is None or got_foreign != newer,
+                "★ 锁定到别人的结果 → 拒绝（不画错空地）",
+                str(got_foreign),
+            )
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp6, ignore_errors=True)
+
+        print("\nI. 高度图归属元数据（与 Rust 的 chm_owner 同一套字段）")
+        # 唯一要防的场景：A/B **同名**，B **只生成过高度图、没跑过检测**。
+        # 那时磁盘上没有 B 的结果、也没有 B 的缓存目录 —— 所有"占用证据"都看不到，
+        # 于是选 A 时算出的还是同一个区块名 → A 用上 B 的树高（不报错、数字全错）。
+        # 归属只能靠高度图自己带的元数据说清楚。
+        from build_chm import CHM_META_SCHEMA, chm_meta_path, write_chm_meta
+
+        tmp7 = Path(tempfile.mkdtemp(prefix="fgd-blockjobs7-"))
+        try:
+            chm = tmp7 / "output" / "wgr17-002-chm.tif"
+            chm.parent.mkdir(parents=True, exist_ok=True)
+            chm.write_bytes(b"tif")
+            img = tmp7 / "区块B" / "WGR17-002.tif"
+            img.parent.mkdir(parents=True, exist_ok=True)
+            img.write_bytes(b"img")
+
+            meta = write_chm_meta(chm, img)
+            check(meta is not None, "元数据写成功")
+            check(
+                meta == chm.with_suffix(".json"),
+                "★ 与 tif 同目录同名，只换后缀（Rust 按这个规则读）",
+                str(meta),
+            )
+            obj = json.loads(meta.read_text(encoding="utf-8"))
+            check(obj["schema"] == CHM_META_SCHEMA, "带格式版本", obj["schema"])
+            check(
+                obj["image_path"] == os.path.abspath(str(img)),
+                "★ 记**绝对**路径（CLI 里可能传相对路径）",
+                obj["image_path"],
+            )
+            check(obj["source_image"] == "WGR17-002.tif", "同时记文件名（路径失效时兜底）")
+            check(
+                not list(tmp7.rglob("*.part")),
+                "★ 原子写：不留 .part 残片",
+            )
+
+            # 失败只记日志、返回 None —— 不能因为元数据写不出来就让 42 秒的高度图白费
+            blocker = tmp7 / "afile"
+            blocker.write_bytes(b"x")  # 拿一个**文件**当父目录 → mkdir 必失败
+            bad = write_chm_meta(blocker / "sub" / "x-chm.tif", img)
+            check(bad is None, "★ 写不出来 → 返回 None（不抛错、不中断）")
+        finally:
+            import shutil
+
+            shutil.rmtree(tmp7, ignore_errors=True)
+
     finally:
         import shutil
 

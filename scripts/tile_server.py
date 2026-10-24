@@ -227,15 +227,31 @@ def gaps_owner(p: Path, source: Path | None) -> str:
       当 foreign 拒掉会变成"我选了文件却不生效"。
 
     判据强度（与 Rust 的 `gaps_belongs_to` 依次退化一致）：
-      1. `inputs_snapshot.image.path`（完整路径）—— 最可靠，同名影像也能分开
-      2. `source_image`（文件名）—— 老结果没有快照时用
-      3. 都没有 → `unknown`
+      1. `inputs_snapshot.image.path`（完整路径）**且那个路径还在** → 决定性
+      2. 记录的路径已经不存在（影像被挪走/改名/换盘）→ 退回文件名
+      3. `source_image`（文件名）—— 老结果没有快照时用
+      4. 都没有 → `unknown`
+
+    ⚠️ 第 2 条（2026-10-24 修，与 Rust 同步）：以前只有第 1 条，用户把影像
+    从 `D:/A/x.tif` 挪到 `E:/B/x.tif` 后，记录里的旧路径 resolve 出来还在（但不存在）
+    → 判 foreign → 旧结果成孤儿、白跑 6 分钟。影像挪走时"同名"是唯一还剩的证据。
+
+    ⚠️ 为什么不干脆"job 名相同即 own"：那会把同名双区块
+    （`区块A/WGR17-002.tif` 与 `区块B/WGR17-002.tif`）判穿 ——
+    B 认领 A 的结果，A 的影像上画 B 的空地。只在记录路径失效时才退到文件名。
     """
     if source is None:
         return "own"
     rec_path = _result_source_path(p)
     if rec_path and rec_path.strip():
-        return "own" if _same_file_path(Path(rec_path.strip()), Path(source)) else "foreign"
+        rec = Path(rec_path.strip())
+        if rec.exists():
+            return "own" if _same_file_path(rec, Path(source)) else "foreign"
+        # 影像已被移动 → 退到文件名
+        name = _result_source_image(p) or rec.name
+        if not name or not name.strip():
+            return "unknown"
+        return "own" if name.strip().lower() == Path(source).name.lower() else "foreign"
     rec = _result_source_image(p)
     if rec is None:
         return "unknown"
@@ -454,12 +470,27 @@ def lonlat_to_mercator(lon: float, lat: float) -> tuple[float, float]:
 # 服务
 # --------------------------------------------------------------------------
 class TileServer:
-    def __init__(self, source: Path, gaps: Path | None, cache_size: int = 512):
+    def __init__(
+        self,
+        source: Path,
+        gaps: Path | None,
+        cache_size: int = 512,
+        gaps_locked: bool = False,
+    ):
         self.source = source
         # 用户/宿主显式指定的结果文件（`--gaps`）。**不是**最终生效值：
         # 每次 `/gaps` 请求都会再确认一次"它还是不是最新的"，见 _pick_gaps。
         self.gaps_explicit = gaps
         self.gaps_path = gaps
+        # `--gaps-locked`：宿主（Rust）已经替我们算好了"当前区块该用哪份结果"，
+        # 这个模式下**不再自己发现**（不扫目录、不比 mtime）。
+        #
+        # 为什么要有它（2026-10-24 审计 D 条）：路径解析以前有三份实现
+        # （Rust / Python / 前端），已经漂移过 —— 搜索目录数不一样、兜底判据不一样。
+        # 现在口径是"Rust 一份，Python 只负责按给定路径读"。
+        # 锁定失效（文件被删 / 被换成别人的）时**自愈解锁**，退回自动发现，
+        # 否则删掉结果再重跑就会永远读不到新结果。
+        self.gaps_locked = bool(gaps_locked) and gaps is not None
         # 用户"指定这一刻"的时间戳（服务启动 ≈ 用户刚选了文件，因为
         # `set_data_paths` 会重启服务）。
         #
@@ -638,6 +669,7 @@ class TileServer:
         结果，或者永远"未找到" —— 只能重启整个应用，这显然不可接受。
 
         选择规则（顺序即正确性，改之前先读这段）：
+          ⓪ 宿主锁定（`--gaps-locked`）：**直接用** Rust 给的绝对路径，不发现、不比 mtime
           ① 本区块自己的 `output/<候选>-gaps.geojson`（候选含冲突消解，且**验归属**）
           ② 用户显式指定的 `--gaps`（只在**确定属于别的区块**时才拒）
           ③ 兜底：按 mtime 找最新的，但**只接受属于当前影像的**
@@ -650,6 +682,40 @@ class TileServer:
         坑挖错地方（交付级错误）。
         """
         with self._gaps_lock:
+            # ⓪ 宿主锁定模式：路径由 Rust 算好，这里**不做任何发现**
+            #
+            # 为什么要这个分支：Rust 侧的 `resolve_gaps` 已经把"当前区块"算准了
+            #（它知道 job、知道配置、知道迁移结果），Python 再自己扫一遍目录
+            # 只会引入第二套判据 —— 两套判据漂移时，症状是"同一个区块，
+            # 界面和报告用的是不同的结果文件"，而且没有报错。
+            #
+            # 失效自愈：文件被删 / 被替换成别人的 → 解锁，走下面的老逻辑。
+            # 不这么做的话，"删掉结果 → 重新检测"会永远读不到新结果（服务不重启）。
+            if self.gaps_locked:
+                locked = self.gaps_explicit
+                if (
+                    locked is not None
+                    and locked.exists()
+                    and gaps_owner(locked, self.source) != "foreign"
+                ):
+                    if locked != self.gaps_path:
+                        self.gaps_path = locked
+                        self._gaps_cache = None
+                        self._gaps_sig = None
+                        self._gaps_obj = None
+                        self._gaps_obj_sig = None
+                        self._pp_cache.clear()
+                        print(f"  检测结果（宿主指定）：{locked}", file=sys.stderr)
+                        sys.stderr.flush()
+                    return locked
+                self.gaps_locked = False
+                print(
+                    "  ⚠️ 宿主指定的结果文件不可用（已删除或不属于当前影像），"
+                    "改为自动发现",
+                    file=sys.stderr,
+                )
+                sys.stderr.flush()
+
             # ① 本区块自己的结果
             #
             # ⚠️ 第二道防线：`job_gaps_path` 内部已经按 `gaps_belongs_to` 筛过一遍，
@@ -1660,6 +1726,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="桌面端原型：本地瓦片 / 辅助服务")
     ap.add_argument("--source", default="", help="正射影像路径（默认自动探测）")
     ap.add_argument("--gaps", default="", help="检测结果 GeoJSON（默认自动探测 output/）")
+    ap.add_argument(
+        "--gaps-locked",
+        action="store_true",
+        help="信任 --gaps（宿主已算好当前区块）：不再自己扫目录、不比 mtime；"
+        "文件失效时自动退回自动探测",
+    )
     ap.add_argument("--host", default="127.0.0.1", help="仅监听本机（默认 127.0.0.1）")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--cache", type=int, default=512, help="瓦片内存缓存条数")
@@ -1723,7 +1795,9 @@ def main() -> int:
     # 见 TileServer._pick_gaps）；否则启动时先发现一次，之后每次 /gaps 再校验。
     gaps = Path(args.gaps) if args.gaps else discover_gaps(source)
 
-    ts = TileServer(Path(source), gaps, cache_size=args.cache)
+    ts = TileServer(
+        Path(source), gaps, cache_size=args.cache, gaps_locked=args.gaps_locked
+    )
     m = ts.meta()
     print("=" * 66, file=sys.stderr)
     print("Forest Gap Detection · 本地瓦片服务", file=sys.stderr)
@@ -1740,6 +1814,9 @@ def main() -> int:
     print(f"  检测结果  : {gaps if gaps else '（未找到，/gaps 将返回空集合）'}", file=sys.stderr)
     print("              每次 /gaps 都会重新确认是否出现了更新的结果文件"
           "（检测完不必重启服务）", file=sys.stderr)
+    if args.gaps_locked:
+        print("              模式：宿主锁定 —— 不再自动发现，文件失效时退回自动探测",
+              file=sys.stderr)
     print(f"  监听      : http://{args.host}:{args.port}", file=sys.stderr)
     print(f"  端点      : /meta  /tiles/{{z}}/{{x}}/{{y}}.png  /gaps  "
           f"/planting-points?clearance=0.5  /export", file=sys.stderr)
