@@ -56,8 +56,11 @@ export default function DetectSettings({
 }: {
   onClose: () => void
   /**
-   * 从「开始检测」进入时传入：底部出现「开始检测」按钮。
-   * 不传就是纯编辑模式（从「⋯ 更多 → 检测参数」进来），点遮罩/取消即可关闭。
+   * 从「开始检测」/ 步进器第 ③ 步进入时传入：底部出现「开始检测」按钮。
+   * 不传就是纯编辑模式（从「⋯ 更多 → 检测参数」进来），点 ✕ / 「关闭」即可关掉。
+   *
+   * 由谁决定传不传：App 的 `settingsIntent`（见 `openSettings` / `closeSettings`）。
+   * 关窗时 App 会把它复位成 `'edit'`，所以"这次带不带主按钮"不会漏到下一次。
    */
   onStart?: () => void
 }) {
@@ -300,10 +303,19 @@ export default function DetectSettings({
       <div className="ds-foot dim">
         参数会记住，下次打开沿用。改「并行进程数」不会让已算好的部分失效。
       </div>
+      {/* ⚠️ 这段说明不是废话，是"取消语义"的一部分（2026-10-24）：
+          每个控件都直接 `setDetectParam(...)` 并即时持久化，所以底部那个按钮
+          **不能叫「取消」** —— 它不会回滚任何改动，叫取消就是骗人。
+          现在按钮叫「关闭」，回滚的入口明确指向「恢复推荐值」。
+          为什么不真做回滚：参数可能正被一次运行中的检测读着，回滚会造出
+          "界面显示的参数 ≠ 这次检测实际用的参数"，比多点一次糟得多。 */}
+      <div className="ds-foot dim">
+        改动会立即生效并记住；想回到默认值点「恢复推荐值」。
+      </div>
       {onStart && (
         <div className="ds-actions">
-          <button className="btn" onClick={onClose}>
-            取消
+          <button className="btn" onClick={onClose} title="关闭（改动已生效，不需要确认）">
+            关闭
           </button>
           <button className="btn primary" onClick={onStart}>
             开始检测

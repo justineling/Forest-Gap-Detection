@@ -711,6 +711,15 @@ export default function App() {
    *
    * 暂存的那份数据必须一起丢掉：留着它的话，下次再命中弹窗会把它应用上去，
    * 表现就是"点了重新开始，结果又回来了"。
+   *
+   * ⚠️ **圈选也要一起清**（2026-10-24 与向导 B2 对齐）：
+   *    界面上有两个都叫"重新开始"的入口 —— 这个按钮、向导提交后的 B2 分支。
+   *    B2 从 2026-10-24 起就会 `setRoi(null)`：不清的话 `isStepDone('range')`
+   *    里 `hasRoi` 仍为 true，第 2 步算"已完成"，active 直接落到第 3 步，
+   *    用户看到的是"我点了重新开始，怎么直接跳第 3 步了"。
+   *    以前这里没清，于是同一个词在两个入口含义不同 —— 那是最容易被当成 bug 的。
+   *    现在两处都清：清完 gaps + roi，第 2 步一定是 active，按钮上的「第 2 步」
+   *    才是真话。
    */
   const onRestartResume = useCallback(() => {
     resumePending.current = false
@@ -718,7 +727,8 @@ export default function App() {
     setResumeAsk(null)
     setGaps([])
     setGapsError(null)
-  }, [setGaps])
+    setRoi(null)
+  }, [setGaps, setRoi])
 
   /**
    * 「换一张影像」：回到第 1 步重选 .tif。
@@ -726,20 +736,40 @@ export default function App() {
    * 为什么要这个按钮（2026-10-23 用户反馈）：以前弹窗只有"继续 / 重新开始"，
    * 想换园区的人只能先点 × 关掉弹窗，再自己去「⋯ 更多 → 更换影像」——
    * 而"关掉"等于"继续"，界面里那 1,726 块旧结果会一直留着，看着像没换成功。
-   * 这里直接把用户送到第 1 步，并顺手清空旧结果（旧结果属于上一张影像）。
+   * 这里直接把用户送到第 1 步。
+   *
+   * ## ⚠️ 这个回调**只做导航**，绝不清数据（2026-10-24 用户反馈）
+   *
+   * 用户原话：「我选择了「换一张影像」，然后在向导弹窗里点了右上角的 ×，
+   * 却发现自己已经在第 2 步了。这不符合逻辑。」
+   *
+   * 根因：以前这里顺手做了 `setGaps([])` / `setGapsError(null)`，还把
+   * `resumeAsk` / `pendingResume` / `resumePending` 一起清掉。而 `setGaps([])`
+   * 会把 store 的 `workflow.loaded` 置为 false（见 `useAppStore.setGaps`：
+   * `workflow: { ...WORKFLOW_INIT, loaded: features.length > 0 }`）——
+   * `hasResult` 变 false → 第 3 步不再算完成 → active 掉回第 2 步。
+   * 于是"点 × 取消"这个**本该什么都不做**的动作，产生了两个副作用：
+   * 结果被清空、步骤倒退。
+   *
+   * 所以现在这里只 `setWizard(...)`：向导的 × / Esc / 点遮罩都是"手滑"的高发动作，
+   * 取消必须是无操作。真正的清空发生在 `onWizardDone`（用户点了「开始使用」=
+   * 明确提交），那里才是唯一有资格改数据的地方。
    */
   const onPickNewResume = useCallback(() => {
-    resumePending.current = false
-    setPendingResume(null)
-    setResumeAsk(null)
-    setGaps([])
-    setGapsError(null)
     setWizard(appStatus ?? ({} as AppStatus))
-  }, [appStatus, setGaps])
+  }, [appStatus])
 
   const onWizardDone = useCallback(
     async (info?: { gapsProvided: boolean }) => {
       setWizard(null)
+      // 用户已经在向导里做了数据决定 → 续跑弹窗与暂存的那份结果都不再需要。
+      // ⚠️ 这一步以前是由 onPickNewResume 顺手清掉的；把那个回调改成纯导航之后，
+      //    必须在这里清 —— 否则"提交完向导"会把续跑弹窗又弹回来盖住新状态。
+      //    （三个分支下面还会各自再清一次，重复置空是幂等的，留着是为了让分支本身
+      //      读起来自洽；真正的"兜底"就是这三行。）
+      setResumeAsk(null)
+      resumePending.current = false
+      setPendingResume(null)
       const st = await getStatus()
       absorbStatus(st)
 
@@ -823,9 +853,20 @@ export default function App() {
       //    结果与范围是一起导出的，清掉 roi 只会破坏两者的对应关系。
       setRoi(null)
       skipNextLoad.current = true
+      // 这一步最容易被误解成 bug：「我只是点了开始使用，结果怎么没了？」
+      // 说清三件事：为什么清（重新开始的语义）、清了什么（界面）、没动什么（磁盘）。
+      //
+      // ⚠️ 日志要分两种情形说，否则会撒谎：B2 除了"同一张影像重选"，
+      //    还包括"换到一张从没跑过的新影像"—— 那时影像明明变了。
+      const sameImage = !!st.image && st.image === (appStatus?.image ?? null)
+      pushLog(
+        sameImage
+          ? '影像未变 → 按「重新开始」处理：界面结果已清空，磁盘文件保留'
+          : '这张影像还没有结果 → 按「重新开始」处理：界面结果已清空，磁盘文件保留',
+      )
       await probeAndLoad()
     },
-    [probeAndLoad, setGaps, setRoi, appStatus?.image],
+    [probeAndLoad, setGaps, setRoi, appStatus?.image, pushLog],
   )
 
   /**
@@ -1053,6 +1094,35 @@ export default function App() {
   }, [starting, detect.running, detectParams, roi, buildDetectParams, startDetect, pushLog])
 
   /**
+   * 打开参数窗。`intent` 决定窗底有没有「开始检测」按钮：
+   *
+   *   · `'detect'` —— 从「开始检测」那条路进来：确认完参数就能开跑；
+   *   · `'edit'`   —— 从「⋯ 更多 → 检测参数」/ 步进器第 ③ 步进来：只是调参数。
+   *
+   * ⚠️ 以前只有 `onDetect` 会设 `'detect'`，而 `onJumpStep('detect')` 直接
+   *    `setShowSettings(true)` —— 于是"点步进器第 3 步"打开的窗**没有「开始检测」按钮**
+   *    （默认 intent 是 'edit'），用户只能关掉再去找卡片按钮。同一个"我想跑检测"
+   *    的意图，从两个入口进来却是两种界面。
+   */
+  const openSettings = useCallback((intent: 'edit' | 'detect') => {
+    setSettingsIntent(intent)
+    setShowSettings(true)
+  }, [])
+
+  /**
+   * 关闭参数窗，**并且把 intent 复位成 `'edit'`**。
+   *
+   * 为什么必须复位：intent 是"这次打开是为了什么"的一次性意图，不是持久偏好。
+   * 不复位的话，用户点过一次「开始检测」再关掉，之后从「更多 → 检测参数」进来
+   * 也会看到一个「开始检测」主按钮 —— 一个只是来调参数的窗，不该带一个
+   * "马上跑 6 分钟"的主按钮。
+   */
+  const closeSettings = useCallback(() => {
+    setShowSettings(false)
+    setSettingsIntent('edit')
+  }, [])
+
+  /**
    * 点「开始检测」：**先让用户看一眼参数**，确认后才预检 + 开跑。
    *
    * 参数会记住，所以老用户只需要点一下「开始检测」（配置窗里那一个按钮），
@@ -1060,9 +1130,8 @@ export default function App() {
    */
   const onDetect = useCallback(() => {
     if (starting || detect.running) return
-    setSettingsIntent('detect')
-    setShowSettings(true)
-  }, [starting, detect.running])
+    openSettings('detect')
+  }, [starting, detect.running, openSettings])
 
   // 全局快捷键：Ctrl+Z 撤销 / Ctrl+Y(或 Ctrl+Shift+Z) 重做 / Delete 删除选中 / Esc 退出
   //
@@ -1238,7 +1307,10 @@ export default function App() {
           setDrawIntent('roi')
           break
         case 'detect':
-          setShowSettings(true)
+          // 步进器点第 ③ 步 = "我要跑检测"，所以带 'detect' 意图进去 ——
+          // 窗底要有「开始检测」，否则用户点进来发现没有按钮，只能退出去找卡片。
+          // （参数窗关闭时会复位成 'edit'，见 closeSettings。）
+          openSettings('detect')
           break
         case 'review':
           setReviewPeek((n) => n + 1)
@@ -1248,7 +1320,7 @@ export default function App() {
           break
       }
     },
-    [appStatus],
+    [appStatus, openSettings],
   )
 
 
@@ -1281,7 +1353,7 @@ export default function App() {
             onJumpStep={onJumpStep}
             onChangeData={() => setWizard(appStatus ?? ({} as AppStatus))}
             onReloadGaps={() => void loadGaps()}
-            onOpenSettings={() => setShowSettings(true)}
+            onOpenSettings={() => openSettings('edit')}
             onBuildDerived={() => setShowDerived(true)}
             onAddGap={() => setDrawIntent('add_gap')}
             onBoxSelect={() => setDrawIntent('box_select')}
@@ -1302,11 +1374,11 @@ export default function App() {
         {showSettings && (
           <ErrorBoundary area="检测参数">
             <DetectSettings
-              onClose={() => setShowSettings(false)}
+              onClose={closeSettings}
               onStart={
                 settingsIntent === 'detect'
                   ? () => {
-                      setShowSettings(false)
+                      closeSettings()
                       void doDetect()
                     }
                   : undefined
@@ -1394,12 +1466,31 @@ export default function App() {
 
       {/* 首次使用引导：盖在最上层，选好影像后自动消失 */}
       {wizard && (
-        <WelcomeWizard status={wizard} onDone={onWizardDone} onCancel={() => setWizard(null)} />
+        <WelcomeWizard
+          status={wizard}
+          onDone={onWizardDone}
+          onCancel={() => {
+            setWizard(null)
+            // 取消要有反馈（2026-10-24 用户反馈）：以前点了 × 界面悄悄回到原样，
+            // 用户不知道自己刚才那个动作到底改了什么 —— 尤其是他从
+            // 「发现上次的检测结果」弹窗点「换一张影像」进来又反悔的时候。
+            // 一行日志是"什么都没变"的唯一证据（而且它出现在状态栏里，看得见）。
+            pushLog('已取消更换影像：界面与结果保持不变')
+          }}
+        />
       )}
 
       {/* 启动时读到了上次的结果：让用户选「继续复核」还是「重新开始」。
-          放在向导旁边（两者不会同时出现：向导是"还没有影像"，这里是"已有结果"）。 */}
-      {resumeAsk && (
+          放在向导旁边。
+          ⚠️ 条件是 `resumeAsk && !wizard`：向导打开期间**先把续跑弹窗藏起来**，
+             向导关掉后它自然又出现（`resumeAsk` 一直没被清）。
+             这是"取消 = 撤销我刚才在弹窗里做的选择，所以回到那个选择"的
+             自然结果 —— 不需要额外的 flag，也不需要记住"弹窗是不是还该在"。
+             反过来说：如果这里不加 `!wizard`，用户从弹窗点「换一张影像」后
+             两个窗会叠在一起 —— 续跑弹窗是 `.help-mask`（z-index 1050），
+             向导是 `.wizard-mask`（1000），弹窗会盖在向导上面，
+             用户看到的就是"我点了换影像，弹窗还在，向导根本打不开"。 */}
+      {resumeAsk && !wizard && (
         <ErrorBoundary area="继续上次结果">
           <ResumeDialog
             count={resumeAsk.count}

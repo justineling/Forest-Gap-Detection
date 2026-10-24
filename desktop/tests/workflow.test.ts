@@ -311,6 +311,52 @@ console.log('\nH. ★ 向导里重新开始（无 ROI / 无结果）→ 第 2 �
   )
 }
 
+// ---------- I. ★ 导出成功之后第 ⑤ 步必须真的完成 ----------
+console.log('\nI. ★ 导出成功（exported=true）→ 第 ⑤ 步 done，卡片换成「打开输出文件夹」')
+{
+  // 背景（2026-10-25）：`workflow.exported` 曾经**从来没有上游** ——
+  // ExportDialog 导出成功后不调 `markWorkflow({ exported: true })`。
+  // 于是第 ⑤ 步永远不算完成、卡片永远停在「导出交付包」，
+  // 而 `isStepDone('review')` 里那条 `|| s.exported` 成了走不到的死分支。
+  // 这组断言的作用就是：**谁把那一句删掉，这里就会红**。
+
+  // 对照组：复核完、还没导出 —— 这是用户点「开始导出」之前的状态
+  const beforeExport: WorkflowInput = { ...withGaps, reviewed: true, exported: false }
+  check(
+    statusOf(beforeExport).export !== 'done',
+    '★ 没导出时第 ⑤ 步不是 done（对照：漏了置位这里就红）',
+    JSON.stringify(statusOf(beforeExport)),
+  )
+  check(
+    nextAction(beforeExport).kind === 'export',
+    '没导出 → 主按钮还是「导出交付包」',
+    nextAction(beforeExport).kind,
+  )
+  check(nextAction(beforeExport).finished === false, '没导出 → finished = false')
+
+  // 实验组：导出成功（后端确认文件落盘 → markWorkflow({ exported: true })）
+  const afterExport: WorkflowInput = { ...beforeExport, exported: true }
+  const st = statusOf(afterExport)
+  check(st.export === 'done', '★ 导出成功 → 第 ⑤ 步 done', JSON.stringify(st))
+  check(
+    isStepDone('export', afterExport) === true && isStepDone('export', beforeExport) === false,
+    '★ isStepDone(export) 只由 exported 这一位决定',
+  )
+
+  const na = nextAction(afterExport)
+  check(na.finished === true, '★ 导出成功 → finished = true（不再要求再导一次）', String(na.finished))
+  check(na.kind === 'openOutput', '★ 导出成功 → 主按钮变成「打开输出文件夹」', na.kind)
+  check(na.label.includes('打开'), '按钮文案说人话：打开输出文件夹', na.label)
+
+  // 交叉验证：直接导出的用户不该被叫回去"复核"（`isStepDone('review')` 的 || exported）
+  const exportedNoReview: WorkflowInput = { ...withGaps, reviewed: false, edited: false, exported: true }
+  check(
+    statusOf(exportedNoReview).review === 'done',
+    '★ 直接导出（没点「复核完成」）→ 第 ④ 步也算 done',
+    JSON.stringify(statusOf(exportedNoReview)),
+  )
+}
+
 // ---------- 汇总 ----------
 console.log('')
 if (failures === 0) {

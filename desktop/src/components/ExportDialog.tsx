@@ -30,6 +30,7 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const roi = useAppStore((s) => s.roi)
   const outputDir = useAppStore((s) => s.outputDir)
   const setOutputDir = useAppStore((s) => s.setOutputDir)
+  const markWorkflow = useAppStore((s) => s.markWorkflow)
   const pushLog = useAppStore((s) => s.pushLog)
 
   const [dir, setDir] = useState(outputDir)
@@ -97,6 +98,17 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
       })
       if (out.ok === false) throw new Error(out.error || '后端返回失败')
       setRes(out)
+      // ★ 第 ⑤ 步的完成位就在这里置上 —— 而且**只能**在这里。
+      //
+      // 为什么不能放在"点了导出按钮"那一刻：导出会失败（目录没权限、磁盘满、
+      // 后端没起来），失败的导出不能算"已交付"。所以它必须待在
+      // `out.ok !== false` 之后 —— 也就是后端确认文件已经落盘之后。
+      //
+      // 为什么必须有这一句：`workflow.exported` 以前**从来没有上游**，
+      // 于是第 ⑤ 步永远不算完成、卡片永远停在「导出交付包」，
+      // 而 `lib/workflow.ts` 里 `isStepDone('review')` 的 `|| exported`
+      // 也是一条永远走不到的死分支。判定逻辑本身是对的，缺的是喂值。
+      markWorkflow({ exported: true })
       pushLog(`导出完成 → ${out.outdir}（${out.files.length} 个文件）`)
       for (const f of out.files) pushLog(`  · ${baseName(f)}`)
       for (const n of out.notes ?? []) pushLog(`  ⚠️ ${n}`)
