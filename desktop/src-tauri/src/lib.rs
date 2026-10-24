@@ -43,6 +43,45 @@ static ACTIVE_PORT: AtomicU16 = AtomicU16::new(BACKEND_PORT);
 /// "还没有选择正射影像"的哨兵错误。前端据此显示引导卡片而不是报错。
 const NEED_IMAGE: &str = "NEED_IMAGE";
 
+/// 启动阶段"用户该知道的事"（迁移结果 / 配置损坏 / 缓存孤儿 / 归属异常）。
+///
+/// 为什么要有这个全局而不是只写 `app.log`：
+/// release 是 `windows_subsystem = "windows"`，**没有控制台**，`app.log` 又要用户
+/// 自己去找。而这里攒的都是"数据可能不对"的提示 —— 只写日志等于没提示。
+/// 前端 `get_status` 取走一份，在界面上挂一条可关闭的横幅。
+///
+/// 用 `Mutex<Vec<String>>` 而不是事件：这些事都发生在 `setup()` 里，
+/// 前端那时还没起来（`emit` 会丢），攒着等前端来问最稳。
+static STARTUP_NOTICES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// 记一条"用户该知道的事"：**同时**写日志 + 攒进启动提示。
+///
+/// 与 `log_line` 的分工：`log_line` 是排障用（技术细节、堆栈），
+/// `note` 是给用户看的（一句人话 + 该做什么），所以两个都调。
+fn note(msg: &str) {
+    log_line(msg);
+    let mut g = STARTUP_NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+    // 同一句只留一次：迁移在每次启动都会跑，重复的提示会把横幅堆满
+    if !g.iter().any(|m| m == msg) {
+        g.push(msg.to_string());
+    }
+}
+
+/// 取一份启动提示（**不清空**）。
+///
+/// 为什么不清空（一开始是"取走即清空"，实测会丢消息）：
+/// `get_status` 有三处调用方（启动 / 向导完成 / 切区块），其中向导那条路
+/// 会**忽略** `set_data_paths` 的返回值 —— 于是"你指定的结果文件可能不属于
+/// 当前影像"这条提示被取走又丢掉，用户永远看不到。
+///
+/// 现在改成"一直给"，由前端按内容去重（`seenNotices`）：
+/// 关掉横幅之后再调 `get_status` 也不会重新弹出来，而漏看的那一次还能补上。
+/// 列表本身是有界的 —— `note()` 对同一句只存一次。
+fn current_notices() -> Vec<String> {
+    let g = STARTUP_NOTICES.lock().unwrap_or_else(|e| e.into_inner());
+    g.clone()
+}
+
 #[derive(Default)]
 struct Services {
     tile: Mutex<Option<Child>>,
@@ -759,50 +798,149 @@ fn legacy_config_path() -> Option<PathBuf> {
     Some(PathBuf::from(local).join("fgd").join("settings.json"))
 }
 
-fn config_path() -> Option<PathBuf> {
-    config_target()
-}
-
 fn load_config() -> AppConfig {
     // 1) 目标位置优先
     if let Some(p) = config_target() {
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            let mut cfg: AppConfig = serde_json::from_str(&text).unwrap_or_default();
-            // 自愈：gaps 指向的位置失效、但同名文件在数据根下 → 改成新路径并写回。
-            // （数据目录搬迁后 settings 里的绝对路径会过期，见 rebase_to_data_root 注释）
-            if let Some(g) = cfg.gaps.clone() {
-                if !Path::new(&g).exists() {
-                    if let Some(fixed) = rebase_to_data_root(&g) {
-                        log_line(&format!("结果路径已过期，自动修正：{g} → {fixed}"));
-                        cfg.gaps = Some(fixed);
-                        let _ = save_config(&cfg);
+        if p.exists() {
+            if let Some(mut cfg) = read_config_file(&p) {
+                // 自愈：gaps 指向的位置失效、但同名文件在数据根下 → 改成新路径并写回。
+                // （数据目录搬迁后 settings 里的绝对路径会过期，见 rebase_to_data_root 注释）
+                if let Some(g) = cfg.gaps.clone() {
+                    if !Path::new(&g).exists() {
+                        if let Some(fixed) = rebase_to_data_root(&g) {
+                            log_line(&format!("结果路径已过期，自动修正：{g} → {fixed}"));
+                            cfg.gaps = Some(fixed);
+                            let _ = save_config(&cfg);
+                        }
                     }
                 }
+                return cfg;
             }
-            return cfg;
+            // 文件在、但读不出来（已改名备份并提示过）→ 直接用默认值。
+            // ⚠️ 这里**不能**再往下走"读老位置"：那会把更旧的配置又搬回来，
+            //    用户会看到"影像路径变成上一次的了"，比空着更难理解。
+            return AppConfig::default();
         }
     }
     // 2) 目标不存在 → 读老位置，并**顺手迁移过去**（一次就够，之后走上面那条）
     let Some(old) = legacy_config_path() else {
         return AppConfig::default();
     };
-    let Ok(text) = std::fs::read_to_string(&old) else {
+    if !old.exists() {
         return AppConfig::default();
-    };
-    let cfg: AppConfig = serde_json::from_str(&text).unwrap_or_default();
-    // 迁移失败不影响本次使用（下次启动还会再试）
-    let _ = save_config(&cfg);
-    cfg
+    }
+    match read_config_file(&old) {
+        Some(cfg) => {
+            // 迁移失败不影响本次使用（下次启动还会再试）
+            let _ = save_config(&cfg);
+            cfg
+        }
+        None => AppConfig::default(),
+    }
 }
 
+/// 读一份配置文件。读不到 / JSON 坏了都返回 `None`（坏的那份会被改名备份）。
+///
+/// 抽成独立函数是为了能在临时目录里单测"坏配置不会静默重置" ——
+/// 这是最容易写错、又最容易被忽略的一条（用户只会觉得"软件老让我重选影像"）。
+fn read_config_file(p: &Path) -> Option<AppConfig> {
+    let text = std::fs::read_to_string(p).ok()?;
+    match serde_json::from_str::<AppConfig>(&text) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            // ⚠️ 解析失败**绝不能**静默 `unwrap_or_default()`。
+            //    以前就是这样：写配置时断电留下半个 JSON → 每次启动都
+            //    "回到出厂状态"（影像/结果路径全丢），用户只会觉得
+            //    "这软件怎么老让我重选影像"。而**原文件还在那儿**，
+            //    谁也想不到它是坏在半个大括号上。
+            //    现在把它改名成 `.bad-<时间戳>`（不删，留证据），
+            //    并在界面挂一条提示告诉用户发生了什么。
+            let bad = bad_config_path(p);
+            let moved = std::fs::rename(p, &bad).is_ok();
+            note(&format!(
+                "配置文件损坏（{e}），已{}；本次使用默认设置。{}",
+                if moved {
+                    format!("改名保留为 {}", file_label(&bad))
+                } else {
+                    "尝试备份但失败（下次启动会再试）".to_string()
+                },
+                if moved {
+                    "如果需要恢复，请把它改回 settings.json 并修掉 JSON 错误。"
+                } else {
+                    "请检查该文件的写入权限。"
+                }
+            ));
+            None
+        }
+    }
+}
+
+/// 坏配置的备份名：`settings.json.bad-<unix 秒>`。
+///
+/// 为什么带时间戳：用户可能连续坏几次，覆盖掉上一份就再也查不出规律了。
+fn bad_config_path(p: &Path) -> PathBuf {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "settings.json".to_string());
+    p.with_file_name(format!("{name}.bad-{secs}"))
+}
+
+/// 写配置：**先写临时文件、fsync、再原子改名**。
+///
+/// 为什么不能直接 `std::fs::write`：写到一半断电 / 被杀软拦 / 磁盘满，
+/// 留下的就是**半个 JSON**。而 `load_config` 一旦解析失败就会退回默认值 ——
+/// 用户的影像与结果路径被静默抹掉（"这软件怎么老让我重选影像"）。
+///
+/// 三个细节都不能省：
+///   1. 临时文件必须与目标**同目录**：跨盘/跨卷的 rename 不是原子的（甚至直接失败）。
+///   2. 必须 `sync_all()`：否则 rename 可能先于数据落盘，断电后得到"名字对、内容空"。
+///   3. 失败要清掉临时文件：否则目录里会攒一堆 `settings.json.tmp-*`。
 fn save_config(cfg: &AppConfig) -> Result<(), String> {
     let p = config_target().ok_or("拿不到可写的配置目录")?;
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败：{e}"))?;
     }
     let text = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化失败：{e}"))?;
-    std::fs::write(&p, text).map_err(|e| format!("写配置失败：{e}"))?;
-    Ok(())
+    write_config_atomic(&p, &text)
+}
+
+/// 原子写：临时文件 → fsync → rename 覆盖。
+///
+/// 三个细节都不能省：
+///   1. 临时文件必须与目标**同目录**：跨盘/跨卷的 rename 不是原子的（甚至直接失败）。
+///   2. 必须 `sync_all()`：否则 rename 可能先于数据落盘，断电后得到"名字对、内容空"。
+///   3. 失败要清掉临时文件：否则目录里会攒一堆 `settings.json.tmp-*`。
+///
+/// 抽成独立函数是为了能直接单测"写完之后目录里没有残留临时文件"——
+/// 这条只有在真文件系统上才测得出（`std::fs::write` 也"能写对"，区别在断电时）。
+fn write_config_atomic(p: &Path, text: &str) -> Result<(), String> {
+    let tmp = p.with_file_name(format!(
+        "{}.tmp-{}",
+        p.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "settings.json".to_string()),
+        std::process::id()
+    ));
+    let write = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        Ok(())
+    })();
+    if let Err(e) = write {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("写配置失败：{e}"));
+    }
+    // Windows 上 `std::fs::rename` 走 MoveFileEx(MOVEFILE_REPLACE_EXISTING)，可以覆盖
+    std::fs::rename(&tmp, p).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("保存配置失败（原文件未动）：{e}")
+    })
 }
 
 /// 前端启动时问"我现在该显示什么"：要不要引导用户选影像？
@@ -825,6 +963,11 @@ struct AppStatus {
     data_root: String,
     /// true = 还没有可用影像，前端应显示「选择影像」引导
     needs_setup: bool,
+    /// 启动阶段"用户该知道的事"（迁移结果 / 配置损坏 / 缓存合并 / 归属异常）。
+    ///
+    /// 为什么放在状态里而不是发事件：这些事发生在 `setup()`，那时前端还没起来，
+    /// `emit` 会丢。攒在 `STARTUP_NOTICES` 里等前端来问，取走即清空（一次性）。
+    notices: Vec<String>,
 }
 
 /// 找数据的基准目录：开发态是仓库根（`drone data/`、`output/` 都在这），
@@ -1018,14 +1161,43 @@ fn same_image_name(recorded: &str, image: &Path) -> bool {
 /// 这份结果文件是不是这张影像跑出来的。
 ///
 /// 判据强度（依次退化）：
-///   1. `inputs_snapshot.image.path`（完整路径）—— 最可靠
-///   2. `source_image`（文件名）—— 老结果没有快照时用
-///   3. 都读不出来 → **判为"不是"**（保守方向）：宁可多起一个 `-2` 名字，
+///   1. `inputs_snapshot.image.path`（完整路径）**且那个路径还在** → 决定性
+///   2. 记录的路径已经不存在（影像被挪走/改名/换盘）→ 退回文件名
+///   3. `source_image`（文件名）—— 老结果没有快照时用
+///   4. 都读不出来 → **判为"不是"**（保守方向）：宁可多起一个 `-2` 名字，
 ///      也不要把别人的结果当成自己的 —— 反过来会让用户覆盖掉另一个区块的成果。
+///
+/// ⚠️ 第 2 条（2026-10-24 修）为什么必须存在：
+///    以前只有第 1 条，于是用户把影像从 `D:/A/x.tif` 挪到 `E:/B/x.tif` 后，
+///    记录里的旧路径 canonicalize 失败 → 判"不同" → **旧结果 + 复核编辑全成孤儿**，
+///    6 分钟的检测白跑，而且界面上只表现为"没有空地"。
+///    影像挪走时，"同名"是唯一还能拿到的证据，用它比"什么都没有"强得多。
+///
+/// ⚠️ 为什么不干脆"job 名相同即判 own"（审计给的建议）：那会把本功能赖以存在的
+///    同名双区块场景（`区块A/WGR17-002.tif` 与 `区块B/WGR17-002.tif`）直接判穿 ——
+///    B 会认领 A 的结果，A 的影像上画 B 的空地。只在**记录路径已失效**时才退到
+///    文件名，两种场景才能同时成立。
 fn gaps_belongs_to(p: &Path, image: &Path) -> bool {
     if let Some(rec) = gaps_source_path(p) {
-        if !rec.trim().is_empty() {
-            return same_file_path(Path::new(&rec), image);
+        let rec = rec.trim().to_string();
+        if !rec.is_empty() {
+            let recp = Path::new(&rec);
+            if recp.exists() {
+                // 记录里的影像还在原处 → 完整路径是决定性的
+                return same_file_path(recp, image);
+            }
+            // 影像已被移动 → 退到文件名（先看结果里记的 source_image，
+            // 它缺失时再看记录路径自己的文件名）
+            return match gaps_source_image(p) {
+                Some(name) if !name.trim().is_empty() => same_image_name(&name, image),
+                _ => same_image_name(
+                    &recp
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    image,
+                ),
+            };
         }
     }
     match gaps_source_image(p) {
@@ -1056,6 +1228,77 @@ fn job_mask_path(base: &Path, job: &str) -> PathBuf {
     output_dir(base).join(format!("{job}-forest-mask.geojson"))
 }
 
+/// 高度图的**归属元数据**：`output/<job>-chm.json`。
+///
+/// 由 `scripts/build_chm.py` 的 `write_chm_meta` 在写出 tif 之后补上
+/// （文件名规则必须与它的 `chm_meta_path` 逐字一致：`<tif>.with_suffix(".json")`）。
+fn job_chm_meta_path(base: &Path, job: &str) -> PathBuf {
+    output_dir(base).join(format!("{job}-chm.json"))
+}
+
+/// 这个区块名上的高度图**是不是这张影像的**（见 [`chm_owner_at`]）。
+fn chm_owner(base: &Path, job: &str, image: &Path) -> Option<bool> {
+    chm_owner_at(&job_chm_path(base, job), image)
+}
+
+/// 某份高度图（任意位置）是不是这张影像的 —— 读它旁边的 `<同名>.json`。
+///
+/// 返回三态：
+///   · `Some(true)`  —— 元数据说就是这张
+///   · `Some(false)` —— 元数据说是别的影像（**占用 / 不能用**）
+///   · `None`        —— 没有元数据 / 读不出来（老产物，判不出）
+///
+/// 为什么必须有它（§16.1 第 2 条的残留，2026-10-24 堵）：
+/// 高度图以前只靠文件名判断归属，而"只有高度图、还没跑过检测"时磁盘上
+/// **没有任何占用证据** → 两张同名影像 A/B 会算出同一个区块名 →
+/// A 用上 B 的树高：高程整体偏移、结果看着正常、全程不报错。
+///
+/// 参数是"高度图路径"而不是 (base, job)，因为预检会在影像同目录里也找
+/// `<job>-chm.tif`（用户自己的数据布局），那里的元数据同样要认。
+///
+/// 退化规则与结果文件一致：记录里的影像路径还在 → 比完整路径；
+/// 已被挪走 → 退回文件名（否则"影像挪个目录"就会让高度图失效）。
+fn chm_owner_at(chm: &Path, image: &Path) -> Option<bool> {
+    let rec = chm_meta_image(chm)?;
+    let recp = Path::new(&rec);
+    if recp.exists() {
+        return Some(same_file_path(recp, image));
+    }
+    // 记录里的影像已被挪走（或元数据里只有文件名）→ 退到文件名
+    let name = recp
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| rec.to_string());
+    if name.trim().is_empty() {
+        return None;
+    }
+    Some(same_image_name(&name, image))
+}
+
+/// 读某份高度图元数据里记的**影像路径**（`<同名>.json` 的 `image_path`）。
+///
+/// 拿不到时退回 `source_image`（只有文件名的老格式）。两处用途：
+///   · `chm_owner_at` —— 判归属；
+///   · 迁移时定区块名 —— "只生成过高度图、没有结果、也没配影像"的现场，
+///     这份元数据是唯一能说明"这张高度图属于谁"的线索。
+fn chm_meta_image(chm: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(chm.with_extension("json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let p = v
+        .get("image_path")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !p.is_empty() {
+        return Some(p);
+    }
+    v.get("source_image")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// 瓦片缓存目录：`output/caches/<job>/`（含 `tiles/` 与 `grid-survey.json`）
 fn job_cache_dir(base: &Path, job: &str) -> PathBuf {
     output_dir(base).join(CACHE_DIR).join(job)
@@ -1066,7 +1309,9 @@ fn job_cache_dir(base: &Path, job: &str) -> PathBuf {
 /// 判据（任一成立就算"可能被别的区块占了"）：
 ///   ① `output/<job>-gaps.geojson` 存在，且里面记的影像**不是**这张
 ///      （属于这张 → 名字就是它的，直接算空着）；
-///   ② `output/caches/<job>/` 存在 —— **这个区块名上真的跑过检测**。
+///   ② `output/caches/<job>/` 存在 —— **这个区块名上真的跑过检测**；
+///   ③ `output/<job>-chm.tif` 存在，且它的**归属元数据说属于别的影像**
+///      （2026-10-24 新增；`<job>-chm.json` 由 `build_chm.py` 写出）。
 ///
 /// 为什么 ② 必须算占用：瓦片缓存里**没有任何影像元数据**，判不出归属。
 /// 实测过的路径是 —— A/B 两张同名影像 → 先跑 B 拿到 `wgr17-002`（于是有了
@@ -1076,15 +1321,16 @@ fn job_cache_dir(base: &Path, job: &str) -> PathBuf {
 /// 判不出来就按**保守方向**处理：往后试 `-2`。宁可多一个 `-2`（缓存重算一次），
 /// 也不能让 B 的树高跑到 A 上（那是要重跑 6 分钟才发现错的错）。
 ///
-/// ⚠️ 为什么不把"只有 `<job>-chm.tif`"也算占用（看似更保守，实则会把主流程打断）：
-///    `chm.tif` 由「生成高度图」写出，而**它也走这个函数取名**。若"存在高度图"
-///    就算占用，则"生成高度图 → 检测"会变成：生成时拿到 `a`（当时还没有 chm），
-///    检测时看到 `a-chm.tif` → 改拿 `a-2` → 找不到 `a-2-chm.tif` → 提示"缺高度图"
-///    → 用户再生成一次（这次写 `a-2-chm.tif`）→ 检测又看到 `a-2-chm.tif` → 拿 `a-3`…
-///    **无限循环，且永远用不上自己刚生成的高度图**。
-///    高度图没有归属元数据，但"生成它的人就是当前选中的影像"这一点在单机流程里
-///    是成立的；真需要严格归属时，应该给高度图补元数据（例如把 `inputs_snapshot`
-///    写进 chm 或旁边放一个 sidecar），而不是靠文件名猜。
+/// ③ 补的正是"**只生成过高度图、没跑过检测**"这个缺口：那时既没有结果文件、
+/// 也没有缓存目录，②③ 之外的判据全都看不到证据。以前只能靠"存在 chm 就算占用"
+/// 硬扛 —— 而那会让"生成高度图 → 检测"无限换名（见下），所以当时刻意没做，
+/// 留下了这个洞。现在高度图自带归属元数据，可以只判"**别人的**才算占用"：
+/// 自己刚生成的那张（元数据指向自己）→ 空着，不会换名。
+///
+/// ⚠️ 没有元数据的老高度图（升级前生成 / 迁移过来的）→ 判**空着**。
+///    这条不能反过来：`migration_completes_half_done_migration` 要求
+///    "迁移后 `job_id_for_output` 仍算出同一个区块名"，否则刚迁好的
+///    `<job>-chm.tif` 会立刻被算成别人的，用户白等 42 秒重算。
 fn job_slot_is_free(base: &Path, job: &str, image: &Path) -> bool {
     let gaps = job_gaps_path(base, job);
     if gaps.exists() {
@@ -1092,7 +1338,35 @@ fn job_slot_is_free(base: &Path, job: &str, image: &Path) -> bool {
         return gaps_belongs_to(&gaps, image);
     }
     // 结果文件不在，但这个区块名上跑过检测 → 缓存是别人的
-    !job_cache_dir(base, job).exists()
+    if job_cache_dir(base, job).exists() {
+        return false;
+    }
+    // 只有高度图 → 看它自己的归属元数据（没有元数据 = 判不出 = 按空着处理）
+    if job_chm_path(base, job).exists() {
+        if let Some(mine) = chm_owner(base, job, image) {
+            return mine;
+        }
+    }
+    true
+}
+
+/// 这个区块的高度图**能不能给这张影像用**。
+///
+/// 三种情况：文件不在 → 不能用；元数据说是别人的 → 不能用（**这是关键**：
+/// 拿别人的树高算高程，结果看着正常、数字全错）；没有元数据 → 用（老产物，
+/// 与 `job_slot_is_free` 的退化规则保持一致，否则老用户一升级就"缺高度图"）。
+///
+/// 调用方在拿到 `None` 且文件确实存在时，应该给用户一句提示 ——
+/// 否则界面只会显示"缺高度图"，用户会以为文件被删了。
+fn usable_chm(base: &Path, job: &str, image: &Path) -> Option<PathBuf> {
+    let p = job_chm_path(base, job);
+    if !p.is_file() {
+        return None;
+    }
+    match chm_owner(base, job, image) {
+        Some(false) => None,
+        _ => Some(p),
+    }
 }
 
 /// 算出这张影像**该用**的 job 名，撞名时自动加 `-2`/`-3`…
@@ -1131,12 +1405,14 @@ fn job_id_for_output(base: &Path, image: &Path) -> Result<String, String> {
 ///
 /// 三件事，**只 rename、绝不删除任何文件**：
 ///   1. `output/jobs` → `output/caches`（语义更准：里面是瓦片缓存与网格勘察，
-///      不是"任务"）。两个都在时**什么都不动**，只记一条警告 ——
-///      那说明用户自己拷过一份，替他决定删哪个太危险。
-///   2. 老结果采纳：`output/wgr17-desktop-gaps.geojson` → `output/<job>-gaps.geojson`。
+///      不是"任务"）。两个都在时**按区块合并**：`caches/` 里没有的子目录搬过去，
+///      同名的两边都留着 —— 以前是"什么都不动"，于是 `jobs/` 里的瓦片永远成孤儿，
+///      切到那些区块时全量重算（只损时间，但用户完全不知道为什么突然变慢）。
+///   2. 老结果采纳：**不再只认一个历史名**。凡是 `output/*-gaps.geojson` 的
+///      文件名前缀与它自己记的 `source_image` 算出的区块名不一致，都按内容改名。
 ///      job 由结果里的 `source_image` 算出（不依赖当前配置），所以升级后
 ///      第一次启动就能"东西还在"，哪怕用户这次还没选影像。
-///   3. 与老结果配套的产物一起改名：`caches/wgr17-desktop`、`output/chm.tif`、
+///   3. 与老结果配套的产物一起改名：`caches/<老名>`、`output/chm.tif`、
 ///      `output/forest-mask*.geojson`。
 ///
 /// 每一步都单独判断、单独记日志、单独失败：某一步失败不影响其它步
@@ -1147,7 +1423,7 @@ fn job_id_for_output(base: &Path, image: &Path) -> Result<String, String> {
 ///    chm 改名失败的用户，高度图会**永远**留在 `chm.tif` 上；而预检刻意不回落
 ///    数据根的 `chm.tif`，最终导致检测静默退化成纯 RGB（详见函数体内注释）。
 ///
-/// 返回逐条说明（调用方写进 app.log）。抽成 `base` 参数的函数是为了能在
+/// 返回逐条说明（调用方写进 app.log + 界面横幅）。抽成 `base` 参数的函数是为了能在
 /// 临时目录里单测 —— 这个函数动的是用户数据，必须有测试钉住"它不删东西"。
 // 只在测试里用（启动路径带 hint 调用 `migrate_output_layout_with_hint`）
 #[cfg_attr(not(test), allow(dead_code))]
@@ -1165,31 +1441,12 @@ fn migrate_output_layout(base: &Path) -> Vec<String> {
 fn migrate_output_layout_with_hint(base: &Path, image_hint: Option<&Path>) -> Vec<String> {
     let mut notes: Vec<String> = Vec::new();
     let out = output_dir(base);
-
-    // ---- 1. jobs → caches ----
-    let legacy_cache = out.join(LEGACY_CACHE_DIR);
     let new_cache = out.join(CACHE_DIR);
-    if legacy_cache.is_dir() {
-        if !new_cache.exists() {
-            match std::fs::rename(&legacy_cache, &new_cache) {
-                Ok(()) => notes.push(format!(
-                    "缓存目录已改名：{LEGACY_CACHE_DIR} → {CACHE_DIR}"
-                )),
-                Err(e) => notes.push(format!(
-                    "缓存目录改名失败（不影响使用，下次启动再试）：{e}"
-                )),
-            }
-        } else {
-            // 两个都在：**不动任何东西**。用户可能自己拷过一份，
-            // 替他在两份缓存里选一份删掉，代价可能是几十分钟的重算。
-            notes.push(format!(
-                "警告：{OUTPUT_DIR}/{LEGACY_CACHE_DIR} 与 {OUTPUT_DIR}/{CACHE_DIR} 同时存在，\
-                 未做任何移动。确认 {OUTPUT_DIR}/{CACHE_DIR} 内容完整后可自行删除旧目录"
-            ));
-        }
-    }
 
-    // ---- 2. 老结果采纳 ----
+    // ---- 1. jobs → caches（两个都在时按区块合并，不留孤儿缓存）----
+    migrate_cache_root(&out, &mut notes);
+
+    // ---- 2. 老结果采纳（按内容判定，不再维护"历史名单"）----
     //
     // ⚠️ 这一步**不再 early-return**。老版本是"没有 `wgr17-desktop-gaps.geojson`
     //    就直接 return notes"，于是第 3 步的高度图 / 掩膜 / 缓存改名永远执行不到：
@@ -1198,60 +1455,27 @@ fn migrate_output_layout_with_hint(base: &Path, image_hint: Option<&Path>) -> Ve
     //    而预检刻意不再回落数据根的 `output/chm.tif`，后果是：预检只 warn 不拦 →
     //    用户照常检测 → sidecar 收到空 `chm_path` → **纯 RGB**，水体与低矮植被
     //    大量误判，全程没有任何报错。详见第 3 步的注释。
-    let legacy_gaps = out.join(format!("{LEGACY_JOB}-gaps.geojson"));
-    // 区块名的来源（按可靠度排序）：① 老结果里的 source_image ② 提示影像
-    // ③ 磁盘上唯一的那份区块结果（"改了一半"的现场靠它补上）
-    let mut job: Option<String> = None;
-    if legacy_gaps.is_file() {
-        // job 从结果里记的 `source_image` 算：不依赖 settings.json，
-        // 所以"用户先升级、再选影像"这个顺序也能保住老结果。
-        match gaps_source_image(&legacy_gaps) {
-            Some(name) if !name.trim().is_empty() => {
-                let j = job_id_for(Path::new(name.trim()));
-                let target = job_gaps_path(base, &j);
-                if target.exists() {
-                    // 已经采纳过（或者这张影像自己已经有一份更新的结果）→ 什么都不做。
-                    // ⚠️ 绝不能覆盖：那份才是用户最近跑的。
-                    //    但 **job 仍然要记下来** —— 否则配套产物（chm/掩膜/缓存）
-                    //    会因为"老结果还在"而永远迁不过去。
-                    notes.push(format!(
-                        "{OUTPUT_DIR}/{} 已存在，老结果 {} 保持原样（不覆盖）",
-                        file_label(&target),
-                        file_label(&legacy_gaps),
-                    ));
-                } else {
-                    match std::fs::rename(&legacy_gaps, &target) {
-                        Ok(()) => notes
-                            .push(format!("老结果已按区块改名：{LEGACY_JOB}-gaps → {j}-gaps")),
-                        Err(e) => notes.push(format!("老结果改名失败（原文件未动）：{e}")),
-                    }
-                }
-                job = Some(j);
-            }
-            _ => notes.push(format!(
-                "老结果 {LEGACY_JOB}-gaps.geojson 里读不出 source_image，\
-                 保持原文件名不动（请手动改名为 <影像名>-gaps.geojson）"
-            )),
-        }
-    }
-    if job.is_none() {
-        job = match image_hint {
+    let adopted = adopt_legacy_results(base, &mut notes);
+
+    // 配套产物的归属（按可靠度）：① 恰好采纳了**一个**老结果 → 就是它
+    // ② 没有老结果 → settings 里记的影像 ③ 磁盘上唯一那份区块结果
+    // ④ 采纳了多份 → **不猜**：chm.tif / forest-mask* 是单区块时代的产物，
+    //    多区块下分不清属于谁，猜错就是"拿别人的树高算这张影像的高程"。
+    let companion_job: Option<String> = if adopted.len() == 1 {
+        Some(adopted[0].1.clone())
+    } else if adopted.is_empty() {
+        match image_hint {
             Some(p) if !p.as_os_str().is_empty() => Some(job_id_for(p)),
-            _ => job_from_existing_results(&out),
-        };
-    }
-    let Some(job) = job else {
-        // 一点线索都没有（没老结果、没配影像、磁盘上也没有任何区块结果）：
-        // 配套产物不能瞎猜归属 —— 猜错就是"拿别人的树高算这张影像的高程"。
-        // 但要让用户知道还有东西没迁，而不是让它静默留在旧名字上。
-        if out.join("chm.tif").is_file() {
-            notes.push(format!(
-                "{OUTPUT_DIR}/chm.tif 找不到归属的区块，暂不改名\
-                 （在界面里选一次影像，下次启动会自动改名；\
-                 也可以直接点「生成高度图」按区块重算）"
-            ));
+            // 老高度图自带归属元数据（`output/chm.json`）→ 直接用它定区块名。
+            // 这比"磁盘上唯一那份区块结果"更可靠：**它是这份高度图自己说的**，
+            // 而 `job_from_existing_results` 只能靠"只有一份"来推断。
+            // 覆盖的现场：只生成过高度图、没有结果、配置里也没影像。
+            _ => chm_meta_image(&out.join("chm.tif"))
+                .map(|p| job_id_for(Path::new(&p)))
+                .or_else(|| job_from_existing_results(&out)),
         }
-        return notes;
+    } else {
+        None
     };
 
     // ---- 3. 配套产物跟着改名（每一步独立，失败不影响其它）----
@@ -1264,8 +1488,37 @@ fn migrate_output_layout_with_hint(base: &Path, image_hint: Option<&Path>) -> Ve
     //    跑出一份"看着正常、语义全错"的纯 RGB 结果，**没有任何报错**。
     //    宁可留下"结果叫旧名、高度图叫新名"的中间态（日志里写得清楚），
     //    也不能让高度图静默消失。
-    //
-    // 瓦片缓存：`caches/wgr17-desktop/` → `caches/<job>/`
+
+    // 3a. 每个被采纳的老区块，它自己的瓦片缓存也跟着改名
+    for (old, job) in &adopted {
+        if old == job {
+            continue;
+        }
+        let from = new_cache.join(old);
+        let to = new_cache.join(job);
+        if from.is_dir() && !to.exists() {
+            match std::fs::rename(&from, &to) {
+                Ok(()) => notes.push(format!("瓦片缓存已按区块改名：{old} → {job}")),
+                Err(e) => notes.push(format!("瓦片缓存改名失败（下次会全量重算）：{e}")),
+            }
+        }
+    }
+
+    let Some(job) = companion_job else {
+        // 一点线索都没有（没老结果、没配影像、磁盘上也没有任何区块结果），
+        // 或者有多份老结果 → 配套产物不能瞎猜归属。
+        // 但要让用户知道还有东西没迁，而不是让它静默留在旧名字上。
+        if out.join("chm.tif").is_file() {
+            notes.push(format!(
+                "{OUTPUT_DIR}/chm.tif 找不到归属的区块，暂不改名\
+                 （在界面里选一次影像，下次启动会自动改名；\
+                 也可以直接点「生成高度图」按区块重算）"
+            ));
+        }
+        return notes;
+    };
+
+    // 3b. 升级前写死的缓存目录：`caches/wgr17-desktop/` → `caches/<job>/`
     let legacy_job_cache = new_cache.join(LEGACY_JOB);
     let new_job_cache = job_cache_dir(base, &job);
     if legacy_job_cache.is_dir() && !new_job_cache.exists() {
@@ -1275,7 +1528,7 @@ fn migrate_output_layout_with_hint(base: &Path, image_hint: Option<&Path>) -> Ve
         }
     }
 
-    // 高度图：`output/chm.tif` → `output/<job>-chm.tif`
+    // 3c. 高度图：`output/chm.tif` → `output/<job>-chm.tif`
     let legacy_chm = out.join("chm.tif");
     let target_chm = job_chm_path(base, &job);
     if legacy_chm.is_file() && !target_chm.exists() {
@@ -1285,7 +1538,22 @@ fn migrate_output_layout_with_hint(base: &Path, image_hint: Option<&Path>) -> Ve
         }
     }
 
-    // 林地掩膜：`output/forest-mask*.geojson` → `output/<job>-forest-mask*.geojson`
+    // 3c'. 高度图的归属元数据跟着走：`output/chm.json` → `output/<job>-chm.json`
+    //
+    // 单独判断、单独失败（与其它步解耦）：元数据丢了不会让程序出错，
+    // 只会让"这个区块名上的高度图判不出归属"，所以绝不能因为它失败就跳过改名。
+    let legacy_chm_meta = out.join("chm.json");
+    let target_chm_meta = job_chm_meta_path(base, &job);
+    if legacy_chm_meta.is_file() && !target_chm_meta.exists() {
+        match std::fs::rename(&legacy_chm_meta, &target_chm_meta) {
+            Ok(()) => notes.push(format!(
+                "高度图归属元数据已按区块改名：chm.json → {job}-chm.json"
+            )),
+            Err(e) => notes.push(format!("高度图归属元数据改名失败（原文件未动）：{e}")),
+        }
+    }
+
+    // 3d. 林地掩膜：`output/forest-mask*.geojson` → `output/<job>-forest-mask*.geojson`
     if let Ok(entries) = std::fs::read_dir(&out) {
         for entry in entries.flatten() {
             let p = entry.path();
@@ -1312,6 +1580,155 @@ fn migrate_output_layout_with_hint(base: &Path, image_hint: Option<&Path>) -> Ve
     }
 
     notes
+}
+
+/// `output/jobs` → `output/caches`；两个都在时**按区块合并**。
+///
+/// 为什么从"两个都在就什么都不动"改成合并（2026-10-24）：
+/// 用户手动拷过一次缓存（或半路升级）后，`jobs/` 里那些区块的瓦片就成了孤儿 ——
+/// 切到那些区块时 `caches/<job>/` 不存在 → 528 块全量重算（几十分钟），
+/// 而界面上没有任何解释。**只搬"目标没有"的子目录，同名的两边都留着**，
+/// 既不删数据，也不再有孤儿。
+///
+/// 收尾只在旧目录**已经空了**时才 `remove_dir`（它不会删任何内容），
+/// 否则留着 —— 里面还有我们没搬的东西（比如用户自己放的文件）。
+fn migrate_cache_root(out: &Path, notes: &mut Vec<String>) {
+    let legacy = out.join(LEGACY_CACHE_DIR);
+    let new = out.join(CACHE_DIR);
+    if !legacy.is_dir() {
+        return;
+    }
+    if !new.exists() {
+        match std::fs::rename(&legacy, &new) {
+            Ok(()) => notes.push(format!(
+                "缓存目录已改名：{LEGACY_CACHE_DIR} → {CACHE_DIR}"
+            )),
+            Err(e) => notes.push(format!(
+                "缓存目录改名失败（不影响使用，下次启动再试）：{e}"
+            )),
+        }
+        return;
+    }
+    // 两个都在 → 按区块合并
+    let mut moved = 0usize;
+    let mut kept: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&legacy) {
+        let mut items: Vec<(std::ffi::OsString, PathBuf)> = entries
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| (e.file_name(), e.path()))
+            .collect();
+        // 排序只为让日志与测试可复现
+        items.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, from) in items {
+            let to = new.join(&name);
+            if to.exists() {
+                kept.push(name.to_string_lossy().to_string());
+                continue;
+            }
+            if std::fs::rename(&from, &to).is_ok() {
+                moved += 1;
+            }
+        }
+    }
+    if moved > 0 {
+        notes.push(format!(
+            "缓存目录已合并：{moved} 个区块从 {OUTPUT_DIR}/{LEGACY_CACHE_DIR}/ 搬到 \
+             {OUTPUT_DIR}/{CACHE_DIR}/（原有内容一个字节都没动）"
+        ));
+    }
+    if !kept.is_empty() {
+        notes.push(format!(
+            "警告：{} 个区块在 {OUTPUT_DIR}/{LEGACY_CACHE_DIR}/ 与 {OUTPUT_DIR}/{CACHE_DIR}/ 里都有\
+             （{}），未做任何移动。确认 {OUTPUT_DIR}/{CACHE_DIR} 内容完整后可自行删除旧目录",
+            kept.len(),
+            kept.join("、")
+        ));
+    }
+    // 只在真的空了的时候删（remove_dir 对非空目录会失败，正好是我们想要的保护）
+    let _ = std::fs::remove_dir(&legacy);
+}
+
+/// 把"不按区块命名"的老结果改成 `<区块>-gaps.geojson`，返回 `(老名, 区块名)`。
+///
+/// 判据**不再写死某个历史名**（以前只认 `wgr17-desktop`，于是
+/// `wgr17-final-gaps.geojson` 这类老结果永远不迁，用户看到的是"升级后没数据"）：
+/// 凡是 `output/*-gaps.geojson` 里**文件名前缀 ≠ 它自己记的 `source_image`
+/// 算出的区块名**，都算老命名，按内容改名。
+///
+/// 这样 `wgr17-desktop` / `wgr17-final` / 任何同事手工改过的名字都能被采纳，
+/// 不需要再维护一张"历史名单"（那张名单永远会漏）。
+///
+/// ⚠️ 目标已存在时**绝不覆盖**：那份才是用户最近跑的。但仍然把 `(老名, 区块名)`
+///    返回给调用方 —— 否则配套产物（chm/掩膜/缓存）会因为"老结果还在"而永远迁不过去。
+fn adopt_legacy_results(base: &Path, notes: &mut Vec<String>) -> Vec<(String, String)> {
+    let out = output_dir(base);
+    let mut adopted: Vec<(String, String)> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&out) else {
+        return adopted;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().to_lowercase().ends_with("-gaps.geojson"))
+                .unwrap_or(false)
+        })
+        .collect();
+    files.sort(); // 让日志与测试可复现
+    for p in files {
+        let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) else {
+            continue;
+        };
+        // ⚠️ 在**小写化之后**再切后缀：直接按原串字节长度切，遇到某些 Unicode
+        //    字符（小写化会改变字节长度）会切在字符中间 → panic。
+        let lower = name.to_lowercase();
+        let Some(stem_raw) = lower.strip_suffix("-gaps.geojson") else {
+            continue;
+        };
+        let stem = sanitize_job(stem_raw);
+        let Some(src) = gaps_source_image(&p) else {
+            // 读不出 source_image 就没法算区块名。只有"确认是老命名"的那个
+            // 才值得提示一句，否则 `output/` 里任何第三方 geojson 都会刷屏。
+            if stem == LEGACY_JOB {
+                notes.push(format!(
+                    "老结果 {name} 里读不出 source_image，保持原文件名不动\
+                     （请手动改名为 <影像名>-gaps.geojson）"
+                ));
+            }
+            continue;
+        };
+        if src.trim().is_empty() {
+            continue;
+        }
+        let want = job_id_for(Path::new(src.trim()));
+        if stem == want {
+            continue; // 已经是规范名
+        }
+        let target = job_gaps_path(base, &want);
+        if target.exists() {
+            notes.push(format!(
+                "{OUTPUT_DIR}/{} 已存在，老结果 {name} 保持原样（不覆盖）",
+                file_label(&target),
+            ));
+            if !adopted.iter().any(|(_, j)| j == &want) {
+                adopted.push((stem, want));
+            }
+            continue;
+        }
+        match std::fs::rename(&p, &target) {
+            Ok(()) => {
+                notes.push(format!("老结果已按区块改名：{stem}-gaps → {want}-gaps"));
+                if !adopted.iter().any(|(_, j)| j == &want) {
+                    adopted.push((stem, want));
+                }
+            }
+            Err(e) => notes.push(format!("老结果 {name} 改名失败（原文件未动）：{e}")),
+        }
+    }
+    adopted
 }
 
 /// 只取文件名（日志用；拿不到时给个占位符，绝不 panic）
@@ -1580,6 +1997,10 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
         if let Some(g) = &gaps {
             args.push("--gaps".into());
             args.push(g.to_string_lossy().to_string());
+            // 锁定：路径由**这里**算准了（区块 / 配置 / 迁移都在这侧），
+            // 让 Python 别再自己扫一遍目录。两套发现逻辑漂移时，
+            // 症状是"界面显示的和报告用的不是同一份结果"，且不报错。
+            args.push("--gaps-locked".into());
         }
     } else if let Backend::Dev { root, .. } = &backend {
         let script = root.join("scripts").join("tile_server.py");
@@ -1598,6 +2019,7 @@ fn start_tile_server(app: &tauri::AppHandle, svc: &Services) -> Result<String, S
         if let Some(g) = &gaps {
             args.push("--gaps".into());
             args.push(g.to_string_lossy().to_string());
+            args.push("--gaps-locked".into());
         }
     }
 
@@ -2018,6 +2440,14 @@ fn preflight_core(base: &Path, params: &serde_json::Value) -> PreflightResult {
         let found = explicit
             .or(by_job)
             .or_else(|| find_legacy_chm(image_dir, &base));
+        // ⚠️ 归属校验（2026-10-24）：同名影像只生成过高度图时，
+        //    `<job>-chm.tif` 名字一样但内容属于**别人** —— 拿它算高程，
+        //    结果看着正常、数字全错。这里当它不存在（下面给一句专门的说明）。
+        let foreign_chm = match (found.as_ref(), image_path.as_ref()) {
+            (Some(p), Some(img)) => chm_owner_at(p, img) == Some(false),
+            _ => false,
+        };
+        let found = if foreign_chm { None } else { found };
         match found {
             Some(p) => {
                 let mb = file_size_mb(&p);
@@ -2037,6 +2467,14 @@ fn preflight_core(base: &Path, params: &serde_json::Value) -> PreflightResult {
                 ));
                 patch.push(("chm_path", p.to_string_lossy().to_string()));
             }
+            None if foreign_chm => items.push(pf_item(
+                "chm_path", "冠层高度模型（CHM）", Path::new(""), "warn",
+                format!(
+                    "找到的 {}-chm.tif 属于**别的影像**（同名不同图），已忽略 —— \
+                     拿它算高程会让树高整体偏移且不报错。点「生成高度图」重算一次即可",
+                    job.as_deref().unwrap_or("区块")
+                ),
+            )),
             None => items.push(pf_item(
                 "chm_path", "冠层高度模型（CHM）", Path::new(""), "warn",
                 format!(
@@ -2848,6 +3286,7 @@ fn get_status(app: tauri::AppHandle) -> AppStatus {
         job,
         data_root: data_base(&app).display().to_string(),
         needs_setup: image.is_none(),
+        notices: current_notices(),
     }
 }
 
@@ -2927,6 +3366,25 @@ fn set_data_paths(
         }
     }
 
+    // ---- 用户指定的结果文件：归属不对就**说出来**（审计 G 条）----
+    //
+    // 以前这里什么都不校验：`status.gaps` 与向导的"✓ 结果文件"会指向一个
+    // 属于**别的区块**的文件，而 Python 侧会按 foreign 拒掉它 → 地图上什么都没有，
+    // 用户看到的是"我明明选了文件却不生效"。这里不拦（用户明确选了就尊重），
+    // 但必须在界面挂一句，否则他会一直以为是软件坏了。
+    if gaps_given {
+        if let (Some(g), Some(img)) = (cfg.gaps.as_ref(), cfg.image.as_ref()) {
+            if !gaps_belongs_to(Path::new(g), Path::new(img)) {
+                note(&format!(
+                    "你指定的结果文件可能不属于当前影像：{}。\
+                     已按你的选择继续使用，但地图上可能不显示它的空地\
+                     （换影像后请用「⋯ 更多 → 重新载入结果」）。",
+                    file_label(Path::new(g))
+                ));
+            }
+        }
+    }
+
     // ---- 按区块（job）把"属于这张影像的东西"一起切过去 ----
     //
     // 这是多区块的核心：每张影像有自己的结果 / 高度图 / 瓦片缓存。
@@ -2951,11 +3409,21 @@ fn set_data_paths(
     }
     // 高度图同理：**绝不沿用上一张影像的 CHM**。以前它是写死的 `output/chm.tif`，
     // 换区块后 B 会拿 A 的树高算高程 —— 数字自洽、没有报错，但坑挖错地方。
-    cfg.chm = job
-        .as_ref()
-        .map(|j| job_chm_path(&data, j))
-        .filter(|p| p.exists())
-        .map(|p| p.display().to_string());
+    // 现在除了按区块名，还要过一遍**归属元数据**：同名影像只生成过高度图时，
+    // 文件名一样但内容属于别人（`usable_chm` 会拒掉）。
+    cfg.chm = match (job.as_ref(), cfg.image.as_ref()) {
+        (Some(j), Some(i)) => usable_chm(&data, j, Path::new(i)),
+        _ => None,
+    }
+    .map(|p| p.display().to_string());
+    if let Some(j) = job.as_ref() {
+        if cfg.chm.is_none() && job_chm_path(&data, j).is_file() {
+            note(&format!(
+                "区块 {j} 的高度图属于别的影像（同名不同图），已忽略。\
+                 请在「⋯ 更多 → 生成高度图」里重算一次再检测，否则检测会退化成纯 RGB。"
+            ));
+        }
+    }
     if let Some(j) = &job {
         log_line(&format!(
             "已切换到区块 {j}（结果：{} · 高度图：{}）",
@@ -2968,7 +3436,18 @@ fn set_data_paths(
         "用户选择数据：影像={:?} 结果={:?}",
         cfg.image, cfg.gaps
     ));
+    commit_data_config(&app, &state)
+}
 
+/// 配置已写好之后的那一半：重启瓦片服务 + 返回新状态。
+///
+/// 抽出来是为了让 `set_data_paths`（用户在向导里选文件）与 `switch_block`
+/// （用户在下拉里切区块）走**同一条**重启路径 —— 这两条路以前各写一遍，
+/// 漂移过一次（一边等端口释放、一边不等，于是偶发"新服务起在旧端口上"）。
+fn commit_data_config(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, Services>,
+) -> Result<AppStatus, String> {
     // 重启瓦片服务（旧的可能在跑着"没有影像"的实例，或者指向旧影像）
     if let Some(mut child) = state.tile.lock().map_err(|e| e.to_string())?.take() {
         let _ = child.kill();
@@ -2982,7 +3461,7 @@ fn set_data_paths(
     }
     // 主动换数据不算"异常退出"，别把上一轮的退出码留成这一轮的证据
     *TILE_EXIT.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    match start_tile_server(&app, &state) {
+    match start_tile_server(app, state) {
         Ok(msg) => log_line(&msg),
         Err(e) if e == NEED_IMAGE => {}
         Err(e) => {
@@ -2995,7 +3474,245 @@ fn set_data_paths(
         }
     }
 
-    Ok(get_status(app))
+    Ok(get_status(app.clone()))
+}
+
+// ============================================================================
+//  区块清单（多区块下的"我跑过哪几块、现在在哪块"）
+//  ---------------------------------------------------------------------------
+//  为什么必须有这个清单（2026-10-24 审计 C 条）：
+//  以前 16 个命令里**没有 list**，用户想切回跑过的另一块，只能重新走一遍
+//  "换影像 → 在文件对话框里找到那张 3.5 GB 的 tif"。几十块之后，
+//  谁跑过、谁交付过、现在在哪一块，全靠记忆 —— 而"当前是哪个区块"这件事
+//  从来没被持久化成清单，每次都是从影像路径现推。推不出来时就静默给一个
+//  "数字自洽的错答案"。
+// ============================================================================
+
+/// 一个区块在磁盘上的样子（`list_blocks` 的返回项）。
+#[derive(Serialize)]
+struct BlockInfo {
+    /// 区块名（= 结果文件名前缀 = 缓存目录名）
+    job: String,
+    /// 结果文件里记的影像路径（可能已经失效 —— 用户挪过目录）
+    image: Option<String>,
+    /// 那个影像现在还在不在
+    image_exists: bool,
+    /// 结果文件绝对路径
+    gaps: String,
+    /// 高度图绝对路径（不存在则 null）
+    chm: Option<String>,
+    /// 结果文件修改时间（unix 秒；读不到给 0）
+    modified: u64,
+    /// 结果文件大小（MB，保留 1 位）
+    size_mb: f64,
+    /// 是不是界面当前正在用的那一块
+    current: bool,
+}
+
+/// 单个结果文件 → 一条清单项（`None` = 这不是一个"区块结果"）。
+///
+/// 抽成纯函数（只吃路径）是为了能单测：`list_blocks` 本身要 AppHandle，
+/// 而这里最容易写错的恰恰是"哪些文件算区块"这个判定。
+fn block_info_for(data: &Path, gaps: &Path, current_gaps: Option<&str>) -> Option<BlockInfo> {
+    if !gaps.is_file() {
+        return None;
+    }
+    let name = gaps.file_name()?.to_string_lossy().to_string();
+    let lower = name.to_lowercase();
+    let stem = lower.strip_suffix("-gaps.geojson")?;
+    let job = sanitize_job(stem);
+    // 老命名（还没被迁移采纳）不算"一个区块"：它的前缀不是区块名，
+    // 列出来会让用户点一个必然失败的项。
+    if let Some(src) = gaps_source_image(gaps) {
+        if !src.trim().is_empty() && job != job_id_for(Path::new(src.trim())) {
+            return None;
+        }
+    }
+    let meta = std::fs::metadata(gaps).ok();
+    let modified = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let size_mb = meta
+        .as_ref()
+        .map(|m| (m.len() as f64 / 1_048_576.0 * 10.0).round() / 10.0)
+        .unwrap_or(0.0);
+    let recorded_path = gaps_source_path(gaps);
+    let image_exists = recorded_path
+        .as_ref()
+        .map(|s| Path::new(s).is_file())
+        .unwrap_or(false);
+    let chm = job_chm_path(data, &job);
+    let current = current_gaps
+        .map(|g| same_file_path(Path::new(g), gaps))
+        .unwrap_or(false);
+    Some(BlockInfo {
+        job,
+        image: recorded_path,
+        image_exists,
+        gaps: gaps.display().to_string(),
+        chm: if chm.is_file() {
+            Some(chm.display().to_string())
+        } else {
+            None
+        },
+        modified,
+        size_mb,
+        current,
+    })
+}
+
+/// 扫 `output/*-gaps.geojson` 列出所有区块（按修改时间倒序）。
+///
+/// 判据只看文件本身，**不看 settings.json**：配置里只有一个"当前"，
+/// 而清单要回答的是"磁盘上有几块"。两者不一致正是需要显示出来的信息。
+fn block_infos(app: &tauri::AppHandle) -> Vec<BlockInfo> {
+    let data = data_base(app);
+    let out = output_dir(&data);
+    let cfg = load_config();
+    let mut list: Vec<BlockInfo> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&out) else {
+        return list;
+    };
+    for entry in entries.flatten() {
+        if let Some(info) = block_info_for(&data, &entry.path(), cfg.gaps.as_deref()) {
+            list.push(info);
+        }
+    }
+    // 新的在前：用户最可能切回的是刚跑完的那块
+    list.sort_by(|a, b| b.modified.cmp(&a.modified).then(a.job.cmp(&b.job)));
+    list
+}
+
+/// 区块清单（界面下拉用）。
+#[tauri::command]
+fn list_blocks(app: tauri::AppHandle) -> Vec<BlockInfo> {
+    block_infos(&app)
+}
+
+/// 校验并规范化前端传来的区块名。
+///
+/// `sanitize_job` 会把 `/`、`..` 之类"吞掉"（换成 `-`），但"吞掉"意味着
+/// **用户点到的和你实际用的不是同一个名字** —— 直接拒比悄悄改更清楚，
+/// 而且顺手挡住目录穿越（`../` 拼进 `output/` 的路径里）。
+fn normalize_block_job(raw: &str) -> Result<String, String> {
+    let clean = sanitize_job(raw);
+    if clean != raw.trim().to_lowercase() {
+        return Err(format!("区块名不合法：{raw}"));
+    }
+    Ok(clean)
+}
+
+/// 切到某个区块：把它的影像 / 结果 / 高度图一起挂上，并重启瓦片服务。
+///
+/// 与"在向导里重选影像"的区别：这条路上**不需要用户再去文件对话框里找 tif** ——
+/// 影像路径从结果文件里记的 `inputs_snapshot.image.path` 读出来。
+///
+/// 三种失败都必须**当场说清楚**（以前是静默给个空界面）：
+///   ① 区块名非法（防目录穿越：`../` 之类直接拒）
+///   ② 结果文件不在了（用户删了 / 换盘了）
+///   ③ 影像不在了、同名文件也找不到（挪走了）→ 提示去「更换影像」重选，
+///      而不是拿别人的影像顶上
+#[tauri::command]
+fn switch_block(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Services>,
+    job: String,
+) -> Result<AppStatus, String> {
+    // ① 名字必须是"规范区块名"。`sanitize_job` 会吞掉 `/`，但"吞掉"意味着
+    //    用户点到的和你实际用的不是同一个名字 —— 直接拒更清楚。
+    let job = normalize_block_job(&job)?;
+    let data = data_base(&app);
+    let gaps = job_gaps_path(&data, &job);
+    if !gaps.is_file() {
+        return Err(format!("区块「{job}」的结果文件不存在：{}", gaps.display()));
+    }
+
+    // ② 影像：优先用结果里记的完整路径；失效了再按同名文件找
+    let recorded = gaps_source_path(&gaps).unwrap_or_default();
+    let mut image: Option<PathBuf> = None;
+    if !recorded.trim().is_empty() {
+        let p = PathBuf::from(recorded.trim());
+        if p.is_file() {
+            image = Some(p);
+        }
+    }
+    if image.is_none() {
+        // 影像被挪走 / 改名了。同名文件在"当前配置"或"数据根"下就用它 ——
+        // 这是"挪目录后旧结果还能用"（A 条）在切换路径上的对应实现。
+        let want_name = gaps_source_image(&gaps)
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| {
+                Path::new(recorded.trim())
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+            });
+        if let Some(n) = want_name {
+            if let Some(cur) = resolve_image(&app) {
+                if same_image_name(&n, &cur) {
+                    image = Some(cur);
+                }
+            }
+            if image.is_none() {
+                image = find_image_by_name(&data, &n);
+            }
+        }
+    }
+    let Some(image) = image else {
+        return Err(format!(
+            "区块「{job}」的影像找不到了：{}\n\
+             它可能被移动或删除。请用「⋯ 更多 → 更换影像或结果文件」重新选择这张影像。",
+            if recorded.trim().is_empty() {
+                "（结果文件里没有记录影像路径）".to_string()
+            } else {
+                recorded
+            }
+        ));
+    };
+
+    let mut cfg = load_config();
+    cfg.image = Some(image.display().to_string());
+    // 金字塔副本属于上一张影像，必须清掉（否则瓦片服务继续显示旧影像）
+    cfg.tile_source = None;
+    cfg.gaps = Some(gaps.display().to_string());
+    // 高度图同样要过归属：同名影像只生成过高度图时，名字一样但内容属于别人
+    cfg.chm = usable_chm(&data, &job, &image).map(|p| p.display().to_string());
+    if cfg.chm.is_none() && job_chm_path(&data, &job).is_file() {
+        note(&format!(
+            "区块 {job} 的高度图属于别的影像（同名不同图），切换后未挂上。\
+             检测前请先「生成高度图」，否则会退化成纯 RGB 判据。"
+        ));
+    }
+    log_line(&format!(
+        "切换区块 → {job}（影像：{} · 结果：有 · 高度图：{}）",
+        image.display(),
+        if cfg.chm.is_some() { "有" } else { "无" },
+    ));
+    save_config(&cfg)?;
+    commit_data_config(&app, &state)
+}
+
+/// 在数据根下按**文件名**找影像（`drone data/` 与本层各找一次）。
+///
+/// 只用于"结果里记的影像被挪走了"这一种情形：用户把 tif 从 `D:/A` 挪到
+/// 数据根下的 `drone data/`，这是本项目最常见的整理方式。
+fn find_image_by_name(data: &Path, name: &str) -> Option<PathBuf> {
+    if name.trim().is_empty() {
+        return None;
+    }
+    for sub in ["", "drone data"] {
+        let p = if sub.is_empty() {
+            data.join(name)
+        } else {
+            data.join(sub).join(name)
+        };
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
 }
 
 // ============================================================================
@@ -3503,8 +4220,80 @@ fn restart_tile_server(
     start_tile_server(&app, &state)
 }
 
+// ============================================================================
+//  单实例保护
+//  ---------------------------------------------------------------------------
+//  为什么必须做（2026-10-24 审计 B 条）：
+//  8765 被占时我们会自动往后找端口起服务 —— 于是用户双击两次图标就得到
+//  **两个进程**，各自拉起一个瓦片服务，并且**同时写同一份 settings.json**。
+//  后写的赢：前一个界面上显示的影像/结果，与磁盘上的配置已经不一致了，
+//  而它自己完全不知道。这类"两个自己打架"的故障最难查。
+// ============================================================================
+
+/// 同一个登录会话里是否已经有一个 FGD 在跑。
+///
+/// 实现用 Windows **命名互斥体**（`CreateMutexW`）：进程退出时内核自动释放，
+/// 不像 PID 锁文件那样会留下"上次没清干净"的僵尸锁（那会让用户再也打不开）。
+///
+/// 拿不到句柄（极端环境 / 权限异常）→ **返回 false 放行**：
+/// 宁可多开一个窗口，也不能因为一个保护机制把软件锁死。
+#[cfg(windows)]
+fn already_running() -> bool {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+
+    // `Local\` = 当前登录会话：同一台机器上两个 Windows 用户互不影响。
+    let name: Vec<u16> = "Local\\fgd-desktop-single-instance\0"
+        .encode_utf16()
+        .collect();
+    // SAFETY: 空安全属性 + 有效 UTF-16 名字，都是 CreateMutexW 允许的输入。
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    if handle.is_null() {
+        return false;
+    }
+    // 句柄**故意不关**：它要活到进程结束，这本身就是锁。
+    // 重复创建同名互斥体时，第二个进程拿到的是同一个内核对象，
+    // `GetLastError` 报 ERROR_ALREADY_EXISTS —— 这就是"已经有一个在跑"。
+    unsafe { GetLastError() == ERROR_ALREADY_EXISTS }
+}
+
+#[cfg(not(windows))]
+fn already_running() -> bool {
+    // 非 Windows 平台本项目不发布；返回 false 保持"能启动"的行为。
+    false
+}
+
+/// 告诉用户"已经开着了"（原生对话框，不依赖前端 —— 那时前端还没起来）。
+#[cfg(windows)]
+fn show_already_running() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
+    let text: Vec<u16> = "Forest Gap Detection 已经在运行了。\n\n\
+        请切换到已经打开的窗口（任务栏里那个）。\n\n\
+        同时开两个会各自拉起一个影像服务，并互相覆盖数据目录里的配置与结果。\0"
+        .encode_utf16()
+        .collect();
+    let title: Vec<u16> = "已在运行\0".encode_utf16().collect();
+    // SAFETY: 两个字符串都以 NUL 结尾且在本函数内保持存活。
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            title.as_ptr(),
+            MB_OK | MB_ICONINFORMATION,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn show_already_running() {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 单实例：必须在建窗口、起服务之前判 —— 否则第二个实例已经把 8765 抢了
+    if already_running() {
+        show_already_running();
+        return;
+    }
     tauri::Builder::default()
         // 原生文件选择框：让用户在界面里选影像/结果，而不是去某个隐藏目录放文件
         .plugin(tauri_plugin_dialog::init())
@@ -3524,6 +4313,8 @@ pub fn run() {
             detect_status,
             get_status,
             set_data_paths,
+            list_blocks,
+            switch_block,
             build_overviews,
             overview_plan
         ])
@@ -3539,8 +4330,11 @@ pub fn run() {
             // 那一张来定区块名 —— "只生成过高度图、从没跑过检测"的用户没有老结果可读，
             // 没有这个提示那张高度图就永远留在旧名字上（检测会静默退化成纯 RGB）。
             let hint = load_config().image.map(PathBuf::from);
-            for note in migrate_output_layout_with_hint(&mig_base, hint.as_deref()) {
-                log_line(&note);
+            for note_text in migrate_output_layout_with_hint(&mig_base, hint.as_deref()) {
+                // 用 `note` 而不是 `log_line`：这些提示里有"配置损坏 / 缓存合并 /
+                // 老结果没迁过去"这类**用户必须知道**的事，只写 app.log 等于没说
+                //（release 没有控制台，日志文件用户不会去找）。
+                note(&note_text);
             }
             let state = app.state::<Services>();
             match start_tile_server(&handle, &state) {
@@ -4500,20 +5294,75 @@ mod tests {
     }
 
     #[test]
-    fn migration_keeps_both_when_caches_already_exists() {
-        // 两个都在 → **什么都不动**，只警告。用户可能自己拷过一份，
-        // 替他决定删哪个的代价可能是几十分钟重算
+    fn migration_merges_orphan_cache_dirs_when_both_exist() {
+        // 两个都在（用户手动拷过一份 / 半路升级）→ **按区块合并**：
+        // `caches/` 里没有的子目录搬过去，同名的两边都留着。
+        //
+        // ⚠️ 旧行为是"什么都不动，只警告"，于是 `jobs/` 里那些区块的瓦片
+        //    成了孤儿：切到那些区块时 528 块全量重算（几十分钟），
+        //    而界面上没有任何解释。
         let base = scratch("mig-both");
         touch(&base.join("output/jobs/x/tiles/1.json"), 16);
         touch(&base.join("output/caches/y/tiles/2.json"), 16);
+        // 同名冲突：两边都有 z，内容不同 —— 一个字节都不能动
+        touch(&base.join("output/jobs/z/tiles/old.json"), 16);
+        touch(&base.join("output/caches/z/tiles/new.json"), 32);
         let before = count_files(&base.join("output"));
 
         let notes = migrate_output_layout(&base);
 
-        assert!(base.join("output/jobs/x/tiles/1.json").is_file(), "旧目录必须原样保留");
-        assert!(base.join("output/caches/y/tiles/2.json").is_file());
+        assert!(
+            base.join("output/caches/x/tiles/1.json").is_file(),
+            "★ 孤儿缓存要合并进 caches/（否则那个区块会全量重算）"
+        );
+        assert!(base.join("output/caches/y/tiles/2.json").is_file(), "原有内容不能动");
+        assert!(
+            base.join("output/caches/z/tiles/new.json").is_file(),
+            "★ 同名区块：新目录里的那份必须原样保留"
+        );
+        assert!(
+            base.join("output/jobs/z/tiles/old.json").is_file(),
+            "★ 同名区块：旧目录里的那份也**不许删**（我们不替用户做选择）"
+        );
+        assert_eq!(count_files(&base.join("output")), before, "★ 合并绝不能删文件");
+        assert!(
+            notes.iter().any(|n| n.contains("缓存目录已合并")),
+            "要记日志：{notes:?}"
+        );
+        assert!(
+            notes.iter().any(|n| n.contains("都有")),
+            "同名冲突要单独提示：{notes:?}"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn migration_adopts_arbitrary_legacy_result_name() {
+        // 审计 E：以前只认 `LEGACY_JOB = "wgr17-desktop"`，叫
+        // `wgr17-final-gaps.geojson` 的老结果永远不迁移 —— 用户看到的是
+        // "升级后数据没了"。现在按**内容**判定：前缀与 source_image 对不上就算老命名。
+        let base = scratch("mig-anyname");
+        let img = base.join("drone data/WGR17-002.tif");
+        touch(&img, 2_000_000);
+        gaps_file(
+            &base.join("output/wgr17-final-gaps.geojson"),
+            &img,
+            1_700_000_000,
+        );
+        let before = count_files(&base.join("output"));
+
+        let notes = migrate_output_layout(&base);
+
+        assert!(
+            base.join("output/wgr17-002-gaps.geojson").is_file(),
+            "★ 任意老名字都要能按内容采纳"
+        );
+        assert!(!base.join("output/wgr17-final-gaps.geojson").exists());
         assert_eq!(count_files(&base.join("output")), before);
-        assert!(notes.iter().any(|n| n.contains("同时存在")), "{notes:?}");
+        assert!(
+            notes.iter().any(|n| n.contains("老结果已按区块改名")),
+            "{notes:?}"
+        );
         fs::remove_dir_all(&base).ok();
     }
 
@@ -5047,5 +5896,389 @@ mod tests {
         assert!(!should_clear_gaps(&a, &a, true));
         // 首次选择（原来没有影像）→ 清空（可能残留上一次会话的结果）
         assert!(should_clear_gaps(&None, &a, false));
+    }
+
+    // ========================================================================
+    //  独立审计 7 条（A~G）的回归测试
+    //  ---------------------------------------------------------------------
+    //  每条都对应一个"数字自洽、不报错、只有到现场才发现"的故障。
+    //  写断言时统一问一句：**什么情况下它会红？**（空集合上恒真的断言不算测试）
+    // ========================================================================
+
+    // ---- A. 影像挪目录后，旧结果不能变成"别人的" ----
+
+    #[test]
+    fn moved_image_still_owns_its_result() {
+        let base = scratch("moved-own");
+        // 结果里记的是"影像当初在哪"，而影像现在被挪走了（旧路径已不存在）
+        let gone = base.join("old place").join("WGR17-002.tif"); // 刻意不创建
+        let now = base.join("new place").join("WGR17-002.tif");
+        touch(&now, 1024);
+        let gaps = base.join("output").join("wgr17-002-gaps.geojson");
+        gaps_file(&gaps, &gone, 1_700_000_000);
+
+        assert!(
+            gaps_belongs_to(&gaps, &now),
+            "★ 影像被挪走 → 旧结果仍算自己的（否则 6 分钟白跑、复核编辑全成孤儿）"
+        );
+
+        // 反证：两张同名影像**都真实存在**时必须仍然分开 ——
+        // 这是多区块功能赖以存在的场景，不能被 A 条的修法判穿。
+        let other = base.join("another").join("WGR17-002.tif");
+        touch(&other, 2048);
+        let gaps2 = base.join("output").join("wgr17-002-2-gaps.geojson");
+        gaps_file(&gaps2, &now, 1_700_000_000);
+        assert!(gaps_belongs_to(&gaps2, &now), "记录的就是 now → 属于它");
+        assert!(
+            !gaps_belongs_to(&gaps2, &other),
+            "★ 两张都在时不能混为一谈（否则 B 会认领 A 的结果）"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn moved_image_falls_back_to_recorded_path_filename() {
+        // 更老的产物连 `source_image` 都没有 → 用记录路径自己的文件名兜底。
+        // 不兜这一层的话，这类结果在影像挪动后会**永远**被判成别人的。
+        let base = scratch("moved-noname");
+        let now = base.join("now").join("Block_A.tif");
+        touch(&now, 512);
+        let p = base.join("output").join("block_a-gaps.geojson");
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(
+            &p,
+            "{\"type\":\"FeatureCollection\",\
+             \"inputs_snapshot\":{\"image\":{\"path\":\"D:\\\\gone\\\\Block_A.tif\"}},\
+             \"features\":[]}",
+        )
+        .unwrap();
+        assert!(gaps_belongs_to(&p, &now), "★ 记录路径失效 → 退到文件名");
+        let other = base.join("now").join("Other.tif");
+        touch(&other, 512);
+        assert!(!gaps_belongs_to(&p, &other), "文件名对不上就不认");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    // ---- B. 配置：原子写 + 坏配置留证据 ----
+
+    #[test]
+    fn config_write_is_atomic_and_leaves_no_temp_file() {
+        let base = scratch("cfg-atomic");
+        let p = base.join("settings.json");
+        write_config_atomic(&p, "{\"image\":null}").unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "{\"image\":null}");
+        // 覆盖写已存在的文件：Windows 上 rename 必须能替换（否则第二次保存就失败）
+        write_config_atomic(&p, "{\"image\":\"D:/a.tif\"}").unwrap();
+        assert!(fs::read_to_string(&p).unwrap().contains("D:/a.tif"));
+
+        let leftovers: Vec<String> = fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".tmp-"))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "★ 临时文件必须清干净（否则目录里越攒越多）：{leftovers:?}"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn corrupt_config_is_backed_up_not_silently_reset() {
+        // 断电时留下的半个 JSON。旧实现 `unwrap_or_default()` 会让用户
+        // 每次启动都"回到出厂状态"，而原文件还在那儿 —— 谁也想不到坏在括号上。
+        let base = scratch("cfg-bad");
+        let p = base.join("settings.json");
+        fs::write(&p, "{\"image\": \"D:/a.tif\"").unwrap();
+
+        let got = read_config_file(&p);
+
+        assert!(got.is_none(), "坏配置不能返回半份数据（宁可默认值）");
+        assert!(!p.exists(), "★ 坏文件必须改名挪走（否则下次启动继续坏）");
+        let bad: Vec<String> = fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("settings.json.bad-"))
+            .collect();
+        assert_eq!(bad.len(), 1, "要留一份 .bad-<时间戳> 备份：{bad:?}");
+        // 是"改名"不是"重写"：内容必须原样留着，用户才可能自己修好
+        assert!(fs::read_to_string(base.join(&bad[0]))
+            .unwrap()
+            .contains("D:/a.tif"));
+        fs::remove_dir_all(&base).ok();
+    }
+
+    // ---- B. 单实例 ----
+
+    #[test]
+    #[cfg(windows)]
+    fn second_instance_is_detected() {
+        // 同一进程里连续两次 CreateMutexW：第一次新建 → false，
+        // 第二次拿到同一个内核对象并报 ERROR_ALREADY_EXISTS → true。
+        // 这条真的在测机制本身，而不是"函数返回了 false 所以通过"。
+        assert!(!already_running(), "第一次必须放行");
+        assert!(
+            already_running(),
+            "★ 第二次必须拦住 —— 否则两个进程会各起一个服务并互相覆盖配置"
+        );
+    }
+
+    // ---- C. 区块清单 ----
+
+    #[test]
+    fn block_list_only_accepts_canonical_results() {
+        let base = scratch("blocks");
+        let img = base.join("drone data/WGR17-002.tif");
+        touch(&img, 1024);
+        let out = base.join("output");
+        let mine = out.join("wgr17-002-gaps.geojson");
+        gaps_file(&mine, &img, 1_700_000_000);
+        touch(&out.join("wgr17-002-chm.tif"), 64);
+        // 老命名（前缀与 source_image 对不上）→ 不算区块：列出来用户会点，
+        // 点进去必然失败（结果文件不叫这个名字）
+        gaps_file(&out.join("wgr17-desktop-gaps.geojson"), &img, 1_600_000_000);
+        // 掩膜不是结果
+        touch(&out.join("wgr17-002-forest-mask.geojson"), 16);
+
+        let cur = mine.display().to_string();
+        let a = block_info_for(&base, &mine, Some(&cur)).expect("规范名要能列出来");
+        assert_eq!(a.job, "wgr17-002");
+        assert!(a.current, "当前在用的那块要标出来（否则用户不知道自己在哪块）");
+        assert!(a.chm.is_some(), "有高度图要报出来");
+        assert!(a.image_exists, "影像还在");
+        assert_eq!(a.modified, 1_700_000_000, "修改时间要真的读出来（清单按它排序）");
+
+        assert!(
+            block_info_for(&base, &out.join("wgr17-desktop-gaps.geojson"), None).is_none(),
+            "★ 老命名不算一个区块"
+        );
+        assert!(
+            block_info_for(&base, &out.join("wgr17-002-forest-mask.geojson"), None).is_none(),
+            "掩膜不算一个区块"
+        );
+        assert!(block_info_for(&base, &out.join("nope-gaps.geojson"), None).is_none());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn block_job_name_is_validated() {
+        assert_eq!(normalize_block_job("wgr17-002").unwrap(), "wgr17-002");
+        assert_eq!(
+            normalize_block_job("WGR17-002").unwrap(),
+            "wgr17-002",
+            "大小写不敏感（前端可能传大写）"
+        );
+        assert!(
+            normalize_block_job("../evil").is_err(),
+            "★ 目录穿越必须拒（`../` 会被拼进 output/ 的路径）"
+        );
+        assert!(
+            normalize_block_job("区块A").is_err(),
+            "会被改写的名字要拒 —— 否则用户点到的和实际用的不是同一个名字"
+        );
+        assert!(normalize_block_job("").is_err());
+    }
+
+    #[test]
+    fn find_image_by_name_checks_data_root_and_drone_dir() {
+        let base = scratch("findimg");
+        touch(&base.join("drone data/WGR17-002.tif"), 16);
+        touch(&base.join("WGR17.tif"), 16);
+        assert!(find_image_by_name(&base, "WGR17-002.tif").is_some(), "drone data/ 里要找到");
+        assert!(find_image_by_name(&base, "WGR17.tif").is_some(), "数据根本层也要找到");
+        assert!(find_image_by_name(&base, "nope.tif").is_none());
+        assert!(find_image_by_name(&base, "").is_none(), "空名字不能当通配");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    // ========================================================================
+    //  高度图归属元数据（§16.1 第 2 条的残留，2026-10-24 堵）
+    //  ---------------------------------------------------------------------
+    //  唯一要防的场景：A/B **同名**，B **只生成过高度图、没跑过检测**。
+    //  那时磁盘上既没有 B 的结果、也没有 B 的缓存目录 —— 所有"占用证据"都看不到，
+    //  于是选 A 时算出的还是 `wgr17-002` → **A 用上了 B 的树高**。
+    //  高程整体偏移、结果看着正常、全程不报错，只有到现场才发现坑挖错地方。
+    // ========================================================================
+
+    /// 写一份高度图归属元数据（格式与 `build_chm.write_chm_meta` 一致）
+    fn chm_meta(chm: &Path, image: &Path) {
+        let name = image
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let abs = image.to_string_lossy().replace('\\', "\\\\");
+        let body = format!(
+            "{{\"schema\":\"fgd-chm/1\",\"source_image\":\"{name}\",\
+             \"image_path\":\"{abs}\",\"created_at\":0}}"
+        );
+        fs::write(chm.with_extension("json"), body).unwrap();
+    }
+
+    #[test]
+    fn chm_meta_marks_slot_occupied_for_other_image() {
+        let base = scratch("chm-own");
+        let a = base.join("区块A/WGR17-002.tif");
+        let b = base.join("区块B/WGR17-002.tif");
+        touch(&a, 1024);
+        touch(&b, 2048);
+        // B 只生成过高度图（没有结果、没有缓存目录）
+        let chm = job_chm_path(&base, "wgr17-002");
+        touch(&chm, 64);
+        chm_meta(&chm, &b);
+
+        assert_eq!(
+            chm_owner(&base, "wgr17-002", &b),
+            Some(true),
+            "元数据指向 B → 是 B 的"
+        );
+        assert_eq!(
+            chm_owner(&base, "wgr17-002", &a),
+            Some(false),
+            "★ 元数据指向 B → 对 A 就是别人的"
+        );
+        assert!(
+            !job_slot_is_free(&base, "wgr17-002", &a),
+            "★ 只有别人的高度图也算占用（这就是原来那个洞）"
+        );
+        assert!(
+            job_slot_is_free(&base, "wgr17-002", &b),
+            "B 自己 → 名字是它的（不能把自己的高度图判成别人的）"
+        );
+        assert_eq!(
+            job_id_for_output(&base, &a).unwrap(),
+            "wgr17-002-2",
+            "★ 于是 A 会拿到 -2，而不是挂上 B 的树高"
+        );
+        // 拿到 -2 之后，A 的高度图路径也必须是 -2 的（不存在 → 提示去生成）
+        assert!(usable_chm(&base, "wgr17-002-2", &a).is_none());
+        assert!(usable_chm(&base, "wgr17-002", &a).is_none(), "★ 别人的高度图不能给 A 用");
+        assert!(usable_chm(&base, "wgr17-002", &b).is_some());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn chm_without_meta_is_still_usable() {
+        // 老产物（升级前生成 / 迁移过来的）没有元数据 → 判不出归属。
+        // 这里必须**放行**：否则"生成高度图 → 检测"会无限换名
+        //（`migration_completes_half_done_migration` 也要求迁移后区块名不变）。
+        let base = scratch("chm-nometa");
+        let a = base.join("A/WGR17-002.tif");
+        touch(&a, 1024);
+        let chm = job_chm_path(&base, "wgr17-002");
+        touch(&chm, 64);
+
+        assert_eq!(chm_owner(&base, "wgr17-002", &a), None, "没有元数据 → 判不出");
+        assert!(job_slot_is_free(&base, "wgr17-002", &a), "★ 判不出 → 按空着（不换名）");
+        assert!(usable_chm(&base, "wgr17-002", &a).is_some(), "★ 老高度图仍然要用");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn chm_meta_survives_moved_image() {
+        // 影像被挪走 → 记录里的路径失效 → 退回文件名（与结果文件同一套退化规则）。
+        // 不退化的话，用户整理一次目录就会被告知"你的高度图是别人的"。
+        let base = scratch("chm-moved");
+        let gone = base.join("old/WGR17-002.tif"); // 不创建
+        let now = base.join("new/WGR17-002.tif");
+        touch(&now, 1024);
+        let chm = job_chm_path(&base, "wgr17-002");
+        touch(&chm, 64);
+        chm_meta(&chm, &gone);
+
+        assert_eq!(chm_owner(&base, "wgr17-002", &now), Some(true), "★ 路径失效 → 比文件名");
+        let other = base.join("new/Other.tif");
+        touch(&other, 1024);
+        assert_eq!(chm_owner(&base, "wgr17-002", &other), Some(false), "文件名不同 → 别人的");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn preflight_rejects_foreign_chm() {
+        // 端到端：预检是检测前的最后一道门。它如果把别人的高度图报成 ok，
+        // 用户就会照常点检测，然后拿到一份"树高整体偏移"的结果。
+        //
+        // 两条防线分别验：
+        //   ① 自动关联：区块名分配就会避开（A 拿到 -2 → 找不到 -2 的高度图 → warn）
+        //   ② 显式指定（前端带着旧配置里的 `chm_path` 进来）：必须认出"这是别人的"
+        let base = scratch("pf-foreign-chm");
+        let a = base.join("区块A/WGR17-002.tif");
+        let b = base.join("区块B/WGR17-002.tif");
+        touch(&a, 2_000_000);
+        touch(&b, 2_000_000);
+        let chm = job_chm_path(&base, "wgr17-002");
+        touch(&chm, 64);
+        chm_meta(&chm, &b); // 这份高度图是 B 的
+
+        // ① 自动关联
+        let r = preflight_core(&base, &serde_json::json!({ "input": a.to_string_lossy() }));
+        let chm_item = item(&r, "chm_path");
+        assert_ne!(
+            chm_item.status, "ok",
+            "★ A 的预检不能把 B 的高度图报成 ok：{} / {}",
+            chm_item.status, chm_item.path
+        );
+        assert!(
+            chm_item.path.is_empty(),
+            "★ 更不能把它填进 chm_path 交给检测：{}",
+            chm_item.path
+        );
+
+        // ② 显式指定（旧配置 / 前端缓存里带着那个路径）
+        let r2 = preflight_core(
+            &base,
+            &serde_json::json!({
+                "input": a.to_string_lossy(),
+                "chm_path": chm.to_string_lossy(),
+            }),
+        );
+        let it2 = item(&r2, "chm_path");
+        assert_eq!(
+            it2.status, "warn",
+            "★ 显式指定的别人的高度图也要拦：{}",
+            it2.path
+        );
+        assert!(it2.path.is_empty(), "★ 不许回填：{}", it2.path);
+        assert!(
+            it2.detail.contains("别的影像"),
+            "说明文字要讲清为什么：{}",
+            it2.detail
+        );
+
+        // 反证：B 自己的预检要拿到这张（否则说明上面只是"什么都没找到"）
+        let rb = preflight_core(&base, &serde_json::json!({ "input": b.to_string_lossy() }));
+        let itb = item(&rb, "chm_path");
+        assert_eq!(itb.status, "ok", "B 应该能用自己那张：{}", itb.detail);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn migration_moves_chm_meta_with_the_tif() {
+        // 老布局 `chm.tif` + `chm.json` → `<job>-chm.tif` + `<job>-chm.json`。
+        // 元数据不跟着走的话，迁移完就"判不出归属"，等于白补。
+        let base = scratch("mig-chm-meta");
+        let img = base.join("drone data/WGR17-002.tif");
+        touch(&img, 2_000_000);
+        let legacy = base.join("output/chm.tif");
+        touch(&legacy, 64);
+        chm_meta(&legacy, &img);
+        assert!(base.join("output/chm.json").is_file(), "前置：元数据已就位");
+        let before = count_files(&base.join("output"));
+
+        let notes = migrate_output_layout(&base);
+
+        assert!(base.join("output/wgr17-002-chm.tif").is_file());
+        assert!(
+            base.join("output/wgr17-002-chm.json").is_file(),
+            "★ 元数据必须跟着高度图改名：{notes:?}"
+        );
+        assert!(!base.join("output/chm.json").exists());
+        assert_eq!(count_files(&base.join("output")), before, "只许 rename");
+        assert!(
+            notes.iter().any(|n| n.contains("归属元数据")),
+            "要记日志：{notes:?}"
+        );
+        fs::remove_dir_all(&base).ok();
     }
 }

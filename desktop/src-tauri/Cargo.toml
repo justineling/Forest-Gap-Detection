@@ -19,6 +19,21 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# 单实例保护（命名互斥体）与"已在运行"提示框。
+#
+# 为什么用 `windows-sys` 而不是官方的 `tauri-plugin-single-instance`：
+# 后者需要联网下载一个新的 crate（本机 cargo 缓存里没有，离线/内网环境下
+# `cargo build` 会直接失败）；而 `windows-sys` **已经在 Cargo.lock 里**
+# （tauri 的传递依赖），把它提成直接依赖不新增任何下载。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    # CreateMutexW 的签名里带 SECURITY_ATTRIBUTES → 整个函数被 Win32_Security 门控
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 # ⚠️ 这里**不要**用 codegen-units=1 + lto=true + panic="abort" 的极限配置：
 #    实测在本机（8 核 / 16 GB，D 盘 target）会让 rustc 在编译
 #    windows-collections 时以 0xc0000005 (STATUS_ACCESS_VIOLATION) 崩溃 ——
