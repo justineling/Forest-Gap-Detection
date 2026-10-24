@@ -30,7 +30,18 @@
 算法封版（Stage 14），缺陷台账 `docs/03-算法教学/算法缺陷与桌面端协同看板.html`。对外红线：React18+TS（非 Vue3）、Terra Draw（非 Leaflet-Geoman）、stdio NDJSON（非 FastAPI，只有瓦片走 HTTP）、掩膜影响上界 26%、CHM 异常区块 14.08~29.99 m。
 
 ## 6. 桌面端（Tauri v2）
-栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。验收基线：`npm test` **632** 断言 · `cargo test` **45** 项 · 契约 95/95 · `test_overviews` **42** 项。
+
+**高度图归属**（2026-10-24）：`build_chm.py` 写完 tif 补 `<同名>.json`（`schema: fgd-chm/1`，记 `image_path`+`source_image`）；
+Rust 侧 `chm_owner_at` / `usable_chm` / `job_slot_is_free` 第三判据 / 预检 四处读它。
+⚠️ 文件名规则两边必须一致（Py `with_suffix(".json")` = Rust `with_extension("json")`）。
+⚠️ **没有元数据 → 照用**（判不出就不拦）：否则"生成→检测"无限换名，且迁移后区块名会变。
+
+**多区块入口**（2026-10-24）：`list_blocks` / `switch_block` 两个命令 + 工具栏 `BlockSwitcher`；
+启动提示走 `AppStatus.notices`（后端 `current_notices()` **不清空**，前端 `seenNotices` 去重）→ `NoticeBar`。
+⚠️ 提示**不能"取走即清空"**：向导路径会忽略 `set_data_paths` 的返回值，清了就丢消息。
+⚠️ 单实例用 `windows-sys` 的 `CreateMutexW`（`Local\fgd-desktop-single-instance`），
+不要换 `tauri-plugin-single-instance`（要联网拉 crate）；`CreateMutexW` 被 **`Win32_Security`** 门控，少这个 feature 会 unresolved import。
+栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。验收基线：`npm test` **801** 断言 · `cargo test` **81** 项 · `test_block_jobs` **60** · 契约 95/95 · `test_overviews` **42** 项 · `verify_render` **58**（需 dev server）。
 **端口不再写死 8765**（坑 48）：`pick_backend_port()` 试 8765~8776，空闲就用/自己的服务复用/别人的跳过；实际端口在 `ACTIVE_PORT`，前端用 `backend.ts` 的 `ensurePort()` + `backendUrl()` 跟随，`MapCanvas` 用 `tileUrlTemplate()`。
 致命 5 条：① `output/*.geojson` 是 `blocks[].gaps` 结构、无顶层 features；② 结果路径只按"扫目录+名含 gaps+mtime 取最新"，候选目录必须含 `cwd/output`，`/gaps` 空时绝不能 `applyRerun([])`；③ 检测前必须预检（W1001/W1004/W3001 都是"算偏不报错"）；④ Tauri↔sidecar 两线程分读 stdout/stderr（64 KB 管道填满→死锁）；⑤ 撤销栈 1.5 s 时间窗合并 TerraDraw change，框选必须传 `visibleClasses`。
 ⚠️ 第 6 条（2026-10-20 交付事故）：**8765 有人监听 ≠ 我们的服务在跑** —— 复用前必须验 `/meta` 的 `app` 字段；子进程 stderr 必须落 `app.log`（release 无控制台，`eprintln!` 是黑洞）并用 `try_wait` 记退出码；启动失败要当场抛回前端。详见坑 47。
@@ -60,7 +71,7 @@
 - 契约测试 `scripts/test_sidecar_contract.py` 期望 95/95；PowerShell 5.1 读 `.ps1` 必须有 UTF-8 BOM；别手删安装目录（NSIS 弹 "Unable to install"）。
 - **CI（2026-10-20 修复）**：Python 依赖唯一清单是根目录 `requirements.txt`（CI 与本地共用，别再手写 pip 清单——漏过 Pillow 导致 CI 从未绿）；`desktop/runtime/desktop_entry/.gitkeep` 必须保留（tauri-build 对 bundle.resources 做存在性硬检查，目录没了 `cargo test` 编译期就挂）；frontend 钉 `ubuntu-24.04`（latest 已迁 Ubuntu 26）；`cargo test`(debug) 不需要 `dist`（codegen 仅在非 dev 且无 devUrl 时 panic）。
 - **"装了包但服务起不来"的排查顺序**（2026-10-21 实战）：① `py-runtime\desktop_entry\desktop_entry.exe --self-test`（证明 exe 可跑，`ok:true` 即排除 DLL/依赖/杀软）；② 手动 `--run-tile-server --source <tif> --port 8799` 看 `/meta` 与 stderr；③ 完全按外壳方式起（cwd=`%LOCALAPPDATA%\fgd\data`、8765、三个 PYTHON* 变量）；④ 以上全绿才怀疑外壳（旧版无 stderr 转存/退出码，管道 64 KB 填满会让服务阻塞）。⚠️ 别用开发机的 `desktop/runtime` 判断包是否完整——那里没打包就只有 `.gitkeep`。
-- `check_all.py` **11 层**静态检查（tsc/npm test/ruff/CLI --help/cargo test/仓库卫生/契约/金字塔冒烟等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。验收基线 **632 / 45 / 95 / 42 / 11 层**；⚠️ 看退出码，不要只看 grep 输出。
+- `check_all.py` **12 层**静态检查（tsc/npm test/ruff/CLI --help/cargo test/仓库卫生/契约/金字塔冒烟/多区块选结果等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。验收基线 **801 / 81 / 60 / 95 / 42 / 12 层**；⚠️ 看退出码，不要只看 grep 输出。
 
 ## 9. 待办
 - ⏳ 真实 150 块打标（用户亲自做）→ 裁决 702 vs 727、解锁算法后续项。
