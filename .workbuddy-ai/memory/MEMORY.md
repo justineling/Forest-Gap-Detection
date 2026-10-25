@@ -47,7 +47,18 @@ Rust 侧 `chm_owner_at` / `usable_chm` / `job_slot_is_free` 第三判据 / 预�
 ⚠️ 单实例用 `windows-sys` 的 `CreateMutexW`（`Local\fgd-desktop-single-instance`），
 不要换 `tauri-plugin-single-instance`（要联网拉 crate）；`CreateMutexW` 被 **`Win32_Security`** 门控，少这个 feature 会 unresolved import。
 栈：React 18 + TS + Vite 5 + MapLibre GL 4 + Terra Draw + zustand（手写 CSS）。
-**视觉 = Ark UI 工业信息系统**（2026-10-24，分支 `feat/ui-ark`，family=ark × depth=2）：
+**视觉 = Ark UI 工业信息系统**（2026-10-24 起；**2026-10-25 升到 depth=3**，分支 `feat/ui-ark-v2`）：
+布局 = 地图列 flex（舞台 + 批量栏 40 + 命令条 64|28），「下一步」不再是浮层；
+左右面板可折成 28px 竖轨（断点 1180/980 自动）；状态栏 56px 只留最新一条日志。
+语法 = 步进器只留 2px 下划线（无圆底徽章/无底块）、类别色只以 3px 竖条出现、
+右面板三档平级页签「清单｜验证集｜属性」、7 弹窗一套外壳、圆角全 0。
+⚠️ 四条硬坑：① 日志折叠禁用 `display:none`（innerText 会丢 → verify_render 假红），
+用 `max-height` 裁；② 布局层写 `display` 会被 ark.css 覆盖（要写进设计层）；
+③ MapLibre 不监听容器 resize，容器高度变化必须 `ResizeObserver → map.resize()`；
+④ 每行独立 grid 的 `auto` 列宽逐行不同，面积列必须定宽。
+验收：815 单测 / verify_render 188 / 窄窗无溢出 / ark 审计 0 错 0 警。
+
+**（depth 2 时期记录，仍有效）**（2026-10-24，分支 `feat/ui-ark`，family=ark × depth=2）：
 CSS 分两层 —— `styles.css` 管布局、`ark.css` 管语法（**必须后 import，顺序反了静默失效**）；
 旧变量名保留为别名。规范见 `docs/08-桌面端/界面设计规范-ArkUI.md`。
 另有平行方案 `feat/ui-rhine-lab`（Rhine Lab 纸感，`rhine.css`），两者都从 main 起、未合并。
