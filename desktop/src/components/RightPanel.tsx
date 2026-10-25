@@ -5,6 +5,7 @@ import ReviewList from './ReviewList'
 import HelpDialog from './HelpDialog'
 import { RIGHT_HELP } from '../lib/helpContent'
 import { ALL_CLASSES, CLASS_STYLES } from '../lib/classes'
+import { labeledCount } from '../lib/validation'
 import type { GapClass } from '../types'
 
 interface Props {
@@ -15,19 +16,37 @@ interface Props {
    * boolean 第二次不会触发 effect（值没变）。
    */
   peekReview?: number
+  /** 折叠成 28px 竖轨（窄窗自动折叠 / 用户手点） */
+  collapsed?: boolean
+  onToggle?: () => void
 }
 
-export default function RightPanel({ peekReview = 0 }: Props) {
+/** 右面板的三档视图（平级，不是"外层 tab + 内层模式"） */
+type Tab = 'review' | 'validation' | 'props'
+
+export default function RightPanel({ peekReview = 0, collapsed = false, onToggle }: Props) {
   const gaps = useAppStore((s) => s.gaps)
   const selectedId = useAppStore((s) => s.selectedId)
   const deleteGap = useAppStore((s) => s.deleteGap)
   const setGapClass = useAppStore((s) => s.setGapClass)
   const estimateResult = useAppStore((s) => s.estimateResult)
   const selectedIds = useAppStore((s) => s.selectedIds)
+  const validation = useAppStore((s) => s.validation)
   const [help, setHelp] = useState(false)
-  // 默认停在「复核」：打开应用时右面板若显示"请点选多边形"就是一块死面板，
-  // 而复核清单是进来就有用的东西。
-  const [tab, setTab] = useState<'props' | 'review'>('review')
+  /**
+   * 右面板的三档视图（2026-10-25 从"两层选择器"收敛成一层）。
+   *
+   * 改之前是：外层 tab「复核 | 属性」，里层再来一组「复核 | 验证集」——
+   * 「复核」这个词在同一列里出现两次，而它们不是同一个层级的东西。
+   * 现在三者是平级视图：**清单（改结果）/ 验证集（标真相）/ 属性（看单块）**。
+   * 差别只在数据归属：复核改 `gaps`，验证集只写 `validation.records`。
+   */
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === 'undefined') return 'review'
+    if ('__TAURI_INTERNALS__' in window) return 'review'
+    // 浏览器模式下 `?val=1` 直接进验证集（截图 / 回归用，不进打包逻辑）
+    return new URLSearchParams(window.location.search).has('val') ? 'validation' : 'review'
+  })
   /** 有选中项才显示「属性」标签 —— 没选中时它是一块空面板，不如不出现 */
   const hasSelection = selectedIds.length > 0
 
@@ -36,10 +55,12 @@ export default function RightPanel({ peekReview = 0 }: Props) {
     if (hasSelection) setTab('props')
   }, [hasSelection])
 
-  // 选中被清空（点空白 / 删除 / Esc）→ 属性标签已经不存在了，必须切回复核，
-  // 否则会停在一个渲染不出来的空标签上（白面板）
+  // 选中被清空（点空白 / 删除 / Esc）→ 属性标签已经不存在了，必须切走，
+  // 否则会停在一个渲染不出来的空标签上（白面板）。
+  // ⚠️ 只在**当前就在属性页**时才切 —— 否则用户在验证集里点一下地图空白，
+  //    就被踢回清单，打标节奏直接断掉。
   useEffect(() => {
-    if (!hasSelection) setTab('review')
+    if (!hasSelection) setTab((t) => (t === 'props' ? 'review' : t))
   }, [hasSelection])
 
   // 步进器点「复核」→ 切到复核清单（跳过 hasSelection 的自动切属性）
@@ -50,13 +71,45 @@ export default function RightPanel({ peekReview = 0 }: Props) {
   const feat = gaps.find((f) => f.properties.gap_id === selectedId)
   const est = estimateResult?.per_gap.find((r) => r.gap_id === selectedId)
 
+  // 折叠态：与左面板同一套 28px 竖轨语法（所有 hook 之后才能提前 return）
+  if (collapsed) {
+    return (
+      <aside className="panel right rail">
+        <button
+          type="button"
+          className="pr-toggle"
+          onClick={onToggle}
+          title="展开「复核 / 属性」"
+          aria-label="展开复核面板"
+          aria-expanded={false}
+        >
+          «
+        </button>
+        <span className="pr-label">复核与属性</span>
+        <span className="pr-n mono">{gaps.length}</span>
+      </aside>
+    )
+  }
+
   return (
     <aside className="panel right">
       <div className="panel-head tabs">
-        {/* 顺序：复核在左（进来就用）、属性在右（选中才出现） */}
+        {/* 三档平级视图：清单（改结果）/ 验证集（标真相）/ 属性（看单块）。
+            计数只在"有意义"时显示：清单给总数，验证集给进度，属性没有计数。 */}
         <button className={tab === 'review' ? 'tab active' : 'tab'} onClick={() => setTab('review')}>
-          复核
+          清单
           <span className="tab-n">{gaps.length}</span>
+        </button>
+        <button
+          className={tab === 'validation' ? 'tab active' : 'tab'}
+          onClick={() => setTab('validation')}
+          title="给 150 块打地面真值，用来考核算法 —— 不会改动检测结果"
+        >
+          验证集
+          <span className="tab-n">
+            {labeledCount(validation.samples, validation.records)}/
+            {validation.samples.length || '—'}
+          </span>
         </button>
         {hasSelection && (
           <button
@@ -78,9 +131,21 @@ export default function RightPanel({ peekReview = 0 }: Props) {
         >
           ?
         </button>
+        <button
+          type="button"
+          className="ph-collapse"
+          onClick={onToggle}
+          title="收起面板（把宽度让给地图）"
+          aria-label="收起复核面板"
+          aria-expanded
+        >
+          »
+        </button>
       </div>
 
-      {tab === 'review' && <ReviewList />}
+      {/* 清单与验证集共用同一个列表组件：两者只差"改的是结果还是真值"，
+          列表/筛选/键盘操作完全一样 —— 拆成两个组件只会让两边慢慢长歪。 */}
+      {(tab === 'review' || tab === 'validation') && <ReviewList mode={tab} />}
 
       {tab === 'props' && selectedIds.length > 1 && (
         <div className="multi-hint">

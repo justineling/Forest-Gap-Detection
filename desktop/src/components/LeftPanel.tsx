@@ -6,7 +6,13 @@ import { ALL_CLASSES, CLASS_STYLES, GROUP_META, GROUP_ORDER } from '../lib/class
 import { CLEARANCE_PRESETS } from '../lib/estimate'
 import type { GapClass, PriorityGroup } from '../types'
 
-export default function LeftPanel() {
+interface Props {
+  /** 折叠成 28px 竖轨（窄窗自动折叠 / 用户手点） */
+  collapsed?: boolean
+  onToggle?: () => void
+}
+
+export default function LeftPanel({ collapsed = false, onToggle }: Props) {
   const [help, setHelp] = useState(false)
   const gaps = useAppStore((s) => s.gaps)
   const visibleClasses = useAppStore((s) => s.visibleClasses)
@@ -36,11 +42,41 @@ export default function LeftPanel() {
 
   const definite = byGroup('definite_plant')
 
+  /**
+   * 折叠态：**面板不消失，收成 28px 竖轨**。
+   *
+   * 为什么必须留轨而不是 `display:none`：≤1180px 时它会自动折叠，没有可见入口
+   * 用户会以为"图例功能没了"。竖轨宽度与命令条折叠态一致（28px），
+   * 属于同一套"收起"语法 —— 界面上只有一种"被收起来"的样子。
+   *
+   * 中文竖排用 `writing-mode: vertical-rl` 是正常排版（不是旋转的拉丁文字），
+   * 但**计数**与展开按钮仍保持水平可读，避免"读一个数字要歪头"。
+   */
+  if (collapsed) {
+    return (
+      <aside className="panel left rail">
+        <button
+          type="button"
+          className="pr-toggle"
+          onClick={onToggle}
+          title="展开「图层与类别」"
+          aria-label="展开图层面板"
+          aria-expanded={false}
+        >
+          »
+        </button>
+        <span className="pr-label">图层与类别</span>
+        <span className="pr-n mono">{definite.n}</span>
+      </aside>
+    )
+  }
+
   return (
     <aside className="panel left">
       <div className="panel-head">
-        <h3>图层与类别</h3>
-        <span className="dim">{gaps.length} 个多边形</span>
+        <span className="ph-idx">01</span>
+        <h3 className="ph-title">图层与类别</h3>
+        <span className="ph-n mono">{gaps.length}</span>
         <button
           type="button"
           className="ph-help"
@@ -50,16 +86,32 @@ export default function LeftPanel() {
         >
           ?
         </button>
+        <button
+          type="button"
+          className="ph-collapse"
+          onClick={onToggle}
+          title="收起面板（把宽度让给地图）"
+          aria-label="收起图层面板"
+          aria-expanded
+        >
+          «
+        </button>
       </div>
 
+      {/* 读数块：一条青色顶线 + 21px 压缩体大数字 + 11px 微标签。
+          不做卡片、不做四边框 —— 它和下面 4 个分组是同一张读数表的不同行。 */}
       <div className="card kpi-card">
         <div className="kpi-row">
           <span>确定需补种</span>
-          <b>{definite.n} 块</b>
+          <b>
+            {definite.n} <i>块</i>
+          </b>
         </div>
         <div className="kpi-row">
           <span>面积</span>
-          <b>{Math.round(definite.area).toLocaleString()} m²</b>
+          <b>
+            {Math.round(definite.area).toLocaleString()} <i>m²</i>
+          </b>
         </div>
         <div className="kpi-hint">
           默认只勾选「连片空地 + 株位空缺」—— 这是可直接用于苗木量的口径
@@ -67,13 +119,16 @@ export default function LeftPanel() {
       </div>
 
       <div className="groups">
-        {GROUP_ORDER.map((g) => {
+        {GROUP_ORDER.map((g, gi) => {
           const classes = ALL_CLASSES.filter((c) => CLASS_STYLES[c].group === g)
           if (classes.length === 0) return null
           const sum = byGroup(g)
           const allOn = classes.every((c) => visibleClasses[c])
+          const isKpiGroup = g === 'definite_plant'
           return (
             <section key={g} className="group">
+              {/* 分组头用"通栏填充"做容器语法，类别行用"3px 竖条"做类别语法 ——
+                  两套不重叠的视觉语法，用户不用读标签就知道哪个能勾。 */}
               <div className="group-head">
                 <label className="chk">
                   <input
@@ -81,33 +136,51 @@ export default function LeftPanel() {
                     checked={allOn}
                     onChange={(e) => setGroupVisible(g, e.target.checked)}
                   />
+                  <span className="gh-idx">{String.fromCharCode(65 + gi)}</span>
                   <b>{GROUP_META[g].label}</b>
                 </label>
-                <span className="dim mono">
-                  {sum.n} / {Math.round(sum.area).toLocaleString()} m²
-                </span>
+                {/* 「确定需补种」这一组**就是**上面读数块统计的那一组（同一个
+                    口径、同一批数字）。这里再写一遍 80 块 / 88,014 m²，等于
+                    同一个数据在 100px 内出现两次 —— 用户会怀疑哪个才是准的。
+                    所以：KPI 组不重复计数，也不重复那句口径说明。 */}
+                {!isKpiGroup && (
+                  <span className="gh-sum mono">
+                    {sum.n} <i>块</i> · {Math.round(sum.area).toLocaleString()} <i>m²</i>
+                  </span>
+                )}
               </div>
-              <div className="group-hint">{GROUP_META[g].hint}</div>
+              {!isKpiGroup && <div className="group-hint">{GROUP_META[g].hint}</div>}
               <ul className="cls-list">
                 {classes.map((c) => {
                   const s = stats.get(c)!
                   const on = visibleClasses[c]
                   return (
                     <li key={c}>
+                      {/* 类别色只以**行左沿 3px 竖条**出现。
+                          原来是「复选框 + 独立 8×8 色块」两个同形方块挨着，
+                          12px 字号下会被读成两个勾选框（用户实测反馈）。 */}
+                      <span
+                        className="cls-bar"
+                        style={{ background: CLASS_STYLES[c].color }}
+                        aria-hidden
+                      />
                       <label className="chk">
                         <input
                           type="checkbox"
                           checked={on}
                           onChange={() => toggleClass(c)}
-                        />
-                        <span
-                          className="swatch"
-                          style={{ background: CLASS_STYLES[c].color }}
+                          aria-label={CLASS_STYLES[c].label}
                         />
                         <span className="cls-label">{CLASS_STYLES[c].label}</span>
                       </label>
-                      <span className="dim mono">
-                        {s.n} · {Math.round(s.area).toLocaleString()}
+                      <span className="cls-n mono">
+                        {s.n}
+                        {s.area > 0 && (
+                          <>
+                            {' '}
+                            · {Math.round(s.area).toLocaleString()}
+                          </>
+                        )}
                       </span>
                     </li>
                   )
@@ -135,9 +208,7 @@ export default function LeftPanel() {
             </button>
           ))}
         </div>
-        <div className="kpi-hint">
-          {CLEARANCE_PRESETS.find((p) => p.value === clearanceM)?.hint}
-        </div>
+        <div className="kpi-hint">{CLEARANCE_PRESETS.find((p) => p.value === clearanceM)?.hint}</div>
       </div>
 
       <div className="panel-foot">

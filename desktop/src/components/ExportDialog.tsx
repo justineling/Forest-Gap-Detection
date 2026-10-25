@@ -3,6 +3,7 @@ import { useAppStore } from '../store/useAppStore'
 import { exportBundle, isTauri, openPath, pickOutputDir, type ExportResponse } from '../api/backend'
 import { polygonAreaM2 } from '../lib/geometry'
 import { countClasses, describeExportPlan } from '../lib/exportPreview'
+import { useEscapeClose } from '../lib/dialogKeys'
 import type { GapCollection } from '../types'
 
 function baseName(p: string): string {
@@ -37,6 +38,8 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
   const [res, setRes] = useState<ExportResponse | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // Esc = 关闭。导出中（busy）不响应：文件正在写盘，中途关窗会让人以为没导出。
+  useEscapeClose(onClose, !busy)
 
   /**
    * 「点导出之前」的预览。

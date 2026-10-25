@@ -3,7 +3,20 @@ import { useAppStore } from '../store/useAppStore'
 import { overviewPlan } from '../api/backend'
 import type { OverviewPlan } from '../lib/overview'
 
-export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: string[] }) {
+interface Props {
+  staleWarnings?: string[]
+  /**
+   * 日志区是否展开（2026-10-25）。
+   *
+   * 折叠态只显示**最后一条**日志（`.sb-logs.is-1line` 用 CSS 隐藏前面所有行）。
+   * 为什么按"最后一条"而不是"最新三条"：日志是流水，用户真正关心的是
+   * "刚才那步到底成了没有"，那永远是最新一条；要看上下文就展开。
+   */
+  logOpen?: boolean
+  onToggleLog?: () => void
+}
+
+export default function StatusBar({ staleWarnings = [], logOpen = false, onToggleLog }: Props) {
   const logs = useAppStore((s) => s.logs)
   const backendOnline = useAppStore((s) => s.backendOnline)
   const manualAdded = useAppStore((s) => s.manualAdded)
@@ -37,10 +50,10 @@ export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: stri
   useEffect(() => {
     const el = boxRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [logs])
+  }, [logs, logOpen])
 
   return (
-    <footer className="statusbar">
+    <footer className={`statusbar${logOpen ? ' is-open' : ' is-compact'}`}>
       {/* 过期提示放最前面：它比"影像已就绪"重要得多 —— 后者只是状态，
           前者意味着"你现在看到的数字可能不对"。用整条橙带而不是一个小图标，
           是因为这条信息会被忽略就等于没有。 */}
@@ -53,25 +66,28 @@ export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: stri
       )}
       <div className="sb-left">
         <span className={backendOnline ? 'dot ok' : 'dot bad'} />
-        <span className="dim">
+        <span className="dim sb-opt">
           {backendOnline ? '影像已就绪' : '影像未连接 —— 点右上角「⋯ 更多 → 更换影像」'}
         </span>
-        <span className="sep" />
-        <span className="dim">ROI：{roi ? '已圈选' : '未圈选（将处理整幅）'}</span>
+        <span className="sep sb-opt" />
+        <span className="dim sb-opt">ROI：{roi ? '已圈选' : '未圈选（将处理整幅）'}</span>
         {meta && (
           <>
-            <span className="sep" />
+            <span className="sep sb-opt" />
             <span className="mono dim">
-              {meta.res_m.toFixed(2)} m/px · {meta.width.toLocaleString()}×
-              {meta.height.toLocaleString()} px
+              {meta.res_m.toFixed(2)} m/px
+              <span className="sb-opt">
+                {' '}
+                · {meta.width.toLocaleString()}×{meta.height.toLocaleString()} px
+              </span>
             </span>
           </>
         )}
         {ovr && (
           <>
-            <span className="sep" />
+            <span className="sep sb-opt" />
             <span
-              className={ovr.kind === 'none' ? 'dim' : 'dim'}
+              className="dim sb-opt"
               title={
                 ovr.kind === 'none'
                   ? '这张影像没有金字塔：缩放到远处会明显变慢，可点顶部横幅建立'
@@ -86,14 +102,14 @@ export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: stri
             </span>
           </>
         )}
-        <span className="sep" />
-        <span className="dim">
+        <span className="sep sb-opt" />
+        <span className="dim sb-opt">
           人工编辑：+{manualAdded} / −{manualDeleted} / ✎{manualEdited}
         </span>
       </div>
-      <div className="sb-logs" ref={boxRef}>
+      <div className={`sb-logs${logOpen ? '' : ' is-1line'}`} ref={boxRef}>
         {logs.length === 0 && (
-          <span className="dim">就绪。跟着地图右下角的「下一步」走就行。</span>
+          <span className="dim">就绪。跟着地图下方命令条走就行。</span>
         )}
         {logs.map((l, i) => (
           <div key={i} className="log-line">
@@ -101,6 +117,20 @@ export default function StatusBar({ staleWarnings = [] }: { staleWarnings?: stri
           </div>
         ))}
       </div>
+      {/* 日志展开/收起：与顶部拖拽手柄并存 —— 拖 = 任意高度，点 = 两档。
+          为什么两个都要：拖拽是"我要认真看"，点击是"我就瞄一眼刚才那步"。 */}
+      {onToggleLog && (
+        <button
+          type="button"
+          className="sb-more"
+          onClick={onToggleLog}
+          title={logOpen ? '收起日志（只留最新一条）' : `展开日志（共 ${logs.length} 条）`}
+          aria-label={logOpen ? '收起日志' : '展开日志'}
+          aria-expanded={logOpen}
+        >
+          {logOpen ? '⌄' : '⌃'}
+        </button>
+      )}
     </footer>
   )
 }

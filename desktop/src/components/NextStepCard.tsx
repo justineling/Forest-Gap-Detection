@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { computeSteps, nextAction, type ActionKind, type WorkflowInput } from '../lib/workflow'
-import { useAppStore } from '../store/useAppStore'
 
 interface Props {
   input: WorkflowInput
@@ -11,7 +10,7 @@ interface Props {
    * 载入结果时的错误（`/gaps` 说"没找到检测结果文件"）。
    *
    * 为什么要单独一个 prop 而不是塞进 WorkflowInput：它描述的是**数据链路**
-   * 出了问题，不是流程走到哪一步。混进状态机会让"第 3 步完成没"变得含混。
+   * 出了问题，不是流程走到哪一步。混进状态机里会让"第 3 步完成没"变得含混。
    * 但卡片文案必须换掉 —— 否则用户看到的是"共 0 块空地"或"结果为空"，
    * 而真相是"检测成功了，结果文件在别的目录"。
    */
@@ -21,8 +20,6 @@ interface Props {
    *
    * 为什么需要它（2026-10-24 用户反馈）：「开始检测时参数弹窗出现后，应该把右下角
    * 那个可展开/折叠的卡片默认折叠 —— 减少画面上的信息量，降低思考压力」。
-   * 参数窗本身就占了大半个屏幕，背后再挂一张写着「开始检测」的卡片，
-   * 等于同一个问题问两遍，用户反而不知道该看哪边。
    *
    * 语义是**单向强制**：打开 → 一定折叠（用户之前手动展开也没用）；
    * 关闭 → 回到用户自己的选择（没手动折过就自动展开）。
@@ -31,18 +28,28 @@ interface Props {
 }
 
 /**
- * 「下一步」卡片 —— 整个简化方案的核心。
+ * 「下一步」命令条（2026-10-25 从浮动卡片改成**停靠在地图列下沿**的条）。
  *
- * 原来的问题：14 个按钮平铺，用户不知道先点哪个。功能并不缺，缺的是
- * **"此刻只告诉我该做什么"**。
+ * ## 为什么改
  *
- * 现在的规则：
- *   · 任何时刻只给 **1 个主行动**（+ 最多 2 个次行动）
- *   · 文案说人话（不出现 CHM / sidecar / geojson）
- *   · 完成一步自动换成下一步的内容，不需要用户回来找按钮
+ * 原来是一张 330px 宽的浮层压在地图右下角，直接遮住影像 —— 而影像正是这个
+ * 软件唯一的主舞台。用户的判断（"这块是不是真空地"）全靠看图，遮住的恰好是
+ * 最需要看的地方。它还和底部批量操作栏抢同一块空间（靠 `raised` 上移 58px 硬躲）。
  *
- * 为什么是右下角浮动卡片而不是模态弹窗：用户还要看图、翻图层、点属性。
- * 每一步都弹一个必须关闭的窗，三次之后所有人都会条件反射地点"关闭"。
+ * 现在它是地图列的**最后一行**：不占影像面积，批量操作栏自然叠在它上面，
+ * 两者再也不会重叠。仍然只给 **1 个主行动**（+ 最多 2 个次行动），文案说人话。
+ *
+ * ## 为什么保留「可折叠」
+ *
+ * 复核阶段用户会长时间盯着图和清单，命令条虽然不遮图，但一直占着 64px。
+ * 折成 28px 的一条胶囊（`.next-pill`）后仍然写着"现在停在第几步"，
+ * 不会变成"信息全没了"。
+ *
+ * ## 为什么保留 `.next-card` / `.next-pill` / `.nc-*` 这些类名
+ *
+ * `tests/e2e/verify_render.mjs` 有 13 处断言挂在这些选择器上（卡片存在/消失、
+ * `.nc-step` 里的步骤文案、`.nc-actions button` 的按钮序列）。
+ * 结构换了、类名没换 —— 那些"回归网"才继续有效，否则等于把测试一起删了。
  */
 export default function NextStepCard({
   input,
@@ -52,13 +59,10 @@ export default function NextStepCard({
   settingsOpen = false,
 }: Props) {
   /**
-   * 用户**自己**折的（点卡片右上角「⌄」）。与 `settingsOpen` 分开存：
+   * 用户**自己**折的（点命令条右侧「⌄」）。与 `settingsOpen` 分开存：
    * 参数窗强制折叠不该覆盖用户的手动选择 —— 关掉参数窗后要回到他的选择。
    */
   const [userCollapsed, setUserCollapsed] = useState(false)
-  // 底部批量操作栏（BatchBar）在有选中项时出现，居中于地图区。
-  // 卡片在右下角，窄地图下两者会压到一起 —— 有选中项就上移让位。
-  const hasSelection = useAppStore((s) => s.selectedIds.length > 0)
   const action = nextAction(input, outputDir)
 
   // 「结果文件没找到」是**数据链路**异常，不是"这一步没做"。
@@ -74,8 +78,8 @@ export default function NextStepCard({
     setUserCollapsed(false)
   }, [action.step, action.kind, abnormal])
 
-  // ⚠️ 检测运行中**不显示卡片**：此时顶部已有进度条（DetectBar）说明"在干什么"，
-  //    再挂一张写着「检测中…」的禁用卡片，等于同一件事说两遍，还挡地图。
+  // ⚠️ 检测运行中**不显示命令条**：此时顶部已有进度条（DetectBar）说明"在干什么"，
+  //    再挂一条写着「检测中…」的禁用条，等于同一件事说两遍。
   //    **不要把这个 return 挪到任何 hook 上面**。
   if (input.detectRunning) return null
 
@@ -84,7 +88,6 @@ export default function NextStepCard({
   // 「结果文件没找到」是**数据链路**异常，不是"这一步没做"。
   // 这时不能沿用 action.body（那会写成"共 0 块空地"），要说清怎么补救。
   // 现有结果被保留时也要讲明白 —— 否则用户会以为屏幕上的是新结果。
-  // （`abnormal` 已在函数顶部定义 —— 它被上面的 effect 依赖，必须提前。）
   // ⚠️ loadError 本身已经是完整句子（"未找到检测结果文件（已查找：…）"），
   //    这里**不要再套一层"没找到…（$loadError）"** —— 会变成
   //    "没找到检测结果文件（未找到检测结果文件（已查找：…））"。
@@ -104,9 +107,9 @@ export default function NextStepCard({
    * 谁后跑谁生效，取决于 React 的调度顺序，这种"看起来能工作"的写法迟早出错。
    */
   const collapsed = settingsOpen || userCollapsed
-  const cls = `${action.finished ? ' done' : ''}${hasSelection ? ' raised' : ''}${
-    abnormal ? ' warn' : ''
-  }`
+  const cls = `${action.finished ? ' done' : ''}${abnormal ? ' warn' : ''}`
+  /** 命令条左侧的大编号：完成态用 ✓，异常用 !，其余是步号 */
+  const indexText = abnormal ? '!' : action.finished ? '✓' : String(step?.no ?? 0).padStart(2, '0')
 
   if (collapsed) {
     // ⚠️ 折叠时**不能丢 pill 文案**：用户仍然要知道"现在停在第几步"，
@@ -121,6 +124,7 @@ export default function NextStepCard({
           title="检测参数窗已打开 —— 关掉它就会展开「下一步」提示"
         >
           <span className="np-dot" />
+          <b className="np-no">{indexText}</b>
           {pillText}
           <span className="np-more">参数窗已打开</span>
         </div>
@@ -134,43 +138,43 @@ export default function NextStepCard({
         title="展开「下一步」提示"
       >
         <span className="np-dot" />
+        <b className="np-no">{indexText}</b>
         {pillText}
-        <span className="np-more">展开</span>
+        <span className="np-more">展开 ⌃</span>
       </button>
     )
   }
 
   return (
-    <div className={`next-card${cls}`}>
-      <div className="nc-head">
-        <span className="nc-step">
-          {abnormal ? (
-            <>
-              <b className="nc-warn">!</b> 结果没读到
-            </>
-          ) : action.finished ? (
-            <>
-              <b className="nc-check">✓</b> 全部完成
-            </>
-          ) : (
-            <>
-              第 {step?.no ?? '?'} 步 · {step?.label ?? ''}
-              {step?.optional && <em className="nc-opt">可选</em>}
-            </>
-          )}
-        </span>
-        <button
-          type="button"
-          className="nc-min"
-          onClick={() => setUserCollapsed(true)}
-          title="收起（不影响流程，随时可展开）"
-          aria-label="收起"
-        >
-          ⌄
-        </button>
+    <section className={`next-card${cls}`} aria-label="下一步">
+      {/* 左侧大编号：与顶栏步进器的 01–05 同一套编号系统，把"现在第几步"
+          钉在动作旁边 —— 用户不用抬头去顶栏找。 */}
+      <div className="nc-idx" aria-hidden>
+        <b>{indexText}</b>
+        <span>/05</span>
       </div>
 
-      <p className="nc-body">{body}</p>
+      <div className="nc-main">
+        <div className="nc-head">
+          <span className="nc-step">
+            {abnormal ? (
+              <>
+                <b className="nc-warn">!</b> 结果没读到
+              </>
+            ) : action.finished ? (
+              <>
+                <b className="nc-check">✓</b> 全部完成
+              </>
+            ) : (
+              <>
+                第 {step?.no ?? '?'} 步 · {step?.label ?? ''}
+                {step?.optional && <em className="nc-opt">可选</em>}
+              </>
+            )}
+          </span>
+        </div>
+        <p className="nc-body">{body}</p>
+      </div>
 
       <div className="nc-actions">
         <button
@@ -187,6 +191,16 @@ export default function NextStepCard({
           </button>
         ))}
       </div>
-    </div>
+
+      <button
+        type="button"
+        className="nc-min"
+        onClick={() => setUserCollapsed(true)}
+        title="收起命令条（不影响流程，随时可展开）"
+        aria-label="收起命令条"
+      >
+        ⌄
+      </button>
+    </section>
   )
 }

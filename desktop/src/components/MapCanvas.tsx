@@ -12,10 +12,7 @@ import {
   normalizeBBox,
   selectGapsInBox,
 } from '../lib/selection'
-import BatchBar from './BatchBar'
-import ErrorBoundary from './ErrorBoundary'
 import type { GapGeometry, PolygonGeometry, Position } from '../types'
-
 export type DrawIntent = 'none' | 'roi' | 'add_gap' | 'box_select'
 
 interface Props {
@@ -77,16 +74,28 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     })
     // 缩放控件放**右上角**。
     //
-    // ⚠️ 别挪回右下角：右下角 14px 处是「下一步」卡片（`.next-card`，
-    //    宽 330px 的常驻浮层），两者会重叠 —— 实测缩放的 +/− 被卡片压住，
-    //    用户点不到（2026-10-22 反馈）。
-    //    为什么是挪控件而不是挪卡片：卡片是主行动入口，应该留在阅读动线的落点
-    //    （右下 = 视线终点）；挪一个 30×60 的小控件，比挪一张 330px 的卡片风险小得多。
-    //    右上角原本只有居中的「没有加速结构」横幅（`.ovr-banner`），
-    //    横幅出现时由 styles.css 的 `.map-cell.has-ovr` 把控件往下让开一行。
+    // ⚠️ 别挪回右下角：2026-10-25 之前右下角是「下一步」卡片（宽 330px 的常驻浮层），
+    //    两者重叠，实测缩放的 +/− 被卡片压住点不到（2026-10-22 反馈）。
+    //    现在卡片已改成地图列下沿的命令条（不再压影像），但控件留在右上角 ——
+    //    那里空着，而右下角现在是批量操作栏与命令条的入口区。
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left')
     mapRef.current = map
+
+    /**
+     * 容器尺寸变化 → `map.resize()`。
+     *
+     * ⚠️ 2026-10-25 加。MapLibre 只自己监听 **window** resize，不监听容器。
+     *    而这一版布局里容器高度会**在不改窗口大小的情况下**变化：
+     *      · 底部命令条展开/折叠（64 ↔ 28px）
+     *      · 批量操作栏出现/消失（40px）
+     *      · 左右侧栏折叠（宽度变化）
+     *    不补这一条，canvas 会保持旧尺寸被 CSS 拉伸 —— 影像纵向被压扁，
+     *    而多边形是矢量图层（跟着投影走），于是**图形与影像错位**。
+     *    这类 bug 在截图里看起来"只是有点糊"，但量面积的人会直接算错。
+     */
+    const ro = new ResizeObserver(() => map.resize())
+    ro.observe(containerRef.current)
 
     map.on('load', () => {
       // 空地多边形：按 class 上色
@@ -222,6 +231,7 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     })
 
     return () => {
+      ro.disconnect()
       if (draw) draw.stop()
       map.remove()
       mapRef.current = null
@@ -551,7 +561,7 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   }, [focus, mapReady])
 
   return (
-    <div className="map-wrap">
+    <div className={`map-wrap${backendOnline ? '' : ' is-empty'}`}>
       <div ref={containerRef} className="map-container" />
       <div ref={boxRef} className="box-select-rect" />
       {!backendOnline && (
@@ -582,9 +592,9 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
         </div>
       )}
 
-      <ErrorBoundary area="批量操作">
-        <BatchBar />
-      </ErrorBoundary>
+      {/* 批量操作栏不在这里 —— 2026-10-25 起它和「下一步」命令条一起，
+          由 App 挂在地图列的底部栈里（`.map-cell` 是 flex 列）。
+          放在 `.map-wrap` 里就得靠绝对定位硬躲命令条，两者永远在互相压。 */}
     </div>
   )
 }
