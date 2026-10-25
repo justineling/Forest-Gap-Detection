@@ -1,3 +1,4 @@
+import { useEscapeClose } from '../lib/dialogKeys'
 import type { PreflightResult } from '../types'
 
 interface Props {
@@ -35,6 +36,9 @@ export default function PreflightDialog({
   onOpenData,
   onBuildDerived,
 }: Props) {
+  // Esc = 取消（不开始检测）。检查中（busy）不响应，避免在启动瞬间关窗留下半启动状态。
+  useEscapeClose(onCancel, !busy)
+
   const errors = result.items.filter((i) => i.status === 'error')
   const warns = result.items.filter((i) => i.status === 'warn')
   const blocked = errors.length > 0

@@ -236,7 +236,7 @@ export const RIGHT_HELP: HelpDoc = {
 export const HEADER_HELP: HelpDoc = {
   title: '这个软件怎么用 · 说明',
   intro:
-    '整个软件是五步流程。你不需要记住按钮在哪 —— 地图右下角那张卡片永远只告诉你"下一步做什么"。',
+    '整个软件是五步流程。你不需要记住按钮在哪 —— 地图下方那条命令条永远只告诉你"下一步做什么"。',
   sections: [
     {
       h: '五步流程',

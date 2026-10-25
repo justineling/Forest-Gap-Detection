@@ -29,7 +29,9 @@
  *   A1  引导可取消（× / 取消 / Esc / 遮罩），且 Esc 不清地图选中
  *   A3  最小面积任意值（abc / -5 / 0 / 1e999 / 空格 / 超大值），筛选跨标签不丢
  *   B   三处帮助弹窗（左栏 / 右栏 / header）+ Esc 不误清选中
- *   C1  右栏「复核|属性」标签的出现与自动切换
+ *   C1  右栏「清单|验证集|属性」标签的出现与自动切换
+ *       （2026-10-25：原来的「复核」页签改名为「清单」，并把内层的
+ *        「复核|验证集」二选一提升为同级页签 —— 同一个词不再出现两次）
  *   D1  右键取消绘制（preventDefault / 不改选中 / 画完仍可用）
  *   M   反例：?mock=ready 下地图会崩（保留为已知问题看门狗）
  *   X   导出链路：顶层 features 空、要素在 blocks[].gaps 时仍能导出
@@ -375,8 +377,14 @@ async function main() {
     if (s === 'C1') {
       await goto('')
       let st = await snap()
-      ok(st.tabs.length === 1 && st.tabs[0].t.startsWith('复核') && st.tabs[0].active,
-        '未选中时只有「复核」且激活', JSON.stringify(st.tabs))
+      ok(
+        st.tabs.length === 2 &&
+          st.tabs[0].t.startsWith('清单') &&
+          st.tabs[1].t.startsWith('验证集') &&
+          st.tabs[0].active,
+        '未选中时是「清单 | 验证集」两页签、清单激活',
+        JSON.stringify(st.tabs),
+      )
       await evalJs(`document.querySelector('.rv-item')?.click(); return true;`)
       await sleep(500)
       st = await snap()
@@ -385,12 +393,12 @@ async function main() {
       await del()
       st = await snap()
       ok(!st.tabs.some((x) => x.t === '属性') && st.tabs[0].active,
-        'Delete 删除后「属性」消失并回「复核」')
+        'Delete 删除后「属性」消失并回「清单」')
       await evalJs(`document.querySelector('.rv-item')?.click(); return true;`)
       await sleep(400)
       await esc()
       st = await snap()
-      ok(!st.tabs.some((x) => x.t === '属性') && st.tabs[0].active, 'Esc 清空选中 → 回「复核」')
+      ok(!st.tabs.some((x) => x.t === '属性') && st.tabs[0].active, 'Esc 清空选中 → 回「清单」')
     }
 
     if (s === 'D1') {

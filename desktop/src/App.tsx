@@ -7,6 +7,7 @@ import RightPanel from './components/RightPanel'
 import StatusBar from './components/StatusBar'
 import DetectBar from './components/DetectBar'
 import DetectSettings from './components/DetectSettings'
+import BatchBar from './components/BatchBar'
 import NextStepCard from './components/NextStepCard'
 import HelpDialog from './components/HelpDialog'
 import { HEADER_HELP } from './lib/helpContent'
@@ -234,6 +235,50 @@ export default function App() {
   const [leftW, setLeftW] = useState<number>(LAYOUT_DEFAULT.leftW)
   const [rightW, setRightW] = useState<number>(LAYOUT_DEFAULT.rightW)
   const [statusH, setStatusH] = useState<number>(LAYOUT_DEFAULT.statusH)
+
+  /**
+   * 侧栏折叠（2026-10-25 新增）。
+   *
+   * ## 为什么需要
+   *
+   * 窄窗（900×760，笔记本分屏就是这个尺寸）实测：288 + 300 两个固定侧栏把地图
+   * 挤到 312px，而地图是这个软件唯一的主舞台。用户看到的是一片"加载失败"的黑。
+   *
+   * ## 为什么是「自动 + 可覆盖」而不是纯手动
+   *
+   * 纯手动 → 用户永远不知道自己能折，窄窗下继续忍受一条缝；
+   * 纯自动 → 用户在大屏上折了图例，一改窗口大小就被强行展开，很烦。
+   * 所以：断点决定**默认值**，用户点过的选择作为 override 保留；
+   * 只有当断点本身变化时才清掉 override（那时"默认值"已经换了前提）。
+   */
+  const [viewportW, setViewportW] = useState<number>(() =>
+    typeof window === 'undefined' ? 1440 : window.innerWidth,
+  )
+  const [panelOverride, setPanelOverride] = useState<{ left?: boolean; right?: boolean }>({})
+  /** 左栏（图例/类别）在 1180px 以下默认收起：它不是决策数据，复核清单才是 */
+  const autoLeftOpen = viewportW >= 1180
+  /** 右栏（复核/属性）在 980px 以下默认收起：再窄就只能二选一看地图 */
+  const autoRightOpen = viewportW >= 980
+  useEffect(() => {
+    // 断点跨过 → 前提变了，把用户的手动选择作废，回到"这个宽度下的合理默认"
+    setPanelOverride({})
+  }, [autoLeftOpen, autoRightOpen])
+  const leftOpen = panelOverride.left ?? autoLeftOpen
+  const rightOpen = panelOverride.right ?? autoRightOpen
+  const toggleLeft = useCallback(() => setPanelOverride((o) => ({ ...o, left: !leftOpen })), [leftOpen])
+  const toggleRight = useCallback(
+    () => setPanelOverride((o) => ({ ...o, right: !rightOpen })),
+    [rightOpen],
+  )
+
+  /**
+   * 状态栏日志是否展开（2026-10-25）。
+   *
+   * 默认只留 1 行"最近一条"：日志是**排查工具**，不是常驻内容 ——
+   * 默认 120px 高度里有 4~5 行 10px 灰字常年在动，把"影像已就绪 / ROI / 分辨率"
+   * 这些真正的状态挤到左边一窄条。需要时展开，高度仍由拖拽手柄控制。
+   */
+  const [logOpen, setLogOpen] = useState(false)
   /**
    * 拖拽起点对应的"已提交尺寸"。
    *
@@ -268,6 +313,9 @@ export default function App() {
   }, [])
   /** 拖动状态栏上边框：向上拖（delta 为负）= 状态栏变高 */
   const onDragStatus = useCallback((delta: number) => {
+    // 手动拖高 = 明确表示"我要看日志"，顺手把日志区展开 ——
+    // 否则拖出一大片空白（日志被压在 1 行里），用户会以为拖拽坏了。
+    setLogOpen(true)
     setStatusH(clampSize(sizeBase.current.statusH - delta, STATUS_LIMIT.min, STATUS_LIMIT.max))
   }, [])
 
@@ -290,6 +338,7 @@ export default function App() {
    */
   useEffect(() => {
     const onResize = (): void => {
+      setViewportW(window.innerWidth)
       const r = clampLayoutWidths(sizeNow.current.leftW, sizeNow.current.rightW, window.innerWidth)
       setLeftW(r.left)
       setRightW(r.right)
@@ -1425,9 +1474,11 @@ export default function App() {
         <DetectBar />
       </ErrorBoundary>
 
-      <main className="body">
+      <main
+        className={`body${leftOpen ? '' : ' left-collapsed'}${rightOpen ? '' : ' right-collapsed'}`}
+      >
         <ErrorBoundary area="图层面板">
-          <LeftPanel />
+          <LeftPanel collapsed={!leftOpen} onToggle={toggleLeft} />
         </ErrorBoundary>
         {/* 左面板右边框的拖拽手柄：向右拖 = 左面板变宽。
             手柄 `position:absolute`（见 styles.css），所以它不占 grid 的列 —— 
@@ -1438,6 +1489,7 @@ export default function App() {
           label="拖动调整左侧面板宽度"
           onDrag={onDragLeft}
           onEnd={onEndLeft}
+          hidden={!leftOpen}
         />
         <div className="map-cell">
           <ErrorBoundary area="地图">
@@ -1454,16 +1506,22 @@ export default function App() {
               />
             </ErrorBoundary>
           )}
-          {/* 「下一步」卡片浮在地图右下角：只给一个主动作，走完自动换内容。
-              缩放控件已挪到右上角 —— 以前两者都占右下角，+/- 被卡片压住点不到。 */}
+          {/* 「下一步」命令条：停靠在地图列下沿，**不再浮在影像上**。
+              2026-10-25 之前它是一张 330px 宽的浮层压在右下角，遮住的正是
+              用户判断"这块是不是真空地"时唯一要看的东西；而且和批量操作栏
+              抢同一块空间（靠 `raised` 上移 58px 硬躲）。现在两者都是
+              `.map-cell` 这个 flex 列里的普通行，谁也不会盖住谁。 */}
+          <ErrorBoundary area="批量操作">
+            <BatchBar />
+          </ErrorBoundary>
           <ErrorBoundary area="下一步提示">
             <NextStepCard
               input={workflowInput}
               outputDir={outputDir || null}
               onAction={onWorkflowAction}
               loadError={gapsError}
-              /* 参数窗一开就把卡片收成胶囊：参数窗已经占了半屏，背后再挂一张
-                 写着「开始检测」的卡片，等于同一个问题问两遍（2026-10-24 用户反馈）。 */
+              /* 参数窗一开就把命令条收成胶囊：参数窗已经占了半屏，背后再挂一条
+                 写着「开始检测」的条，等于同一个问题问两遍（2026-10-24 用户反馈）。 */
               settingsOpen={showSettings}
             />
           </ErrorBoundary>
@@ -1475,14 +1533,15 @@ export default function App() {
           label="拖动调整右侧面板宽度"
           onDrag={onDragRight}
           onEnd={onEndRight}
+          hidden={!rightOpen}
         />
         <ErrorBoundary area="属性面板">
-          <RightPanel peekReview={reviewPeek} />
+          <RightPanel peekReview={reviewPeek} collapsed={!rightOpen} onToggle={toggleRight} />
         </ErrorBoundary>
       </main>
       {/* 包一层：手柄要 `position:absolute` 贴在这条状态栏的上边框，
           而 `<footer>` 自己是 grid 容器（不能既当定位锚又当网格） */}
-      <div className="status-wrap">
+      <div className={`status-wrap${logOpen ? ' logs-open' : ''}`}>
         <Resizer
           dir="row"
           className="rs-status"
@@ -1491,7 +1550,11 @@ export default function App() {
           onEnd={onEndStatus}
         />
         <ErrorBoundary area="状态栏">
-          <StatusBar staleWarnings={staleWarnings} />
+          <StatusBar
+            staleWarnings={staleWarnings}
+            logOpen={logOpen}
+            onToggleLog={() => setLogOpen((v) => !v)}
+          />
         </ErrorBoundary>
       </div>
 

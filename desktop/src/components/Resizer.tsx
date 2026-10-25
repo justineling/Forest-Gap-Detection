@@ -28,6 +28,15 @@ export interface ResizerProps {
   className?: string
   /** 读屏软件用的说明 */
   label?: string
+  /**
+   * 面板已折叠时隐藏手柄。
+   *
+   * 为什么不是直接不渲染：调用方写 `<Resizer hidden={...}/>` 比写三元更短，
+   * 而且保留了同一个组件实例（折叠/展开不会重挂 pointer 监听）。
+   * 折叠态下手柄仍在 DOM 里会变成一个 4px 的可拖区域，拖它没有任何意义 ——
+   * 所以用 `display:none` 之外还要 `aria-hidden`，别让读屏软件读到假的分隔条。
+   */
+  hidden?: boolean
 }
 
 export default function Resizer({
@@ -36,6 +45,7 @@ export default function Resizer({
   onEnd,
   className = '',
   label,
+  hidden = false,
 }: ResizerProps) {
   /** 按下时的指针坐标（null = 当前没有在拖） */
   const startRef = useRef<number | null>(null)
@@ -67,6 +77,8 @@ export default function Resizer({
   }
 
   const cls = ['resizer', dir, dragging ? 'dragging' : '', className].filter(Boolean).join(' ')
+
+  if (hidden) return null
 
   return (
     <div

@@ -254,16 +254,93 @@ kbd {
   border-left: 1px solid var(--line);
 }
 
+/* 面板头：288px 里要放 5 件事（索引 / 标题 / 计数 / 帮助 / 收起）。
+   用 grid 而不是 flex + space-between —— flex 下"标题变长"会先挤扁计数，
+   而计数（280 个多边形）是决策数据，标题（图层与类别）是固定词。
+   所以：标题列可伸缩，其余四列各自定宽。 */
 .panel-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  column-gap: 8px;
+  height: 36px;
+  padding: 0 4px 0 12px;
   border-bottom: 1px solid var(--line);
 }
 .panel-head h3 {
   margin: 0;
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ph-idx {
+  font-family: var(--ark-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.ph-n {
+  font-size: 10.5px;
+  color: var(--dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* 帮助与收起：一个管"信息"，一个管"布局"，中间一条竖线把它们切成两组 */
+.ph-collapse {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ph-collapse:hover {
+  color: var(--accent);
+}
+
+/* 折叠后的竖轨：28px（与命令条折叠态同宽，属于同一套"收起"语法）。
+   必须留可见入口 —— 窄窗自动折叠时若整块消失，用户会以为"图例功能没了"。 */
+.panel.rail {
+  width: 28px;
+  min-width: 28px;
+  align-items: center;
+  padding: 4px 0;
+  gap: 8px;
+  overflow: hidden;
+}
+.pr-toggle {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.pr-toggle:hover {
+  color: var(--accent);
+}
+.pr-label {
+  /* 中文竖排是正常排版（不是把拉丁文字旋转 90°），读起来像书脊 */
+  writing-mode: vertical-rl;
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: var(--dim);
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.pr-n {
+  font-size: 9.5px;
+  color: var(--accent);
+  flex: 0 0 auto;
 }
 
 .panel-foot {
@@ -305,15 +382,41 @@ kbd {
   padding: 8px 8px 6px;
   border-bottom: 1px solid var(--line);
 }
+/* 分组头：通栏填充（容器语法）。与类别行的"3px 竖条"是两套不重叠的语法 ——
+   填充 = 这是一组，竖条 = 这是某一类。用户不用读标签就知道哪个能勾。 */
 .group-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 10px;
+  height: 26px;
+}
+.gh-idx {
+  font-family: var(--ark-font-mono);
+  font-size: 9px;
+  color: var(--dim);
+  letter-spacing: 0.1em;
+}
+.gh-sum {
+  font-size: 10px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gh-sum i,
+.kpi-row b i {
+  font-style: normal;
+  font-size: 0.62em;
+  font-weight: 400;
+  color: var(--dim);
+  margin-left: 2px;
+  letter-spacing: 0.04em;
 }
 .group-hint {
   font-size: 11px;
   color: var(--dim);
-  margin: 2px 0 6px 20px;
+  margin: 2px 8px 6px calc(var(--ark-bar, 3px) + 8px);
 }
 
 .chk {
@@ -332,22 +435,37 @@ kbd {
   margin: 0;
   padding: 0;
 }
+/* 类别行：竖条 / 复选框 / 标签 / 计数 四列。
+   删掉 `padding-left:14px` —— 竖条自己就是缩进标记。 */
 .cls-list li {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--ark-bar, 3px) 18px minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  padding: 2px 0 2px 14px;
+  column-gap: 8px;
+  height: 28px;
+  padding: 0 8px 0 0;
   font-size: 12.5px;
 }
-.cls-label {
-  margin-left: 2px;
+.cls-list li .chk {
+  grid-column: 2 / 4;
+  min-width: 0;
 }
-.swatch {
-  width: 11px;
-  height: 11px;
-  border-radius: 2px;
-  display: inline-block;
-  border: 1px solid rgba(244, 246, 246, 0.22);
+.cls-bar {
+  display: block;
+  width: var(--ark-bar, 3px);
+  height: 16px;
+}
+.cls-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cls-n {
+  font-size: 10.5px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ---------- 地图 ---------- */
@@ -509,7 +627,9 @@ kbd {
 /* ---------- 状态栏 ---------- */
 .statusbar {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  /* 元信息列改成 auto：340px 在 900px 宽下等于把日志挤没了。
+     `minmax(0,auto)` 让它在窄窗里自然收缩（配合 `.sb-opt` 的断点隐藏）。 */
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) 28px;
   /* 显式两行：第 1 行留给「结果可能已过期」警示带（没有时高度为 0），
      第 2 行吃掉剩余高度。必须显式写，否则日志区会把整条状态栏撑高 ——
      而状态栏现在是**固定高度**（`--status-h`，可拖拽），撑高就被裁掉。 */
@@ -523,6 +643,39 @@ kbd {
      用户反馈"底部太小，很难看日志"）。日志区自己滚，整条状态栏不滚。 */
   height: var(--status-h, 120px);
   overflow: hidden;
+}
+/* 折叠态：只留一行"最新日志"，高度收到 56px（= 状态基线，不再吃掉 1/8 屏高）。
+   展开态回到 `--status-h`（拖拽手柄控制，默认 120px）。
+   ⚠️ 折叠用的是 CSS 隐藏**前面的行**，不是不渲染 —— 日志仍全在 DOM 里，
+      `.sb-logs` 的 innerText 依然是全量（回归脚本靠它判断"某条日志出现过"）。 */
+.statusbar.is-compact {
+  height: 56px;
+}
+.statusbar.is-compact .sb-logs {
+  justify-content: flex-end;
+}
+.statusbar.is-compact .log-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sb-more {
+  grid-row: 2;
+  grid-column: 3;
+  align-self: start;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sb-more:hover {
+  color: var(--accent);
+  border-color: var(--line);
 }
 .sb-left {
   grid-row: 2;
@@ -546,6 +699,8 @@ kbd {
 .sb-logs {
   grid-row: 2;
   grid-column: 2;
+  display: flex;
+  flex-direction: column;
   /* 上限交给父级的固定高度（`--status-h`）—— 这里再写 max-height 会让
      "拖高状态栏"变成白拖（日志区纹丝不动）。min-height:0 是滚动的前提。 */
   max-height: none;
@@ -1342,24 +1497,36 @@ kbd {
   flex: 1;
 }
 
+/* 四片「仪表片」：2×2 或 4 列等宽，计数落在同一条基线上可以直接比大小。
+   原来是 `border-radius:999px` 的胶囊 —— 那是 POPUCOM 的语法，不是 ark。 */
 .rv-filter {
-  display: flex;
-  gap: 5px;
-  padding: 10px 12px 6px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px 10px 6px;
 }
 .chip {
   display: flex;
-  align-items: center;
-  gap: 5px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  height: 34px;
+  padding: 0 6px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--dim);
   font-family: inherit;
-  font-size: 11.5px;
-  padding: 4px 10px;
+  font-size: 11px;
   cursor: pointer;
+  overflow: hidden;
+}
+.chip-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chip:hover {
   border-color: var(--accent);
@@ -1371,25 +1538,45 @@ kbd {
   color: var(--accent);
 }
 .chip-n {
-  font-size: 10.5px;
-  opacity: 0.75;
+  font-family: var(--ark-font-mono);
+  font-size: 9.5px;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
+/* 面积档 + 自定义值同一行。原来这里是 `最小面积` 四个字 + 5 档 + 输入框 + m²，
+   在 300px 宽下被压成「最/小/面/积」竖排单字、输入框被切掉半截 ——
+   因为 flex 让每一段都想要自己的最小宽度。现在：档位吃 1fr，输入框定宽 58px，
+   单位用伪元素贴进输入框右侧，不再单独占一列。 */
 .rv-row-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 12px 10px;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  gap: 6px;
+  padding: 0 10px 8px;
   font-size: 11.5px;
   border-bottom: 1px solid var(--line);
 }
 .rv-row-filter .seg {
-  flex: 1;
+  display: grid;
+  /* 4 档（不限 / ≥100 / ≥500 / ≥1000）—— 写成 5 会多出一条空列，
+     档位被压窄 20%，而那个空列看起来像"第五个按钮加载失败"。 */
+  grid-template-columns: repeat(4, 1fr);
+  height: 28px;
 }
 .rv-row-filter .seg-btn {
-  padding: 3px 0;
-  font-size: 11px;
+  padding: 0;
+  font-size: 10.5px;
+}
+.rv-row-filter::after {
+  content: 'm²';
+  position: absolute;
+  right: 14px;
+  top: 8px;
+  font-family: var(--ark-font-mono);
+  font-size: 9px;
+  color: var(--dim);
+  pointer-events: none;
 }
 
 .rv-list {
@@ -1403,42 +1590,59 @@ kbd {
 .rv-list li {
   margin-bottom: 2px;
 }
+/* 用 grid 不用 flex：面积要右对齐、gap_id 要定宽右对齐，
+   flex 的 justify-content 锁不住两条基线。 */
 .rv-item {
   width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--ark-bar, 3px) minmax(64px, auto) minmax(0, 1fr) auto 46px;
   align-items: center;
-  gap: 7px;
+  column-gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 0;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 7px;
+  border: 0;
+  border-radius: 0;
   color: var(--text);
   font-family: inherit;
   font-size: 12px;
-  padding: 6px 7px;
   cursor: pointer;
   text-align: left;
 }
 .rv-item:hover {
   background: var(--panel-2);
-  border-color: var(--line);
 }
 .rv-item.active {
-  background: rgba(24, 209, 255, 0.12);
-  border-color: rgba(24, 209, 255, 0.45);
+  background: var(--ark-scan, rgba(24, 209, 255, 0.1));
+  outline: 1px solid rgba(24, 209, 255, 0.45);
+  outline-offset: -1px;
 }
-.rv-swatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex: 0 0 8px;
+.rv-bar {
+  display: block;
+  width: var(--ark-bar, 3px);
+  height: 16px;
 }
 .rv-area {
   font-variant-numeric: tabular-nums;
-  min-width: 62px;
+  text-align: right;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.rv-area i {
+  font-style: normal;
+  font-size: 9px;
+  color: var(--dim);
+  margin-left: 2px;
 }
 .rv-cls {
-  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--dim);
+}
+.rv-cls-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1452,8 +1656,10 @@ kbd {
   color: #8d9396;
 }
 .rv-id {
-  font-size: 10.5px;
-  color: #6b7275;
+  font-size: 9.5px;
+  color: var(--dim);
+  text-align: right;
+  white-space: nowrap;
 }
 .rv-more {
   padding: 8px 12px 12px;
@@ -1461,23 +1667,34 @@ kbd {
   line-height: 1.6;
 }
 
-/* ---------- 批量操作栏 ---------- */
+/* ---------- 批量操作栏（地图列底部栈的第一行） ---------- */
+/* 2026-10-25：从"浮在地图中间的胶囊"改成**通栏行**。
+   原来 `position:absolute; left:50%; translateX(-50%)` + 圆角 + 投影，
+   既要躲「下一步」卡片（`.raised`），又压在影像上。现在它是命令条上面的一行，
+   高度相加、互不遮挡；`flex-wrap` 保留（窄地图里按钮可以折到第二行）。 */
 .batch-bar {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  z-index: 20;
+  position: relative;
+  z-index: 11;
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 9px 14px;
-  background: rgba(12, 17, 20, 0.97);
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
-  max-width: calc(100% - 32px);
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 5px 12px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--line);
   flex-wrap: wrap;
+  animation: bb-in var(--ark-t-out) var(--ark-ease);
+}
+@keyframes bb-in {
+  from {
+    clip-path: inset(100% 0 0 0);
+    transform: translateY(6px);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: none;
+  }
 }
 .bb-info {
   display: flex;
@@ -2137,14 +2354,22 @@ kbd {
   border: 1px solid var(--line);
 }
 
-/* ---------- 地图单元格（卡片定位的锚）---------- */
+/* ---------- 地图单元格：影像舞台 + 底部命令栈 ---------- */
+/* 2026-10-25：从"相对定位的锚"改成**弹性列**。
+   原来是 `.map-wrap` 撑满、卡片与批量栏各自绝对定位浮在上面 —— 于是两者
+   必然互相遮挡（靠 `.raised` 硬躲）。现在地图列 = 舞台（flex:1）+ 底部若干行，
+   高度是相加而不是叠放，影像一个像素都不会被盖住。
+   ⚠️ 容器高度变化必须 `map.resize()`（见 MapCanvas 的 ResizeObserver），
+      否则 canvas 被 CSS 拉伸、影像与矢量多边形错位。 */
 .map-cell {
   position: relative;
   min-width: 0;
   display: flex;
+  flex-direction: column;
 }
 .map-cell > .map-wrap {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* 缩放控件在右上角（见 MapCanvas.tsx）—— 这条注释留在这儿是为了说明
@@ -2152,33 +2377,25 @@ kbd {
    横幅 `.ovr-banner` 改成在**右侧留出 62px 安全区**里居中（见下方定义），
    两者在水平方向上根本不会相交，所以不需要按横幅高度去猜一个 margin-top。 */
 
-/* ---------- 「下一步」卡片 ---------- */
+/* ---------- 「下一步」命令条（停靠在地图列下沿） ---------- */
+/* 2026-10-25：不再是浮层。原写法 `position:absolute; right:14px; bottom:14px;
+   width:330px` 直接压在影像上，且与批量操作栏抢同一块空间。
+   现在是地图列里的一行：三列 grid —— 编号 / 说明 / 操作。 */
 .next-card {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
+  position: relative;
   z-index: 12;
-  width: 330px;
-  max-width: calc(100% - 28px);
-  padding: 12px 14px 13px;
-  background: rgba(12, 17, 20, 0.97);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: 11px;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(6px);
-}
-.next-card.done {
-  border-left-color: var(--accent);
-  background: rgba(24, 42, 35, 0.97);
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr) auto 28px;
+  align-items: center;
+  column-gap: 16px;
+  flex: 0 0 auto;
+  height: var(--ark-dock-h, 64px);
+  padding: 0 8px 0 0;
+  border-top: 1px solid var(--line);
 }
 /* 结果文件没找到：数据链路异常，用警示色，别和"流程走完了"混在一起 */
-.next-card.warn,
-.next-pill.warn {
-  border-left-color: var(--warn);
-}
 .next-card.warn {
-  background: rgba(42, 34, 18, 0.97);
+  border-top-color: var(--warn);
 }
 .nc-warn {
   color: var(--warn);
@@ -2188,9 +2405,8 @@ kbd {
 .nc-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 7px;
+  margin-bottom: 2px;
 }
 .nc-step {
   font-size: 11.5px;
@@ -2207,22 +2423,24 @@ kbd {
   font-style: normal;
   font-size: 10px;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: 0;
   background: #2b353a;
   color: #8d9396;
 }
 
+/* 收起按钮：固定在最后一列，展开/收起时位置不变（按钮不许跑） */
 .nc-min {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--dim);
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
+  flex: 0 0 auto;
 }
 .nc-min:hover {
   background: var(--panel-2);
@@ -2230,58 +2448,67 @@ kbd {
   color: var(--text);
 }
 
+/* 说明只占一行：命令条高度固定 64px，长文案走 title 全文。
+   ⚠️ 不许把说明删掉 —— 它是"这一步在干什么"的唯一解释（skill 明令禁止
+      用删文案来换密度）。所以这里做的是**截断 + title**，不是删除。 */
 .nc-body {
-  margin: 0 0 10px;
-  font-size: 12.5px;
-  line-height: 1.65;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nc-actions {
   display: flex;
   align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
 }
 .nc-actions .btn.primary {
-  flex: 1 1 auto;
-  min-width: 120px;
+  min-width: 104px;
 }
 
-/* 折叠后的胶囊 */
+/* 折叠后的**条**（不是胶囊）：与展开态同宽、同一条基线，只有 28px 高。
+   仍然写着"第几步 + 待办数"，丢掉的只有那句解释（它在顶栏 STEP 段与日志里还有）。 */
 .next-pill {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
+  position: relative;
   z-index: 12;
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
-  background: rgba(12, 17, 20, 0.97);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: 999px;
+  gap: 8px;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
   color: var(--text);
   font-family: inherit;
-  font-size: 12px;
+  font-size: 11.5px;
+  text-align: left;
   cursor: pointer;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: none;
 }
 .next-pill:hover {
-  border-color: var(--accent);
+  background: var(--panel-2);
+  color: var(--accent);
 }
-/* 检测参数窗打开时，卡片被**强制**折叠成胶囊（见 NextStepCard 的 settingsOpen）。
-   这时胶囊不是可点元素 —— 点了也展不开，所以光标与悬停都不做"可点"的暗示，
-   否则又是一个死按钮。 */
+/* 检测参数窗打开时，命令条被**强制**折叠（见 NextStepCard 的 settingsOpen）。
+   这时它不展开 —— 点了也展不开，所以光标与悬停都不做"可点"的暗示。 */
 .next-pill.np-locked {
   cursor: default;
 }
 .next-pill.np-locked:hover {
-  border-color: var(--line);
+  background: transparent;
+  color: var(--text);
 }
 .next-pill.done {
-  border-left-color: var(--accent);
   color: var(--accent);
 }
 .np-dot {
@@ -2290,16 +2517,12 @@ kbd {
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px rgba(24, 209, 255, 0.15);
+  flex: 0 0 auto;
 }
 .np-more {
+  margin-left: auto;
   font-size: 10.5px;
   color: var(--dim);
-}
-
-/* 有选中项时卡片上移，给底部批量操作栏让位（窄地图下两者会重叠） */
-.next-card.raised,
-.next-pill.raised {
-  bottom: 72px;
 }
 
 /* 菜单底部的说明性文字（不是可点项） */
@@ -2315,27 +2538,13 @@ kbd {
   color: var(--dim);
 }
 
-/* 窄窗口：卡片收窄，别把地图压得看不见 */
-@media (max-width: 1280px) {
-  .next-card {
-    width: 288px;
-    right: 10px;
-    bottom: 10px;
-    padding: 10px 12px 11px;
-  }
-  .next-pill {
-    right: 10px;
-    bottom: 10px;
-  }
-  .next-card.raised,
-  .next-pill.raised {
-    bottom: 68px;
-  }
-}
-
 /* 复核清单：自定义最小面积输入框 */
 .rv-area-input {
-  width: 74px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  text-align: right;
+  padding: 0 16px 0 4px;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -2655,44 +2864,11 @@ kbd {
 }
 
 /* ============================================================================
-   复核清单：模式切换（复核 / 验证集）+ 键盘流提示
+   复核清单：键盘流提示
+   ----------------------------------------------------------------------------
+   视图切换（清单 / 验证集 / 属性）已上移到右面板的 tab 条 ——
+   原来这里是第二组「复核 | 验证集」，同一个词在同一列里出现两次。
    ============================================================================ */
-.rv-mode {
-  display: flex;
-  gap: 4px;
-  padding: 8px 12px 6px;
-  border-bottom: 1px solid var(--line);
-}
-.rv-mode-btn {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--dim);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.rv-mode-btn:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-.rv-mode-btn.active {
-  background: rgba(24, 209, 255, 0.13);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.rv-mode-n {
-  font-size: 10.5px;
-  opacity: 0.8;
-  font-variant-numeric: tabular-nums;
-}
-
 /* 键盘提示：让用户知道有快捷键，而不是去猜 */
 .rv-kbd {
   padding: 8px 12px;
@@ -3062,3 +3238,75 @@ kbd {
   line-height: 1.5;
   color: var(--warn);
 }
+
+/* ============================================================================
+   depth 3 布局层补充（2026-10-25）
+   ----------------------------------------------------------------------------
+   这一节只放**结构**：列宽、断点、折叠态的 grid。颜色/字号/线条归 ark.css。
+   ============================================================================ */
+
+/* 侧栏折叠：不是 display:none，而是收成 28px 竖轨（入口必须可见）。
+   ⚠️ 三列宽度必须在这里写死 —— 用 `--left-w: 0` 会让拖拽手柄的基准尺寸
+      在展开时错乱（手柄读的是 sizeNow，不是 CSS 变量）。 */
+.body.left-collapsed {
+  grid-template-columns: 28px minmax(0, 1fr) var(--right-w, 300px);
+}
+.body.right-collapsed {
+  grid-template-columns: var(--left-w, 288px) minmax(0, 1fr) 28px;
+}
+.body.left-collapsed.right-collapsed {
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+}
+
+/* 日志折叠：只**露出**最后一条。
+   ⚠️ 必须用 `max-height` + `overflow:hidden` 裁，**不能**用 `display:none` 藏前面的行：
+      `innerText` 会把 `display:none` 的文本一起排除掉，于是
+      `tests/e2e/verify_render.mjs` 里 12 处"日志里出现过某句话"的断言全部假失败
+      （实测：场景 12 的「导出完成」直接红）。裁剪不改变 innerText，只改变可见性。 */
+.sb-logs.is-1line {
+  max-height: 1.55em;
+  overflow: hidden;
+}
+
+/* 顶栏：步进器可以被压缩，右侧图标组绝不参与收缩。
+   900×760 下崩坏的直接原因是 `.toolbar{flex-wrap:wrap}` —— 图标组把步进器
+   挤断行，第 5 步被截掉。现在窄窗改成 nowrap + 步进器横向滚动。 */
+.toolbar {
+  flex-wrap: nowrap;
+}
+.tb-right {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+@media (max-width: 1180px) {
+  /* 步进器：允许横向滚动（而不是把标签藏掉 —— 那是把决策 UI 压成编号） */
+  .step-rail {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .step-rail::-webkit-scrollbar {
+    display: none;
+  }
+  .sr-item {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 980px) {
+  /* 状态栏元信息瘦身：隐藏的每一项都在别处还有（kicker / 复核页签计数 / 日志）。
+     ⚠️ 在线状态点**不隐藏** —— 离线是唯一必须立刻看见的状态。 */
+  .sb-left .sb-opt {
+    display: none;
+  }
+  .rv-id {
+    display: none;
+  }
+}
+
+/* ⚠️ 品牌块与 kicker 的隐藏规则不在这里 —— 它们要和 ark.css 的 `display`
+   声明抢同一层叠序，写在布局层会被后 import 的设计层覆盖（踩过：写了
+   `display:none` 但品牌照常显示）。见 ark.css 的「窄窗顶栏」。 */

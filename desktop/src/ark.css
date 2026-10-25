@@ -1147,3 +1147,745 @@ input[type='radio']:checked {
   margin: 10px -18px 0;
   padding: 10px 18px 12px;
 }
+
+/* ============================================================================
+   21. depth 3（2026-10-25）· 新增令牌
+   ----------------------------------------------------------------------------
+   depth 2 → 3 只允许新增这 4 个令牌。它们各自替换掉一处"散落的字面量"：
+     --ark-bar     替换左面板 8×8 色块 + 复核行 8×8 色块（两处同形符号）
+     --ark-hair    替换各处 rgba(244,246,246,.07~.22) 的细线（原本 4 档）
+     --ark-scan    替换 .10/.12/.14/.16 四档选中底色（收敛为一档）
+     --ark-dock-h  命令条展开态高度（折叠态 28px 用字面量，与图标按钮同基准）
+   ============================================================================ */
+:root {
+  --ark-bar: 3px;
+  --ark-hair: rgba(244, 246, 246, 0.12);
+  --ark-scan: rgba(24, 209, 255, 0.1);
+  --ark-dock-h: 64px;
+}
+
+/* ---------- 22. 命令条：三列 grid，编号 / 说明 / 操作 ----------
+   这是全屏唯一"同时给出步骤与动作"的地方，所以左侧编号用 21px 压缩体，
+   和左面板读数块的大数字同一档 —— 用户扫一眼就知道"现在第几步"。 */
+
+.next-card {
+  background: var(--ark-panel);
+  border-top: 1px solid var(--ark-line-strong);
+}
+.next-card.done {
+  /* 完成态不换底色（那会变成"卡片"），只把顶线换成已验证色 */
+  border-top-color: var(--ark-state);
+}
+.next-card.warn {
+  border-top-color: var(--ark-warn);
+}
+
+/* 编号块：左沿 3px 信号条 + 两行（STEP 04/05 / 复核结果） */
+.nc-idx {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  height: 100%;
+  padding-left: 12px;
+  border-right: 1px solid var(--ark-line);
+}
+.nc-idx::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 3px;
+  background: var(--ark-signal);
+}
+.next-card.done .nc-idx::before {
+  background: var(--ark-state);
+}
+.next-card.warn .nc-idx::before {
+  background: var(--ark-warn);
+}
+.nc-idx b {
+  font-family: var(--ark-font-cond);
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--ark-paper);
+  font-variant-numeric: tabular-nums;
+}
+.nc-idx span {
+  font-family: var(--ark-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ark-muted);
+}
+
+/* 说明列：标题行（第几步 · 名称 + 可选角标）+ 一行说明 */
+.nc-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.nc-step {
+  font-family: var(--ark-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ark-signal);
+}
+.nc-step .nc-opt {
+  font-family: var(--ark-font-cjk);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 0 4px;
+  margin-left: 6px;
+  background: transparent;
+  border: 1px solid var(--ark-line-strong);
+  color: var(--ark-muted);
+}
+.nc-body {
+  color: rgba(244, 246, 246, 0.82);
+}
+.next-card.done .nc-step {
+  color: var(--ark-state);
+}
+.nc-check {
+  color: var(--ark-state);
+}
+
+/* 操作列：主操作 32px 高，次操作同高（不靠尺寸差表达主次，靠填充色） */
+.nc-actions .btn {
+  height: 32px;
+  padding: 0 14px;
+}
+.nc-actions .btn.primary {
+  /* Ark 的 action button：左侧 3px 深色信号条（内阴影），与命令条编号块的竖条同源 */
+  box-shadow: inset 3px 0 0 rgba(8, 10, 11, 0.4);
+}
+.nc-min {
+  color: var(--ark-muted);
+}
+
+/* 折叠态：28px 一条，仍然写着"第几步 · 待办数"，右侧给「展开」 */
+.next-pill {
+  background: var(--ark-panel);
+  border-top: 1px solid var(--ark-line);
+}
+.next-pill .np-no {
+  font-family: var(--ark-font-cond);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--ark-paper);
+}
+.next-pill:hover .np-no {
+  color: var(--ark-signal);
+}
+
+/* ---------- 23. 面板头：索引 / 标题 / 计数 / 问 / 收 ---------- */
+
+.panel-head {
+  border-bottom: 1px solid var(--ark-line);
+  padding: 0 4px 0 12px;
+}
+.panel-head h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ark-paper);
+}
+/* 左右面板各自的索引（01 / 02）不再用伪元素塞进 h3 —— 现在有独立的
+   `.ph-idx` 元素，读屏软件能按顺序读成"01 图层与类别 280"。 */
+.panel.left .panel-head h3::before,
+.panel.right .panel-head h3::before {
+  content: none;
+}
+.ph-help {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ark-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ph-help:hover {
+  color: var(--ark-signal);
+}
+.ph-n {
+  color: var(--ark-muted);
+}
+
+/* 折叠竖轨 */
+.panel.rail {
+  background: var(--ark-ink);
+  border-right: 1px solid var(--ark-line);
+}
+.panel.right.rail {
+  border-right: 0;
+  border-left: 1px solid var(--ark-line);
+}
+.pr-label {
+  color: var(--ark-muted);
+}
+.pr-n {
+  color: var(--ark-signal);
+}
+
+/* ---------- 24. 左面板：分组 = 填充，类别 = 竖条 ---------- */
+
+.group-head {
+  background: var(--ark-field);
+  border-top: 1px solid var(--ark-line-strong);
+}
+.group:first-child .group-head {
+  border-top: 0;
+}
+.group-head b {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--ark-paper);
+}
+.gh-idx {
+  color: var(--ark-signal);
+}
+.gh-sum {
+  color: var(--ark-muted);
+}
+.cls-list li {
+  border-bottom: 0;
+}
+.cls-list li:hover {
+  background: rgba(244, 246, 246, 0.03);
+}
+.cls-list li:hover .cls-label {
+  color: var(--ark-signal);
+}
+.cls-bar {
+  /* 类别色唯一出现的地方（地图填充用的是同一份 CLASS_STYLES） */
+  opacity: 0.9;
+}
+.cls-label {
+  color: var(--ark-paper);
+}
+.cls-n {
+  color: var(--ark-muted);
+}
+
+/* ---------- 25. 复核清单：仪表片 / 档位 / 行 ---------- */
+
+.chip {
+  background: var(--ark-ink);
+  border: 1px solid var(--ark-line);
+}
+.chip:hover {
+  border-color: var(--ark-line-strong);
+  color: var(--ark-paper);
+}
+.chip.active {
+  background: var(--ark-scan);
+  border-color: var(--ark-signal);
+  color: var(--ark-signal);
+}
+.chip.active .chip-n {
+  color: var(--ark-signal);
+}
+.chip-label {
+  color: inherit;
+}
+
+.rv-list {
+  padding: 0 0 6px;
+}
+.rv-list li {
+  margin-bottom: 0;
+  border-bottom: 1px solid rgba(244, 246, 246, 0.06);
+}
+.rv-item.active {
+  background: var(--ark-scan);
+  outline: 1px solid rgba(24, 209, 255, 0.45);
+  outline-offset: -1px;
+}
+.rv-area {
+  color: var(--ark-paper);
+}
+.rv-bar {
+  opacity: 0.9;
+}
+.rv-hidden {
+  background: transparent;
+  border: 1px solid var(--ark-line-strong);
+  color: var(--ark-muted);
+  font-size: 9px;
+  padding: 0 3px;
+}
+.rv-more {
+  color: var(--ark-muted);
+  border-top: 1px solid var(--ark-line);
+}
+
+/* 分段控件：方形、1px 分隔线，选中 = 纸白字 + 信号色底线（不用填充块） */
+.seg {
+  gap: 0;
+  border: 1px solid var(--ark-line-strong);
+}
+.seg-btn {
+  border: 0;
+  border-left: 1px solid var(--ark-line);
+  background: transparent;
+  color: var(--ark-muted);
+  font-family: var(--ark-font-cjk);
+  font-size: 11px;
+}
+.seg-btn:first-child {
+  border-left: 0;
+}
+.seg-btn:hover {
+  color: var(--ark-paper);
+  background: rgba(244, 246, 246, 0.04);
+}
+.seg-btn.active {
+  background: var(--ark-scan);
+  color: var(--ark-signal);
+  box-shadow: inset 0 -2px 0 var(--ark-signal);
+}
+
+/* ---------- 26. 状态栏：一条基线 ---------- */
+
+.statusbar {
+  background: var(--ark-ink);
+}
+.sb-more {
+  color: var(--ark-muted);
+}
+.sb-more:hover {
+  color: var(--ark-signal);
+}
+.statusbar.is-compact .sb-logs {
+  color: rgba(141, 147, 150, 0.95);
+}
+
+/* ---------- 27. 顶栏：步进器与图标组 ---------- */
+
+.toolbar {
+  gap: 0;
+}
+.tb-right {
+  border-left: 1px solid var(--ark-line);
+  padding-left: 8px;
+}
+/* 当前步：青色文字 + 2px 下划线（全系统唯一的"我在哪"信号）。
+   完成步的序号转纸白，todo 的序号保持 muted —— 不靠对勾，靠编号本身的明度。 */
+.sr-item.done .sr-no {
+  color: rgba(244, 246, 246, 0.55);
+}
+.sr-item.todo .sr-no {
+  color: rgba(141, 147, 150, 0.7);
+}
+
+/* ---------- 28. 空舞台：把"黑屏"变成一句说明 ----------
+   浏览器 / 瓦片服务未启动时，地图区是一整块 #080a0b 的纯黑 ——
+   用户第一反应是"软件坏了"。这一层给它一个信息角色：
+   蓝图网格（"这里本该有影像"）+ 一句"缺什么、怎么补"。 */
+
+.map-hint {
+  top: 50%;
+  transform: translate(-50%, -50%);
+  left: 50%;
+  max-width: 460px;
+  padding: 18px 22px;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--ark-signal);
+  border-radius: 0;
+  text-align: left;
+  align-items: flex-start;
+  gap: 6px;
+  backdrop-filter: none;
+}
+.map-hint b {
+  font-family: var(--ark-font-cond);
+  font-size: 15px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ark-paper);
+}
+.map-hint span {
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--ark-muted);
+}
+.map-hint code {
+  background: var(--ark-field);
+  border: 1px solid var(--ark-line);
+  border-radius: 0;
+  color: var(--ark-paper);
+  font-family: var(--ark-font-mono);
+  font-size: 10.5px;
+  padding: 2px 6px;
+}
+/* 空舞台的蓝图网格：只在"没有影像"时出现，有影像时它会被 canvas 完全盖住 */
+.map-wrap.is-empty::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    linear-gradient(var(--ark-hair) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ark-hair) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.35;
+}
+
+/* 绘制中的提示条：方形 + 信号色左沿，不做圆角浮块 */
+.map-drawing {
+  background: rgba(8, 10, 11, 0.94);
+  border: 0;
+  border-left: 2px solid var(--ark-signal);
+  border-radius: 0;
+  font-size: 11.5px;
+}
+.map-hint-warn {
+  border-left-color: var(--ark-warn);
+}
+
+/* ---------- 29. 圆角归零（depth 3 的硬性收口） ----------
+   现存 8/11/12/14/999 五档圆角是 depth 2 遗留：它们让同一个界面里
+   "按钮是方的、胶囊是圆的、提示是圆的"，读起来像三套组件库。
+   这一条把它们全部收成 0 —— 除了状态点（.dot / .np-dot，那是"指示灯"不是容器）。 */
+.btn,
+.card,
+.panel,
+.chip,
+.rv-item,
+.batch-bar,
+.map-hint,
+.map-drawing,
+.more-menu,
+.block-menu,
+.notice-bar,
+.detect-bar,
+.statusbar,
+.help-dialog,
+.wizard,
+.detect-settings,
+.tab-n,
+.step-tag,
+.nc-opt,
+.rv-hidden,
+input,
+select,
+textarea,
+.kbd,
+kbd {
+  border-radius: 0;
+}
+
+/* ---------- 30. 动效：只保留三处 ----------
+   ① 命令条折叠/展开（布局变化，不是装饰）
+   ② 弹窗入场（clip-path 揭开）
+   ③ 检测中的进度呼吸
+   其余 hover/active 都是 180ms 的颜色过渡。 */
+.command-dock,
+.next-card,
+.next-pill {
+  transition: height var(--ark-t-fast) var(--ark-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .batch-bar {
+    animation: none;
+  }
+  .next-card,
+  .next-pill {
+    transition: none;
+  }
+}
+
+/* ============================================================================
+   31. 弹窗：一套外壳（7 个窗共用）
+   ----------------------------------------------------------------------------
+   改之前有 3 套外壳（.help-dialog / .wizard / .detect-settings），差异不在外观，
+   而在**滚动归属**：一个根滚（头脚跟着跑）、一个 body 滚但没给头部留位
+   （内容被裁）、一个整块 absolute 没高度上限（滚轮滚到页面上）。
+   现在统一：黑面 + 1px 强边 + 顶部 2px 信号线 + 零圆角 + 无投影。
+   分离感来自遮罩压暗，不来自投影 —— 投影会让"浮层"读成卡片。
+   ============================================================================ */
+
+:is(.help-mask, .wizard-mask, .ds-mask) {
+  background: rgba(6, 10, 12, 0.74);
+  backdrop-filter: blur(3px);
+  animation: ark-fade var(--ark-t-out) var(--ark-ease);
+}
+
+:is(.help-dialog, .wizard, .detect-settings) {
+  background: var(--ark-panel);
+  border: 1px solid var(--ark-line-strong);
+  border-top: 2px solid var(--ark-signal);
+  border-radius: 0;
+  box-shadow: none;
+  animation: ark-reveal var(--ark-t-in) var(--ark-ease);
+}
+
+:is(.help-head, .wizard-head, .ds-head) {
+  border-bottom: 1px solid var(--ark-line-strong);
+}
+
+/* 标题：三套原来分别是 18 / 25 / 13px。收口到两档 ——
+   引导窗（唯一有"欢迎"性质的）20px，其余 15px。 */
+.help-head h2,
+.wizard-head h1 {
+  font-family: var(--ark-font-cjk);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  color: var(--ark-paper);
+}
+.help-head h2 {
+  font-size: 15px;
+}
+.wizard-head p,
+.help-intro {
+  color: var(--ark-muted);
+}
+.help-intro {
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+:is(.help-foot, .wizard-foot) {
+  border-top: 1px solid var(--ark-line-strong);
+}
+
+/* 关闭键：28×28 方形，悬停只改色（不做底色块） */
+.help-close,
+.wizard-close {
+  border-radius: 0;
+}
+
+/* ⚠️ 导出窗的吸底操作条必须与窗底**贴齐**。
+   原来 `.wizard` 有 `padding-bottom: 20px`，而 sticky 元素是对齐到滚动视口的
+   底边 —— 于是滚动到底时按钮下面还漏出 20px，正文从缝里透出来（用户截图里
+   那行被切掉的小字）。现在：根不留底部内边距，操作条自己负责底部留白。 */
+.export-dialog {
+  padding-bottom: 0;
+}
+.export-dialog .wizard-foot {
+  margin-bottom: 0;
+  padding: 14px 0 18px;
+  background: var(--ark-panel);
+}
+
+/* 参数窗的吸底操作条同理（已经在 depth 2 修过一次，这里保持） */
+.detect-settings .ds-actions {
+  background: var(--ark-panel);
+  border-top: 1px solid var(--ark-line-strong);
+}
+
+/* 预检清单：状态图标用语义色，不靠整行底色 */
+.pf-item.error .pf-icon {
+  color: var(--ark-error);
+}
+.pf-item.warn .pf-icon {
+  color: var(--ark-warn);
+}
+.pf-item.ok .pf-icon {
+  color: var(--ark-state);
+}
+
+/* 菜单：黑面 + 顶部 2px 信号线，零圆角（与弹窗同一套"浮层"语法） */
+.more-menu,
+.block-menu {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 通知条 / 提示条：方形，靠左沿色条表达语义 */
+.notice-bar,
+.map-hint,
+.batch-bar,
+.ovr-banner,
+.detect-bar {
+  border-radius: 0;
+}
+
+/* ---------- 32. 步进器编号：取消"圆圈徽章" ----------
+   styles.css 里 `.sr-no` 是 19px 圆底徽章，完成态还是**青色实心圆**（3 个青色圆
+   连排，直接吃掉全屏的青色预算）。而 StepRail.tsx 的注释早就写明：
+   「索引而不是对勾：这套体系里第几号就是状态，完成/当前/待办靠字色与那条青色
+   下划线区分」—— CSS 和它自己的设计说明是矛盾的。这里按注释执行。 */
+.sr-no {
+  width: auto;
+  height: auto;
+  flex: 0 0 auto;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  color: var(--ark-muted);
+}
+.sr-item.done .sr-no {
+  background: transparent;
+  color: rgba(244, 246, 246, 0.5);
+}
+.sr-item.active .sr-no {
+  background: transparent;
+  box-shadow: none;
+  color: var(--ark-signal);
+}
+.sr-item.todo .sr-no {
+  color: rgba(141, 147, 150, 0.6);
+}
+
+/* ---------- 33. 命令条说明：两行截断而不是一行截断 ----------
+   一行装不下那句"这一步在干什么"（约 50 字），截断后剩下半句 —— 用户读到
+   "「框选多选」一次能处理一片…" 就断了，等于没说完。两行能装下完整一句，
+   而 64px 的高度本来就够（9.5px 标题 + 2×18px 正文）。 */
+.nc-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow: hidden;
+  line-height: 1.45;
+}
+
+/* ---------- 34. 计数徽标 / 分段控件 / 列表列的收口 ---------- */
+
+/* `.panel-head.tabs .tab-n` 在 styles.css 里是 8px 圆角胶囊，特异性比单类名高，
+   这里必须用同样的选择器才压得住。 */
+.panel-head.tabs .tab-n {
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid var(--ark-line);
+  padding: 0 4px;
+  font-family: var(--ark-font-mono);
+  font-size: 9.5px;
+  color: var(--ark-muted);
+}
+.panel-head.tabs .tab.active .tab-n {
+  background: transparent;
+  border-color: var(--ark-signal);
+  color: var(--ark-signal);
+}
+
+/* 复核行的面积列必须是**定宽**：每行是一个独立的 grid，用 `auto` 会按每行
+   自己最宽的数字定宽 —— 于是"连片空地"这几个字在每行的 x 位置都不一样，
+   整列读起来像锯齿。定宽 + 右对齐 + tabular-nums 才能竖向对齐。 */
+.rv-item {
+  grid-template-columns: var(--ark-bar) 88px minmax(0, 1fr) auto 46px;
+}
+
+/* 类别竖条改成满行高：3px×16px 在 28px 行里像一个"刻度点"，
+   满高才读得出"这是一列类别标记"。 */
+.cls-bar {
+  height: 100%;
+}
+
+/* 状态栏折叠态：状态与日志同一条基线（否则一个居中、一个贴底） */
+.statusbar.is-compact .sb-logs {
+  justify-content: center;
+}
+
+/* ---------- 35. 当前步：只留一条下划线 ----------
+   styles.css 的 `.sr-item.active` 还带着 `background: rgba(24,209,255,.1)` +
+   1px 青色描边 —— 和 2px 下划线一起，同一个"我在哪"用了三个信号（底块 + 描边
+   + 下划线）。ark 的规矩是**一个**：下划线。底块还会让顶栏读成一排标签页。 */
+.sr-item,
+.sr-item.active,
+.sr-item.done:hover {
+  border: 0;
+  border-radius: 0;
+}
+.sr-item.active {
+  background: transparent;
+}
+.sr-item.done:hover {
+  background: rgba(244, 246, 246, 0.04);
+}
+
+/* ---------- 36. 窄窗顶栏：把步进器压紧，别切掉第 5 步 ----------
+   900×760 实测：品牌块 160 + 图标组 180 + 5 个步骤（每个 100 + 刻度 25）
+   超出可用宽度 → 第 5 步「导出交付」被裁成半个字。
+   这里压的是**内边距**（16→10）和刻度间距（12→8），不是字号，也不是标签 ——
+   省下来约 90px，正好够。 */
+@media (max-width: 1180px) {
+  .sr-item {
+    padding: 0 10px;
+  }
+  .sr-item.active::after {
+    left: 10px;
+    right: 10px;
+  }
+  .sr-line {
+    margin: 0 8px;
+  }
+  .toolbar {
+    padding-left: 10px;
+  }
+  .tb-brand {
+    padding-right: 10px;
+    margin-right: 10px;
+  }
+}
+
+/* ---------- 37. 弹窗标题的步骤索引 ----------
+   参数窗是 `03 /`（它属于第 3 步），导出窗补上 `05 /` —— 与顶栏步进器同一套
+   编号，用户不用读标题就知道这个窗属于流程哪一段。
+   帮助窗不加索引：它不是某一步，是随时可开的参考层。 */
+.export-dialog .wizard-head h1::before {
+  content: '05 / ';
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  color: var(--ark-signal);
+  vertical-align: 4px;
+  margin-right: 6px;
+}
+
+/* 参数窗没有底部操作条时（从「更多 → 检测参数」进来），最后一行说明会紧贴窗底
+   被切掉半个字。给最后一段留 12px 呼吸，但**不能**用根的 padding-bottom ——
+   那会让吸底操作条漏出缝（depth 2 修过一次，别再改回去）。 */
+.detect-settings > .ds-foot:last-child {
+  margin-bottom: 12px;
+}
+
+/* ---------- 38. 竖窗 / 极窄窗：让位给五步流程 ----------
+   760px 宽时实测：品牌块 160 + 图标组 150 之后只剩 450px，而 5 个步骤
+   （含刻度）需要 ~520px —— 第 5 步被切成半个字。
+   这里做的取舍是**收起品牌文字**，不是收起步进器：
+     · 步进器是"我在哪、还剩几步"的唯一载体，属于决策 UI；
+     · 品牌在窗口标题栏（Tauri 的 title）与「帮助」里都还有，不丢信息。
+   ⚠️ 这条必须写在设计层：`display` 属性会被 ark.css 自己的 `.tb-brand`
+      （后出现的单类名规则）覆盖，写在 styles.css 里不生效。 */
+@media (max-width: 820px) {
+  .tb-brand {
+    display: none;
+  }
+  .toolbar {
+    padding-left: 12px;
+  }
+  .sr-item {
+    padding: 0 8px;
+  }
+  .sr-item.active::after {
+    left: 8px;
+    right: 8px;
+  }
+  .sr-line {
+    margin: 0 6px;
+  }
+}

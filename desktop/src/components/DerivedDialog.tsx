@@ -8,6 +8,7 @@ import {
   type DerivedParams,
 } from '../api/backend'
 import { useAppStore } from '../store/useAppStore'
+import { useEscapeClose } from '../lib/dialogKeys'
 import type { PreflightResult } from '../types'
 
 /**
@@ -55,6 +56,9 @@ export default function DerivedDialog({
   const [prog, setProg] = useState<ProgressState | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
+  // Esc = 关闭。生成中（running）不响应 —— 中途打断会留下半个高度图，
+  // 而检测读到它不会报错（只是算偏）。与点遮罩的判据保持一致。
+  useEscapeClose(onClose, phase !== 'running')
   const pushLog = useAppStore((s) => s.pushLog)
   /** 最近几行日志 —— 进度比例是粗估的，真正让人安心的是"它在干什么" */
   const [tail, setTail] = useState<string[]>([])

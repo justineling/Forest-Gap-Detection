@@ -49,9 +49,14 @@ export default function StepRail({ input, onJump }: Props) {
               <span className="sr-no">{String(s.no).padStart(2, '0')}</span>
               <span className="sr-text">
                 <span className="sr-label">{s.label}</span>
-                {(s.summary || s.optional) && (
-                  <span className="sr-sub">{s.summary ?? '可选'}</span>
-                )}
+                {/* 副标只放**真实读数**（"280 块"这种）。原来 todo/active 的
+                    可选步会在这里回退成「可选」，于是当前步下面写着"可选"、
+                    上面还亮着青色下划线 —— 一个词在同一处表达两种状态。
+                    「可选」这个信息在命令条的角标里（`.nc-opt`），不会丢。
+                    ⚠️ 没有读数时渲染一个**不换行空格**而不是不渲染：五个步骤的
+                    高度必须一致，否则有副标的标签会往下沉半行，五个标签不共基线
+                    （肉眼看到的是"标题忽高忽低"）。 */}
+                <span className="sr-sub">{s.summary ?? '\u00A0'}</span>
               </span>
             </button>
           </div>
