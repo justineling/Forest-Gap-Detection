@@ -1317,3 +1317,63 @@ headless Chrome 此前静默退出、不产出文件；环境放开权限后已�
 
     **推论**：凡把路径交给**外部程序**（explorer / 编辑器 / CLI 工具）的地方，
     都要先剥前缀。这类失败不会抛错，只会行为差一点。
+
+**界面侧**（2026-10-25 depth 3 重构 + 两轮评审修复踩到的；都属于"看起来对、其实在骗人"）
+
+58. **`display:none` 会让文本从 `innerText` 里消失 —— 折叠日志不能用它**
+
+    状态栏日志默认折叠成"只留最新一条"。第一版写成
+    `.sb-logs.is-1line .log-line:not(:last-child){display:none}` ——
+    界面上完全正确，但 `tests/e2e/verify_render.mjs` 有 12 处断言靠
+    `.sb-logs` 的 `innerText` 判断"某句话出现过"，**全部假失败**
+    （实测场景 12 的「导出完成」直接红）。
+
+    修：`max-height: 1.55em + overflow: hidden`。裁剪只改可见性，不改 `innerText`。
+
+    **推论**：凡是用 `innerText` 做断言的回归脚本，被断言区域**不许**用
+    `display:none` 藏东西；要藏就用裁剪。
+
+59. **布局层（`styles.css`）写 `display` 会被设计层（`ark.css`）覆盖**
+
+    窄窗隐藏品牌块，写在 `@media (max-width:760px){ .tb-brand{display:none} }` 里 ——
+    实测**完全不生效**：`ark.css` 后 import，且 `.tb-brand{display:flex}` 是同样的
+    单类名特异性，后者胜出。
+
+    修：把这类规则搬进 `ark.css` 的响应式段。同理，`border-radius` 归零不要靠
+    `ark.css` 逐个覆盖 —— 当时 `styles.css` 里还躺着 **51 处**历史圆角声明，
+    漏一个就破一次硬约束（`.exp-plan-list` 就是这么漏的）。直接在原处改。
+
+60. **MapLibre 只监听 window resize，不监听容器**
+
+    depth 3 之后地图容器的高度会**在不改窗口大小的情况下**变化：
+    命令条展开/折叠（64 ↔ 28）、批量栏出现/消失（40）、侧栏折叠（宽度）。
+    不补 `ResizeObserver → map.resize()`，canvas 保持旧尺寸被 CSS 拉伸 ——
+    影像纵向压扁，而多边形是矢量图层（跟着投影走），于是**图形与影像错位**。
+    截图里只是"有点糊"，但量面积的人会直接算错。
+
+61. **每行独立 grid 的 `auto` 列宽逐行不同**
+
+    复核清单每行是一个 `.rv-item`（独立 grid）。面积列写 `minmax(64px,auto)` 时，
+    宽度按**每一行自己**最宽的数字定 —— 于是"连片空地"这几个字在每行的 x 位置
+    都不一样，整列读起来像锯齿。
+
+    修：面积列定宽（88px）+ `text-align:right` + `tabular-nums`。
+    **推论**：凡"多行对齐"的表格，列宽必须是定值或由同一个 grid 容器统一分配，
+    不能靠每行的 `auto`。
+
+62. **"瓦片能读出来"不能只看 `/meta` 应答，也不能用 `sourcedata.isSourceLoaded`**
+
+    影像被移动/锁住时 `/meta` 照样 200，但每张瓦片都失败 —— 舞台纯黑，
+    而顶栏绿点、`SERVICE ONLINE`、状态栏「影像已就绪」三处**同时在说谎**，
+    用户正对着这片黑判断"这块是不是空地"。
+
+    而 `sourcedata` 的 `isSourceLoaded` 在**瓦片全失败时也会触发** ——
+    拿它当"成功"恰好会把最该报警的情况判成正常。
+
+    修：`store.tilesState`（`unknown/ok/failed`）。
+    `map.on('data')` 带 `tile` → `ok`（一旦 ok 不回退，缩放级变化偶发失败是正常的）；
+    `map.on('error')` 只认 `sourceId === 'ortho'`、**排除 404**（那一级没瓦片属正常），
+    连续 3 次且从未成功过 → `failed`。`setBackend` 时重置为 `unknown`。
+    四个消费者（绿点 / kicker / 状态栏 / 空舞台说明）读同一个值，一处修四处一致。
+
+    ⚠️ 判定要**宽松**：宁可漏报也不能误报 —— 误报会让"影像读不出来"变成狼来了。
