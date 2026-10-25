@@ -57,6 +57,10 @@ Rust 侧 `chm_owner_at` / `usable_chm` / `job_slot_is_free` 第三判据 / 预�
 ③ MapLibre 不监听容器 resize，容器高度变化必须 `ResizeObserver → map.resize()`；
 ④ 每行独立 grid 的 `auto` 列宽逐行不同，面积列必须定宽。
 验收：815 单测 / verify_render 188 / 窄窗无溢出 / ark 审计 0 错 0 警。
+**2026-10-25 下午再补 10 条**：状态栏 has-stale 88px、`.nc-body` title、styles.css 51 处圆角归零、
+帮助文案去写死、批量栏主按钮改描边、复选框改淡青底、检测进度搬进命令条槽位（零跳动）、
+`store.tilesState` 单一真值（绿点/kicker/状态栏/空舞台四处一致）、多选聚合块、清单键盘流+已处理下沉。
+⚠️ `DetectBar` 组件**没删**（搬进槽位）：`verify_render` 8 条断言 + React #310 回归网挂在它的类名上。
 
 **（depth 2 时期记录，仍有效）**（2026-10-24，分支 `feat/ui-ark`，family=ark × depth=2）：
 CSS 分两层 —— `styles.css` 管布局、`ark.css` 管语法（**必须后 import，顺序反了静默失效**）；
