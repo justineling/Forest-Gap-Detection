@@ -520,6 +520,28 @@ async function main() {
     ok(tickGeo.ok, '前置：步进器里有分隔刻度（.sr-line）')
     ok(tickGeo.w <= 2, '★ 分隔是 1px 竖刻度，不是方块', `${tickGeo.w}×${tickGeo.h} flex-basis=${tickGeo.flex}`)
     ok(tickGeo.h >= 8 && tickGeo.h <= 16, '★ 刻度高度在 8–16px（读数式，不抢主视觉）', `${tickGeo.h}px`)
+
+    // ★ 类别键位：左面板行首的序号必须就是复核键盘的键位（2026-10-25 审核发现错位）。
+    //   以前键盘用 ALL_CLASSES 的声明序，面板按 GROUP_ORDER 分组渲染 ——
+    //   按 3 想改"人工新增"却改成"林间空隙"，是静默改错数据。
+    const keys = await evalJs(`
+      const rows = [...document.querySelectorAll('.cls-list li')];
+      return rows.map((li) => ({
+        k: (li.querySelector('.cls-k')?.textContent ?? '').trim(),
+        label: (li.querySelector('.cls-label')?.textContent ?? '').trim(),
+      }));
+    `)
+    ok(keys.length === 9, '左面板列出 9 个类别', String(keys.length))
+    ok(
+      keys.map((r) => r.k).join(',') === '1,2,3,4,5,6,7,8,9',
+      '★ 面板行首序号自上而下就是 1–9（键位可见）',
+      keys.map((r) => r.k).join(','),
+    )
+    ok(
+      keys[2]?.label === '人工新增' && keys[4]?.label === '林间空隙',
+      '★ 第 3 行是「人工新增」、第 5 行是「林间空隙」（与键盘 3 / 5 一致）',
+      `${keys[2]?.label} / ${keys[4]?.label}`,
+    )
     ok(back.card && !back.pill, '★ 关掉参数窗后卡片自动展开回来（.next-card 回来）')
     const errs4 = await collectErrors()
     const crash4 = errs4.filter(isCrash)
