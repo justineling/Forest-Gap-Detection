@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { fetchPlantingPoints } from '../api/backend'
 import ReviewList from './ReviewList'
@@ -34,6 +34,15 @@ export default function RightPanel({ peekReview = 0, collapsed = false, onToggle
   const validation = useAppStore((s) => s.validation)
   const [help, setHelp] = useState(false)
   /**
+   * 选中是不是**从清单里来的**（2026-10-25）。
+   *
+   * `focusGap` 是清单/键盘的定位入口，它会推一个 `focus.nonce`；
+   * 地图点击走 `select`，不推 nonce。用这一个信号区分"我想看属性"和
+   * "我正在清单里连着过块"。
+   */
+  const focusNonce = useAppStore((s) => s.focus?.nonce ?? 0)
+  const lastFocusNonce = useRef(focusNonce)
+  /**
    * 右面板的三档视图（2026-10-25 从"两层选择器"收敛成一层）。
    *
    * 改之前是：外层 tab「复核 | 属性」，里层再来一组「复核 | 验证集」——
@@ -50,10 +59,21 @@ export default function RightPanel({ peekReview = 0, collapsed = false, onToggle
   /** 有选中项才显示「属性」标签 —— 没选中时它是一块空面板，不如不出现 */
   const hasSelection = selectedIds.length > 0
 
-  // 一旦选中要素，自动切到属性 —— 这是用户点它的意图
+  // 一旦选中要素，自动切到属性 —— 这是用户**在地图上点它**的意图。
+  //
+  // ⚠️ 但从清单/键盘选中的不切（2026-10-25 实测出来的 bug）：
+  //    键盘 `↓` 选下一块 → `focusGap` → 选中 → 自动切到「属性」→ **清单被卸载** →
+  //    再按 `↓` 时 `shownRef` 已空，键盘流一步都走不了。
+  //    鼠标点行也一样：点一行，列表消失，得再点回「清单」才能点下一行 ——
+  //    而复核恰恰是"在清单里连着过"。所以清单来源的选中不切页签。
   useEffect(() => {
-    if (hasSelection) setTab('props')
-  }, [hasSelection])
+    if (!hasSelection) return
+    if (focusNonce !== lastFocusNonce.current) {
+      lastFocusNonce.current = focusNonce
+      return
+    }
+    setTab('props')
+  }, [hasSelection, focusNonce])
 
   // 选中被清空（点空白 / 删除 / Esc）→ 属性标签已经不存在了，必须切走，
   // 否则会停在一个渲染不出来的空标签上（白面板）。
@@ -67,6 +87,40 @@ export default function RightPanel({ peekReview = 0, collapsed = false, onToggle
   useEffect(() => {
     if (peekReview > 0) setTab('review')
   }, [peekReview])
+
+  /**
+   * 多选聚合（2026-10-25）。
+   *
+   * 改之前：框选 3 块，右栏只写一句"已选中 3 块，去下方批量操作栏改判"——
+   * 而用户要决定"整批改成什么"，依据是这批的**面积区间与类别分布**。
+   * 把决策数据换成操作说明，是把最难的一步留给用户心算。
+   */
+  const multi = useMemo(() => {
+    if (selectedIds.length < 2) return null
+    const set = new Set(selectedIds)
+    const picked = gaps.filter((f) => set.has(f.properties.gap_id))
+    if (picked.length === 0) return null
+    const areas = picked.map((f) => f.properties.area_sqm ?? 0)
+    const total = areas.reduce((a, b) => a + b, 0)
+    const byClass = new Map<GapClass, { n: number; area: number }>()
+    for (const f of picked) {
+      const c = f.properties.class
+      const cur = byClass.get(c) ?? { n: 0, area: 0 }
+      cur.n += 1
+      cur.area += f.properties.area_sqm ?? 0
+      byClass.set(c, cur)
+    }
+    return {
+      n: picked.length,
+      total,
+      mean: total / picked.length,
+      min: Math.min(...areas),
+      max: Math.max(...areas),
+      classes: [...byClass.entries()]
+        .map(([c, v]) => ({ cls: c, ...v }))
+        .sort((a, b) => b.area - a.area),
+    }
+  }, [gaps, selectedIds])
 
   const feat = gaps.find((f) => f.properties.gap_id === selectedId)
   const est = estimateResult?.per_gap.find((r) => r.gap_id === selectedId)
@@ -147,10 +201,47 @@ export default function RightPanel({ peekReview = 0, collapsed = false, onToggle
           列表/筛选/键盘操作完全一样 —— 拆成两个组件只会让两边慢慢长歪。 */}
       {(tab === 'review' || tab === 'validation') && <ReviewList mode={tab} />}
 
-      {tab === 'props' && selectedIds.length > 1 && (
-        <div className="multi-hint">
-          <b>已选中 {selectedIds.length} 块</b>
-          <p className="dim">
+      {tab === 'props' && multi && (
+        <div className="multi">
+          {/* 一行读数：块数 + 合计面积（决定"要不要整批改判"的第一判据） */}
+          <div className="multi-head">
+            <b>{multi.n} 块</b>
+            <span className="mono">
+              {Math.round(multi.total).toLocaleString()} <i>m²</i>
+            </span>
+          </div>
+          <div className="multi-stats">
+            <div>
+              <span>均值</span>
+              <b>{Math.round(multi.mean).toLocaleString()}</b>
+            </div>
+            <div>
+              <span>最小</span>
+              <b>{Math.round(multi.min).toLocaleString()}</b>
+            </div>
+            <div>
+              <span>最大</span>
+              <b>{Math.round(multi.max).toLocaleString()}</b>
+            </div>
+          </div>
+          {/* 类别分布：竖条 + 名称 + 块数/面积。
+              这是"整批改成什么"的直接依据 —— 比如一半是"待复核"，就该改成非种植区。 */}
+          <ul className="multi-cls">
+            {multi.classes.map((c) => (
+              <li key={c.cls}>
+                <span
+                  className="cls-bar"
+                  style={{ background: CLASS_STYLES[c.cls].color }}
+                  aria-hidden
+                />
+                <span className="mc-name">{CLASS_STYLES[c.cls].label}</span>
+                <span className="mc-n mono">
+                  {c.n} 块 · {Math.round(c.area).toLocaleString()} m²
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="multi-foot dim">
             用地图下方的批量操作栏改判或删除；一次操作算一步，按 <kbd>Ctrl+Z</kbd> 可整批撤销。
           </p>
         </div>

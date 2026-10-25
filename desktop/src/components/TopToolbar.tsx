@@ -68,6 +68,15 @@ export default function TopToolbar({
   const [help, setHelp] = useState(false)
   const backendOnline = useAppStore((s) => s.backendOnline)
   const setBackend = useAppStore((s) => s.setBackend)
+  /**
+   * 绿点必须同时满足两件事：服务在线 **且** 瓦片真的画出来了。
+   * 只看 `backendOnline` 会在"影像读不出来"时继续亮绿灯 —— 那是最坏的一种谎报
+   * （用户以为有图，实际对着黑屏判空地）。
+   */
+  const tilesState = useAppStore((s) => s.tilesState)
+  const setTilesState = useAppStore((s) => s.setTilesState)
+  const tilesFailed = tilesState === 'failed'
+  const healthy = backendOnline && !tilesFailed
   const pushLog = useAppStore((s) => s.pushLog)
   const past = useAppStore((s) => s.past)
   const future = useAppStore((s) => s.future)
@@ -78,6 +87,9 @@ export default function TopToolbar({
     pushLog('正在探测影像服务…')
     const st = await probeBackend()
     setBackend(st)
+    // 探测只证明 /meta 应答；瓦片是否真能读出来由 MapCanvas 的 map 事件判定。
+    // 这里把上一轮的结论清掉，避免"换了影像、绿灯还是上一张图的"。
+    setTilesState('unknown')
     pushLog(
       st.online
         ? `影像服务已就绪：${st.meta?.source ?? ''}`
@@ -112,13 +124,15 @@ export default function TopToolbar({
           className="btn icon"
           onClick={reconnect}
           title={
-            backendOnline
-              ? '影像服务已就绪，点此重新检测连接'
-              : '影像未连接 —— 点此重试；仍未连上请用「⋯ 更多 → 更换影像」'
+            !backendOnline
+              ? '影像未连接 —— 点此重试；仍未连上请用「⋯ 更多 → 更换影像」'
+              : tilesFailed
+                ? '服务在线，但影像瓦片读不出来 —— 点此重试；仍失败请用「⋯ 更多 → 更换影像」重新指一下'
+                : '影像服务已就绪，点此重新检测连接'
           }
-          aria-label={backendOnline ? '影像已就绪' : '影像未连接'}
+          aria-label={healthy ? '影像已就绪' : tilesFailed ? '影像读不出来' : '影像未连接'}
         >
-          <span className={backendOnline ? 'dot ok' : 'dot bad'} />
+          <span className={healthy ? 'dot ok' : 'dot bad'} />
         </button>
 
         <button

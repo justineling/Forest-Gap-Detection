@@ -173,7 +173,11 @@ export default function NextStepCard({
             )}
           </span>
         </div>
-        <p className="nc-body">{body}</p>
+        {/* title 不是装饰：`.nc-body` 是 2 行截断，1280 宽下"不改也可以直接导出"
+            这句会被切掉（用户会以为必须复核完 280 块）。全文挂 title 兜底。 */}
+        <p className="nc-body" title={body}>
+          {body}
+        </p>
       </div>
 
       <div className="nc-actions">

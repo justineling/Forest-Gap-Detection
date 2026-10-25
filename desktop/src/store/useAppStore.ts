@@ -224,11 +224,28 @@ function initialVisibility(): Record<GapClass, boolean> {
   return out
 }
 
+/**
+ * 影像瓦片是否真的画出来了（2026-10-25）。
+ *
+ * ## 为什么不能只看 `backendOnline`
+ *
+ * `backendOnline` 只证明 `/meta` 应答了 —— 它和"瓦片真的能读出来"是两件事：
+ * 影像被移动/被别的进程锁住、GDAL 读失败时，`/meta` 照样 200，但每张瓦片都失败，
+ * 舞台是一片纯黑。此时顶栏绿点、`SERVICE ONLINE`、状态栏「影像已就绪」三处
+ * **同时在说谎**，而用户正对着这片黑判断"这块是不是空地"。
+ *
+ * 所以：`unknown`（还没画出第一张图）→ `ok`（至少一张瓦片成功）→ `failed`（连续失败）。
+ * 四个消费者（绿点 / kicker / 状态栏 / 空舞台说明）都读它，一处修四处一致。
+ */
+export type TilesState = 'unknown' | 'ok' | 'failed'
+
 export interface AppState {
   // —— 后端 ——
   backendOnline: boolean
   backendError: string | null
   meta: RasterMeta | null
+  /** 瓦片真值（见 TilesState 的注释） */
+  tilesState: TilesState
 
   // —— 工作流进度（UI 五步向导用）——
   /**
@@ -316,6 +333,8 @@ export interface AppState {
 
   // —— actions ——
   setBackend: (p: { online: boolean; meta?: RasterMeta; error?: string }) => void
+  /** 更新瓦片真值（由 MapCanvas 的 map 事件驱动，其它地方不要写） */
+  setTilesState: (v: TilesState) => void
   /** 标记流程进度（detected / reviewed / exported） */
   markWorkflow: (patch: Partial<WorkflowFlags>) => void
   /** 改复核筛选条件（一次传齐，避免中间态出现"预设和自定义同时生效"） */
@@ -443,6 +462,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   backendOnline: false,
   backendError: null,
   meta: null,
+  tilesState: 'unknown',
 
   gaps: [],
   visibleClasses: initialVisibility(),
@@ -528,12 +548,19 @@ export const useAppStore = create<AppState>()((set, get) => ({
       return { validation: { ...s.validation, records: {} } }
     }),
 
+  /**
+   * 每次 setBackend 都把瓦片真值打回 `unknown`：
+   * 换了影像 / 换了区块 / 服务重启之后，"上一张图的瓦片成功"不能当作新影像的证据。
+   */
   setBackend: ({ online, meta, error }) =>
     set((s) => ({
       backendOnline: online,
       meta: meta ?? s.meta,
       backendError: error ?? null,
+      tilesState: 'unknown',
     })),
+
+  setTilesState: (v) => set({ tilesState: v }),
 
   setGaps: (features, plantingGrid) => {
     // 换基线时重置拖拽合并窗口，否则紧接着的第一次编辑会被误判成"上一次拖拽的后续"

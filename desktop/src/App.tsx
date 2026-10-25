@@ -374,6 +374,8 @@ export default function App() {
   const detect = useAppStore((s) => s.detect)
   // 工作流（五步向导）需要的东西
   const backendOnline = useAppStore((s) => s.backendOnline)
+  /** 瓦片真值：`backendOnline` 只证明 /meta 应答，画不出来要单独说 */
+  const tilesState = useAppStore((s) => s.tilesState)
   const gaps = useAppStore((s) => s.gaps)
   const wfFlags = useAppStore((s) => s.workflow)
   const markWorkflow = useAppStore((s) => s.markWorkflow)
@@ -1465,14 +1467,19 @@ export default function App() {
             ))}
           </span>
           <span style={{ marginLeft: 10 }}>
-            {backendOnline ? 'SERVICE ONLINE' : 'SERVICE OFFLINE'}
+            {/* 三种状态，不是一个布尔：服务没连 / 连上了但影像读不出来 / 正常。
+                "读不出来"必须单独一个词 —— 那时舞台是黑的，而用户正要靠影像判断。 */}
+            {!backendOnline
+              ? 'SERVICE OFFLINE'
+              : tilesState === 'failed'
+                ? 'TILES UNAVAILABLE'
+                : 'SERVICE ONLINE'}
           </span>
         </span>
       </div>
 
-      <ErrorBoundary area="检测进度">
-        <DetectBar />
-      </ErrorBoundary>
+      {/* 检测进度**不再占顶部一条带**：它和「下一步」命令条共用地图列底部的
+          同一个 64px 槽位（见 DetectBar 的注释）。挪到下面 map-cell 里。 */}
 
       <main
         className={`body${leftOpen ? '' : ' left-collapsed'}${rightOpen ? '' : ' right-collapsed'}`}
@@ -1513,6 +1520,11 @@ export default function App() {
               `.map-cell` 这个 flex 列里的普通行，谁也不会盖住谁。 */}
           <ErrorBoundary area="批量操作">
             <BatchBar />
+          </ErrorBoundary>
+          {/* 检测中：命令条槽位由进度条占用（NextStepCard 此时返回 null），
+              两者高度都是 64px —— 所以切换时**没有任何跳动**。 */}
+          <ErrorBoundary area="检测进度">
+            <DetectBar />
           </ErrorBoundary>
           <ErrorBoundary area="下一步提示">
             <NextStepCard

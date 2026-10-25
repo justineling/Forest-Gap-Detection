@@ -47,6 +47,17 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
    */
   const singleId = selectedIds.length === 1 ? selectedIds[0] : null
   const roi = useAppStore((s) => s.roi)
+  /**
+   * 瓦片真值（'unknown' | 'ok' | 'failed'）。
+   *
+   * 为什么需要它：`backendOnline` 只证明 `/meta` 应答了。影像被移动/锁住时
+   * `/meta` 照样 200，但每张瓦片都失败 —— 舞台一片纯黑，而顶栏绿点、kicker、
+   * 状态栏三处还在说"已就绪"。用户对着黑屏判断"这块是不是空地"，只能瞎判。
+   */
+  const tilesState = useAppStore((s) => s.tilesState)
+  const tilesFailed = tilesState === 'failed'
+  /** 舞台要不要挂"没有影像"的说明：服务没连上，**或者**连上了但瓦片读不出来 */
+  const showStageHint = !backendOnline || tilesFailed
   const estimateResult = useAppStore((s) => s.estimateResult)
   const select = useAppStore((s) => s.select)
   const addGap = useAppStore((s) => s.addGap)
@@ -96,6 +107,35 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
      */
     const ro = new ResizeObserver(() => map.resize())
     ro.observe(containerRef.current)
+
+    /**
+     * 瓦片真值判定。
+     *
+     * 判据（刻意宽松，宁可漏报也不误报）：
+     *  · `data` 事件里带 `tile` = 真有一张瓦片解码成功 → `ok`（一旦 ok 不再回退，
+     *    缩放级别变化时偶发失败是正常的）；
+     *  · `error` 事件只认 `sourceId === 'ortho'`，且**排除 404**
+     *    （404 = 这一级/这一块没有瓦片，属正常，比如超出影像范围）；
+     *  · 连续 3 次非 404 失败、且从未成功过 → `failed`。
+     *
+     * 为什么不用 `sourcedata` 的 `isSourceLoaded`：瓦片全失败时它也会触发，
+     * 拿它当"成功"会把最该报警的情况判成正常。
+     */
+    let tileFails = 0
+    map.on('data', (e) => {
+      const ev = e as unknown as { sourceId?: string; tile?: unknown }
+      if (ev.sourceId !== 'ortho' || !ev.tile) return
+      tileFails = 0
+      if (useAppStore.getState().tilesState !== 'ok') useAppStore.getState().setTilesState('ok')
+    })
+    map.on('error', (e) => {
+      const ev = e as unknown as { sourceId?: string; error?: { status?: number } }
+      if (ev.sourceId !== 'ortho') return
+      if (ev.error?.status === 404) return
+      tileFails += 1
+      const st = useAppStore.getState()
+      if (tileFails >= 3 && st.tilesState !== 'ok') st.setTilesState('failed')
+    })
 
     map.on('load', () => {
       // 空地多边形：按 class 上色
@@ -561,17 +601,30 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   }, [focus, mapReady])
 
   return (
-    <div className={`map-wrap${backendOnline ? '' : ' is-empty'}`}>
+    <div className={`map-wrap${showStageHint ? ' is-empty' : ''}`}>
       <div ref={containerRef} className="map-container" />
       <div ref={boxRef} className="box-select-rect" />
-      {!backendOnline && (
-        <div className="map-hint">
-          <b>影像瓦片服务未连接</b>
-          <span>
-            启动后即可看到真实正射影像：
-            <code>.venv/Scripts/python.exe scripts/tile_server.py</code>
-          </span>
-          <span className="dim">（当前仍可查看 / 编辑多边形，数据来自本地结果文件）</span>
+      {showStageHint && (
+        <div className={tilesFailed ? 'map-hint is-degraded' : 'map-hint'}>
+          <b>{tilesFailed ? '影像已连接，但瓦片读不出来' : '影像瓦片服务未连接'}</b>
+          {tilesFailed ? (
+            <>
+              <span>
+                服务应答正常，但影像文件读不到 —— 多半是被移动、改名，或被别的程序占用了。
+              </span>
+              <span className="dim">
+                点右上角「⋯ 更多 → 更换影像或结果文件」重新指一下；多边形与清单仍可用。
+              </span>
+            </>
+          ) : (
+            <>
+              <span>
+                启动后即可看到真实正射影像：
+                <code>.venv/Scripts/python.exe scripts/tile_server.py</code>
+              </span>
+              <span className="dim">（当前仍可查看 / 编辑多边形，数据来自本地结果文件）</span>
+            </>
+          )}
         </div>
       )}
       {drawError && (

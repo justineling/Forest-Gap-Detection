@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { CLASS_STYLES } from '../lib/classes'
+import { ALL_CLASSES, CLASS_STYLES } from '../lib/classes'
 import {
   REVIEW_KIND_LABEL,
   filterReviewGaps,
@@ -17,6 +17,20 @@ import {
   type GtLabel,
   type GtSample,
 } from '../lib/validation'
+
+/**
+ * 抽样权重的显示。
+ *
+ * ⚠️ 不能 `Math.round`：权重是逆概率 `N_h / n_h`（例如某层 480 块抽 130 块 →
+ *    3.69），四舍五入成 `w4` 之后，**照着屏幕核对分数就会差 8%**。
+ *    整数才去掉小数（L1 必抽层权重恰好 1.0 → 显示 w1）。
+ */
+function wNum(w: number): string {
+  return Number.isInteger(w) ? String(w) : w.toFixed(1)
+}
+function wLabel(s: { weight: number }): string {
+  return `w${wNum(s.weight)}`
+}
 
 const KINDS: ReviewKind[] = ['all', 'uncertain', 'edited', 'manual']
 const AREAS = [
@@ -145,8 +159,40 @@ export default function ReviewList({ mode }: Props) {
       .filter((f): f is NonNullable<typeof f> => !!f)
   }, [mode, validation.samples, gaps])
 
-  const shown = (mode === 'validation' ? valList : list).slice(0, MAX_ROWS)
+  /**
+   * 「已处理」的行下沉到底部（2026-10-25）。
+   *
+   * 复核是**单向推进**的活：上面永远是还没动过的，下面是自己改过的。
+   * 这样一来"我复核到哪儿了"不需要额外状态 —— 列表本身就是进度条。
+   *
+   * 判据用现成的 `edited` / `source === 'manual'`（改过类别或边界、人工补画），
+   * 不引入"看过但没改"的新状态：那需要一份持久化的 reviewed 集合，
+   * 而"看过没改"和"没看过"在数据上无法区分，硬做只会得到一个不可信的进度。
+   *
+   * ⚠️ 只在「全部」筛选下重排：选了「待复核 / 已改过 / 人工新增」时，
+   *    用户要的就是那个子集的面积降序，再按处理状态打乱会破坏预期。
+   */
+  const reviewList = useMemo(() => {
+    if (kind !== 'all') return list
+    const done = (f: (typeof list)[number]): number =>
+      f.properties.edited || f.properties.source === 'manual' ? 1 : 0
+    // sort 是稳定排序：同一组内仍保持 filterReviewGaps 的面积降序
+    return [...list].sort((a, b) => done(a) - done(b))
+  }, [list, kind])
+
+  const shown = (mode === 'validation' ? valList : reviewList).slice(0, MAX_ROWS)
   const picked = new Set(selectedIds)
+
+  /**
+   * 当前可见行的镜像。
+   *
+   * 键盘处理函数必须读到**最新的**可见列表，但又不能把 `shown`（每次渲染都是新数组）
+   * 放进 effect 依赖 —— 那会让监听器每帧重挂。用 ref 同步一次即可。
+   */
+  const shownRef = useRef<typeof shown>([])
+  useEffect(() => {
+    shownRef.current = shown
+  })
 
   const showFlash = useCallback((text: string) => {
     setFlash(text)
@@ -167,6 +213,13 @@ export default function ReviewList({ mode }: Props) {
       if (!f) return
       ensureVisible(f.properties.class)
       focusGap(gapId)
+      // 键盘连按时列表必须跟着走，否则光标在屏幕外，用户不知道自己在第几行。
+      // `block:'nearest'` 是关键：已在视野内就不动，避免每次按键整列跳动。
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`.rv-item[data-gap="${gapId}"]`)
+          ?.scrollIntoView({ block: 'nearest' })
+      })
     },
     [gaps, ensureVisible, focusGap],
   )
@@ -187,6 +240,89 @@ export default function ReviewList({ mode }: Props) {
     },
     [goTo, showFlash],
   )
+
+  /**
+   * 清单模式的键盘流（2026-10-25 补）。
+   *
+   * ## 为什么必须补
+   *
+   * 复核 1,726 块是这个软件 60% 的人力，而清单模式原来只能用鼠标：
+   * 滚列表 → 点一行 → 地图飞过去 → 判断 → 下拉改类别 → 滚回去找下一行。
+   * 现在"看一块 → 定类别 → 下一块"是三次击键。
+   *
+   * | 键 | 动作 |
+   * |---|---|
+   * | `↑` `↓` | 上/下一块，自动飞到地图（`ensureVisible` + `focusGap`） |
+   * | `1`–`9` | 改判为第 N 个类别（顺序与左面板一致），改完自动跳下一块 |
+   * | `Del` | 删除（由 App 的全局快捷键处理，这里不重复实现） |
+   *
+   * ## 为什么与验证集模式互斥
+   *
+   * 两边都用数字键，但语义完全相反：那边标的是**真相**（写 `validation.records`），
+   * 这边改的是**结果**（写 `gaps`）。同时生效 = 打标时顺手改了结果，
+   * 等于"用改过的结果考核算法"（自己给自己打分）。所以 `mode === 'review'` 才挂。
+   *
+   * 四道护栏复用 `shouldIgnoreHotkey`（输入控件 / 弹窗 / 修饰键 / 长按重复），
+   * 与验证集模式同一套判据 —— 少一条就会在别人打字时改掉他的数据。
+   */
+  useEffect(() => {
+    if (mode !== 'review') return
+
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        shouldIgnoreHotkey({
+          target: e.target as HTMLElement | null,
+          hasDialog: !!document.querySelector('[role="dialog"]'),
+          hasModifier: e.ctrlKey || e.metaKey || e.altKey,
+          repeat: e.repeat,
+        })
+      ) {
+        return
+      }
+
+      const rows = shownRef.current
+      if (rows.length === 0) return
+      const st = useAppStore.getState()
+      const cur = st.selectedId
+      const idx = cur ? rows.findIndex((r) => r.properties.gap_id === cur) : -1
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const n = rows.length
+        const next =
+          e.key === 'ArrowDown'
+            ? idx < 0
+              ? 0
+              : Math.min(idx + 1, n - 1)
+            : idx < 0
+              ? n - 1
+              : Math.max(idx - 1, 0)
+        goTo(rows[next].properties.gap_id)
+        return
+      }
+
+      // 数字键改判：顺序与左面板的类别列表完全一致（1 = 株位空缺 …）
+      const n = Number(e.key)
+      if (!Number.isInteger(n) || n < 1 || n > ALL_CLASSES.length) return
+      if (!cur) {
+        showFlash('先按 ↑ / ↓ 选一块，再按数字改类别')
+        return
+      }
+      e.preventDefault()
+      const cls = ALL_CLASSES[n - 1]
+      st.setGapClass(cur, cls)
+      showFlash(`改判为「${CLASS_STYLES[cls].label}」`)
+      // 改完自动走下一块：复核的节奏是"看一块、定一块、走下一块"。
+      // 用 setTimeout 0 是为了让这次 store 更新先落地，再取下一行（否则 idx 还是旧的）。
+      window.setTimeout(() => {
+        const nx = rows[Math.min(idx + 1, rows.length - 1)]
+        if (nx && nx.properties.gap_id !== cur) goTo(nx.properties.gap_id)
+      }, 0)
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mode, goTo, showFlash])
 
   /**
    * 键盘流。
@@ -393,8 +529,18 @@ export default function ReviewList({ mode }: Props) {
           {/* 面积档 + 自定义值同一行：档位是"常见值"，地块差异大，必须允许任意值。
               单位 m² 用伪元素贴在输入框右侧，不再单独占一列 —— 300px 宽里
               "最小面积" 四个字 + 5 个档位 + 输入框 + 单位，单独占列就会挤成竖排。 */}
+          {/* 键盘槽位（2026-10-25）：**常驻 20px**，平时显示快捷键，操作后显示结果。
+              为什么常驻而不是"有 flash 才渲染"：后者会让列表在每次击键时上下跳 20px，
+              而行正跟着键盘走 —— 跳一次眼睛就丢一次位置。
+              为什么不浮层：浮层会盖住第一行，而键盘流恰恰是"按完就看下一行"。 */}
+          <div className={flash ? 'rv-flash-bar is-on' : 'rv-flash-bar'} aria-live="polite">
+            {flash || '↑↓ 切换 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销'}
+          </div>
+
           <div className="rv-row-filter">
-            <div className="seg" role="group" aria-label="最小面积档位">
+            {/* 单位必须写出来：复核时最常用的筛选，用户不该先猜 ≥100 是 m² 还是块 */}
+            <span className="fld-label">面积</span>
+            <div className="seg" role="group" aria-label="最小面积档位（m²）">
               {AREAS.map((a) => (
                 <button
                   key={a.v}
@@ -455,6 +601,7 @@ export default function ReviewList({ mode }: Props) {
                       focusGap(p.gap_id)
                     }}
                     title={hidden ? '该类别当前隐藏，点击会自动打开' : '点击定位到这块'}
+                    data-gap={p.gap_id}
                   >
                     {/* 类别色只以**行左沿 3px 竖条**出现，不再放 8×8 方块：
                         方块和复选框是两个同形符号，12px 字号下会被读成"两个勾选框"。
@@ -471,9 +618,18 @@ export default function ReviewList({ mode }: Props) {
                     </span>
                     {/* 空态也渲染：grid 的列数必须恒定，否则最后两列的宽度会在
                         切换视图时跳动（用户看到的是"点一下面积数字就移位了"）。 */}
-                    <span className={gtText ? 'rv-gt set' : 'rv-gt'}>
+                    <span
+                      className={gtText ? 'rv-gt set' : 'rv-gt'}
+                      /* 权重是评估口径的一部分，必须能解释清楚：
+                         "w3.7" 对没读过抽样方案的人等于噪声。 */
+                      title={
+                        sample
+                          ? `抽样权重 ${wLabel(sample)} —— 这一层共 ${sample.stratum_total} 块、抽了 ${sample.stratum_sampled} 块，算全园准确率时每块按 ${wNum(sample.weight)} 倍放大`
+                          : undefined
+                      }
+                    >
                       {mode === 'validation'
-                        ? gtText || (sample ? `w${Math.round(sample.weight)}` : '')
+                        ? gtText || (sample ? wLabel(sample) : '')
                         : ''}
                     </span>
                     {/* 算法 id 形如 r038912_c020480-G0001，全显示会把类别名挤没。
@@ -486,9 +642,14 @@ export default function ReviewList({ mode }: Props) {
               )
             })}
           </ul>
-          {mode === 'review' && list.length > MAX_ROWS && (
+          {mode === 'review' && (
             <div className="rv-more dim">
-              还有 {list.length - MAX_ROWS} 块未显示 —— 用「最小面积」缩小范围，或按类别筛选
+              {reviewList.length > MAX_ROWS && (
+                <>
+                  还有 {(reviewList.length - MAX_ROWS).toLocaleString()} 块未显示 —— 用「最小面积」
+                  缩小范围，或按类别筛选。
+                </>
+              )}
             </div>
           )}
         </>

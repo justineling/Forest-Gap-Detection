@@ -41,6 +41,15 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
     )
 
   const definite = byGroup('definite_plant')
+  /**
+   * 还没有结果（检测前 / 刚换影像）。
+   *
+   * 此时 288px 的主位原来在报「0 块 / 0 m²」，外加 4 个分组各写一遍「0 块 · 0 m²」——
+   * 而这一刻用户唯一要做的是点命令条的「开始检测」。零读数不是决策数据，
+   * 是"决策区被占满"。所以：读数块换成一句说明，分组计数与面积全部收起，
+   * **复选框保留**（跑之前就要设可见性）。
+   */
+  const empty = gaps.length === 0
 
   /**
    * 折叠态：**面板不消失，收成 28px 竖轨**。
@@ -76,7 +85,8 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
       <div className="panel-head">
         <span className="ph-idx">01</span>
         <h3 className="ph-title">图层与类别</h3>
-        <span className="ph-n mono">{gaps.length}</span>
+        {/* 空态不显示 0：与下面收起的计数同一个判据，避免"标题旁边一个孤零零的 0" */}
+        {!empty && <span className="ph-n mono">{gaps.length}</span>}
         <button
           type="button"
           className="ph-help"
@@ -100,6 +110,12 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
 
       {/* 读数块：一条青色顶线 + 21px 压缩体大数字 + 11px 微标签。
           不做卡片、不做四边框 —— 它和下面 4 个分组是同一张读数表的不同行。 */}
+      {empty ? (
+        <div className="kpi-empty">
+          <b>还没有检测结果</b>
+          <span>跑完检测后，这里显示需补种的块数与面积；下面的勾选决定跑完之后哪些类别显示在地图上。</span>
+        </div>
+      ) : (
       <div className="card kpi-card">
         <div className="kpi-row">
           <span>确定需补种</span>
@@ -117,6 +133,7 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
           默认只勾选「连片空地 + 株位空缺」—— 这是可直接用于苗木量的口径
         </div>
       </div>
+      )}
 
       <div className="groups">
         {GROUP_ORDER.map((g, gi) => {
@@ -143,7 +160,7 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
                     口径、同一批数字）。这里再写一遍 80 块 / 88,014 m²，等于
                     同一个数据在 100px 内出现两次 —— 用户会怀疑哪个才是准的。
                     所以：KPI 组不重复计数，也不重复那句口径说明。 */}
-                {!isKpiGroup && (
+                {!isKpiGroup && !empty && (
                   <span className="gh-sum mono">
                     {sum.n} <i>块</i> · {Math.round(sum.area).toLocaleString()} <i>m²</i>
                   </span>
@@ -173,15 +190,18 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
                         />
                         <span className="cls-label">{CLASS_STYLES[c].label}</span>
                       </label>
-                      <span className="cls-n mono">
-                        {s.n}
-                        {s.area > 0 && (
-                          <>
-                            {' '}
-                            · {Math.round(s.area).toLocaleString()}
-                          </>
-                        )}
-                      </span>
+                      {/* 检测前不显示一串 0：那一列全是 0 的时候，它在视觉上就是噪声 */}
+                      {!empty && (
+                        <span className="cls-n mono">
+                          {s.n}
+                          {s.area > 0 && (
+                            <>
+                              {' '}
+                              · {Math.round(s.area).toLocaleString()}
+                            </>
+                          )}
+                        </span>
+                      )}
                     </li>
                   )
                 })}

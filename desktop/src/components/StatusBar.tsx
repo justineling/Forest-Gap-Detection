@@ -19,6 +19,7 @@ interface Props {
 export default function StatusBar({ staleWarnings = [], logOpen = false, onToggleLog }: Props) {
   const logs = useAppStore((s) => s.logs)
   const backendOnline = useAppStore((s) => s.backendOnline)
+  const tilesState = useAppStore((s) => s.tilesState)
   const manualAdded = useAppStore((s) => s.manualAdded)
   const manualDeleted = useAppStore((s) => s.manualDeleted)
   const manualEdited = useAppStore((s) => s.manualEdited)
@@ -53,7 +54,11 @@ export default function StatusBar({ staleWarnings = [], logOpen = false, onToggl
   }, [logs, logOpen])
 
   return (
-    <footer className={`statusbar${logOpen ? ' is-open' : ' is-compact'}`}>
+    <footer
+      className={`statusbar${logOpen ? ' is-open' : ' is-compact'}${
+        staleWarnings.length > 0 ? ' has-stale' : ''
+      }`}
+    >
       {/* 过期提示放最前面：它比"影像已就绪"重要得多 —— 后者只是状态，
           前者意味着"你现在看到的数字可能不对"。用整条橙带而不是一个小图标，
           是因为这条信息会被忽略就等于没有。 */}
@@ -65,9 +70,17 @@ export default function StatusBar({ staleWarnings = [], logOpen = false, onToggl
         </div>
       )}
       <div className="sb-left">
-        <span className={backendOnline ? 'dot ok' : 'dot bad'} />
+        {/* 点与文案读同一个真值：`backendOnline && tilesState !== 'failed'`。
+            原来只看 backendOnline —— 影像读不出来时也照样绿点 + "已就绪"。 */}
+        <span className={backendOnline && tilesState !== 'failed' ? 'dot ok' : 'dot bad'} />
         <span className="dim sb-opt">
-          {backendOnline ? '影像已就绪' : '影像未连接 —— 点右上角「⋯ 更多 → 更换影像」'}
+          {!backendOnline
+            ? '影像未连接 —— 点右上角「⋯ 更多 → 更换影像」'
+            : tilesState === 'failed'
+              ? '影像读不出来（瓦片失败）—— 点右上角「⋯ 更多 → 更换影像」'
+              : tilesState === 'ok'
+                ? '影像已载入'
+                : '影像已连接 · 正在载入'}
         </span>
         <span className="sep sb-opt" />
         <span className="dim sb-opt">ROI：{roi ? '已圈选' : '未圈选（将处理整幅）'}</span>

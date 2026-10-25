@@ -800,10 +800,14 @@ input[type='radio'] {
   cursor: pointer;
   flex: 0 0 auto;
 }
+/* 勾选态：**淡青底 + 青勾 + 青描边**，不再是实心青块。
+   原因：左面板一屏有 4~5 个已勾选的类别，实心青块连排会把"青色预算"吃光，
+   让"当前步 / 主操作"失去唯一性（实测主屏青色元素约 25 处、7 种角色）。
+   勾选状态仍然清楚：描边 + 勾号都是信号色，只是不再有实心填充。 */
 input[type='checkbox']:checked {
-  background: var(--ark-signal)
+  background: var(--ark-scan)
     no-repeat center / 9px 9px
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1 5.2 3.6 7.8 9 2' fill='none' stroke='%23080a0b' stroke-width='1.8'/%3E%3C/svg%3E");
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1 5.2 3.6 7.8 9 2' fill='none' stroke='%2318d1ff' stroke-width='1.8'/%3E%3C/svg%3E");
   border-color: var(--ark-signal);
 }
 input[type='checkbox']:hover,
@@ -1888,4 +1892,30 @@ kbd {
   .sr-line {
     margin: 0 6px;
   }
+}
+
+/* ---------- 39. 三处收口（2026-10-25 第二轮评审后） ---------- */
+
+/* ① KPI 读数不再用青色。styles.css 的 `.kpi-card .kpi-row b{color:var(--accent)}`
+      特异性高于 `.kpi-row b`，一直没被压住 —— 结果左栏最大的两个字是青色，
+      和命令条的实心青主按钮抢"唯一落点"。青色归"选中/进度/主操作/一条规则线"，
+      读数用纸白；那一行的身份由顶部 1px 青色规则线表达，不需要数字也是青的。 */
+.kpi-card .kpi-row b {
+  color: var(--ark-paper);
+}
+
+/* ② 瓦片读不出来时的说明**挪到舞台顶部**。
+      此时多边形（矢量）仍然可见、仍然可编辑 —— 而说明块居中会正好盖住用户
+      唯一还能看的东西。离线（根本没影像）时仍居中，因为那时舞台本来就是空的。 */
+.map-hint.is-degraded {
+  top: 40px;
+  transform: translateX(-50%);
+  max-width: 520px;
+  padding: 12px 16px;
+}
+
+/* ③ 检测中的百分比用信号色：进度是全系统唯一允许的"循环状态"，它的读数
+      应该是青色，而不是和正文一样的纸白。 */
+.detect-bar.running .db-head b {
+  color: var(--ark-signal);
 }
