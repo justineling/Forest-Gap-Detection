@@ -623,9 +623,13 @@ export default function ReviewList({ mode }: Props) {
                       /* 权重是评估口径的一部分，必须能解释清楚：
                          "w3.7" 对没读过抽样方案的人等于噪声。 */
                       title={
-                        sample
-                          ? `抽样权重 ${wLabel(sample)} —— 这一层共 ${sample.stratum_total} 块、抽了 ${sample.stratum_sampled} 块，算全园准确率时每块按 ${wNum(sample.weight)} 倍放大`
-                          : undefined
+                        // 已标过的行显示的是真值（✓ 认同 / 补种…），此时再挂"抽样权重"
+                        // 就是悬停看到屏幕上没有的东西 —— 权重只在未标时才是那一列的主语。
+                        gtText
+                          ? `已标：${gtText}`
+                          : sample
+                            ? `抽样权重 ${wLabel(sample)} —— 这一层共 ${sample.stratum_total} 块、抽了 ${sample.stratum_sampled} 块，算全园准确率时每块按 ${wNum(sample.weight)} 倍放大`
+                            : undefined
                       }
                     >
                       {mode === 'validation'

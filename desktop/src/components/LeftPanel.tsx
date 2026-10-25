@@ -75,7 +75,10 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
           »
         </button>
         <span className="pr-label">图层与类别</span>
-        <span className="pr-n mono">{definite.n}</span>
+        {/* 空态不显示 0 —— 与 `.ph-n` 同一个判据。
+            （漏过一处：面板头加了 `!empty`，竖轨这里忘了，于是窄窗空态下
+              28px 的轨里挂着一个青色 0，正是这轮要删的那个 0。） */}
+        {!empty && <span className="pr-n mono">{definite.n}</span>}
       </aside>
     )
   }

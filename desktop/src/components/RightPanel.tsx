@@ -140,7 +140,9 @@ export default function RightPanel({ peekReview = 0, collapsed = false, onToggle
           «
         </button>
         <span className="pr-label">复核与属性</span>
-        <span className="pr-n mono">{gaps.length}</span>
+        {/* 空态不显示 0（与左栏竖轨、面板头同一个判据）——
+            窄窗下 28px 的轨里挂一个 0，读起来像状态栏多出来的读数。 */}
+        {gaps.length > 0 && <span className="pr-n mono">{gaps.length}</span>}
       </aside>
     )
   }
@@ -160,9 +162,12 @@ export default function RightPanel({ peekReview = 0, collapsed = false, onToggle
           title="给 150 块打地面真值，用来考核算法 —— 不会改动检测结果"
         >
           验证集
+          {/* 没抽样就写「未抽样」，不写「0/—」：没有分母的进度条是假读数 ——
+              用户会以为"抽样坏了"，而真相是"还没进这个模式"（抽样在首次进入时才生成）。 */}
           <span className="tab-n">
-            {labeledCount(validation.samples, validation.records)}/
-            {validation.samples.length || '—'}
+            {validation.samples.length
+              ? `${labeledCount(validation.samples, validation.records)}/${validation.samples.length}`
+              : '未抽样'}
           </span>
         </button>
         {hasSelection && (
