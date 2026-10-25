@@ -73,7 +73,9 @@ export default function StatusBar({ staleWarnings = [], logOpen = false, onToggl
         {/* 点与文案读同一个真值：`backendOnline && tilesState !== 'failed'`。
             原来只看 backendOnline —— 影像读不出来时也照样绿点 + "已就绪"。 */}
         <span className={backendOnline && tilesState !== 'failed' ? 'dot ok' : 'dot bad'} />
-        <span className="dim sb-opt">
+        {/* `sb-state`：这句在窄窗也要保留（见 styles.css 的 980px 断点）——
+            它是唯一告诉你"影像到底能不能看"的一句话，比分辨率和 ROI 都重要。 */}
+        <span className="dim sb-opt sb-state">
           {!backendOnline
             ? '影像未连接 —— 点右上角「⋯ 更多 → 更换影像」'
             : tilesState === 'failed'

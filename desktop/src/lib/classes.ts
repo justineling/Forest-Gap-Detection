@@ -43,6 +43,24 @@ export const GROUP_META: Record<PriorityGroup, { label: string; hint: string }> 
 /** 分组展示顺序 */
 export const GROUP_ORDER: PriorityGroup[] = ['definite_plant', 'review', 'not_needed', 'unplantable']
 
+/**
+ * 键盘改判的类别顺序 —— **唯一真值**（2026-10-25）。
+ *
+ * ⚠️ 不能用 `ALL_CLASSES`：那是 `Object.keys(CLASS_STYLES)` 的**声明顺序**，
+ *    而左面板是按 `GROUP_ORDER` 分组渲染的，两者不一致：
+ *
+ *      面板视觉顺序（实测 DOM）: 株位空缺 / 连片空地 / 人工新增 / 不确定 /
+ *                                林间空隙 / 道路 / 水体 / 办公生活区 / 非种植区
+ *      ALL_CLASSES 声明顺序   : 株位空缺 / 连片空地 / 林间空隙 / 不确定 /
+ *                                道路 / 水体 / 办公生活区 / 非种植区 / 人工新增
+ *
+ *    于是按 3（期望"人工新增"）会改成"林间空隙"，按 5（期望"林间空隙"）会改成"道路" ——
+ *    复核 1,726 块时这是**静默改错数据**。键盘与面板必须共用这一份顺序。
+ */
+export const CLASS_KEY_ORDER: GapClass[] = GROUP_ORDER.flatMap((g) =>
+  ALL_CLASSES.filter((c) => CLASS_STYLES[c].group === g),
+)
+
 export function labelOf(cls: GapClass): string {
   return CLASS_STYLES[cls]?.label ?? cls
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { ALL_CLASSES, CLASS_STYLES } from '../lib/classes'
+import { CLASS_KEY_ORDER, CLASS_STYLES } from '../lib/classes'
 import {
   REVIEW_KIND_LABEL,
   filterReviewGaps,
@@ -253,7 +253,7 @@ export default function ReviewList({ mode }: Props) {
    * | 键 | 动作 |
    * |---|---|
    * | `↑` `↓` | 上/下一块，自动飞到地图（`ensureVisible` + `focusGap`） |
-   * | `1`–`9` | 改判为第 N 个类别（顺序与左面板一致），改完自动跳下一块 |
+   * | `1`–`9` | 改判为第 N 个类别（顺序 = 左面板从上到下，见 CLASS_KEY_ORDER），改完自动跳下一块 |
    * | `Del` | 删除（由 App 的全局快捷键处理，这里不重复实现） |
    *
    * ## 为什么与验证集模式互斥
@@ -301,21 +301,30 @@ export default function ReviewList({ mode }: Props) {
         return
       }
 
-      // 数字键改判：顺序与左面板的类别列表完全一致（1 = 株位空缺 …）
+      // 数字键改判：顺序取自 CLASS_KEY_ORDER —— 与左面板的**渲染顺序**一致（1 = 株位空缺 …）。
+      // ⚠️ 不要用 ALL_CLASSES：那是声明顺序，3 和 5 会指错类别（见 classes.ts 的注释）。
       const n = Number(e.key)
-      if (!Number.isInteger(n) || n < 1 || n > ALL_CLASSES.length) return
+      if (!Number.isInteger(n) || n < 1 || n > CLASS_KEY_ORDER.length) return
       if (!cur) {
         showFlash('先按 ↑ / ↓ 选一块，再按数字改类别')
         return
       }
       e.preventDefault()
-      const cls = ALL_CLASSES[n - 1]
+      const cls = CLASS_KEY_ORDER[n - 1]
       st.setGapClass(cur, cls)
       showFlash(`改判为「${CLASS_STYLES[cls].label}」`)
       // 改完自动走下一块：复核的节奏是"看一块、定一块、走下一块"。
       // 用 setTimeout 0 是为了让这次 store 更新先落地，再取下一行（否则 idx 还是旧的）。
+      //
+      // ⚠️ 「全部」筛选下要**跳过已处理的行**（2026-10-25 审核发现）：
+      //    改判后当前行会因 `edited` 沉到列表底部，此时 `rows[idx+1]` 可能已经是
+      //    一条"已处理"的行 —— 光标跳进已处理区，而用户其实还没做完上面对未处理的那批。
+      //    其他筛选（待复核 / 已改过 / 人工新增）本来就是单一子集，按线性推进即可。
       window.setTimeout(() => {
-        const nx = rows[Math.min(idx + 1, rows.length - 1)]
+        const rest = rows.slice(idx + 1)
+        const isDone = (f: (typeof rows)[number]) =>
+          !!(f.properties.edited || f.properties.source === 'manual')
+        const nx = kind === 'all' ? rest.find((f) => !isDone(f)) : rest[0]
         if (nx && nx.properties.gap_id !== cur) goTo(nx.properties.gap_id)
       }, 0)
     }

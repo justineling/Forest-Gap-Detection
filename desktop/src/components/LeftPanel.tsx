@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import HelpDialog from './HelpDialog'
 import { LEFT_HELP } from '../lib/helpContent'
-import { ALL_CLASSES, CLASS_STYLES, GROUP_META, GROUP_ORDER } from '../lib/classes'
+import { ALL_CLASSES, CLASS_KEY_ORDER, CLASS_STYLES, GROUP_META, GROUP_ORDER } from '../lib/classes'
 import { CLEARANCE_PRESETS } from '../lib/estimate'
 import type { GapClass, PriorityGroup } from '../types'
 
@@ -191,6 +191,12 @@ export default function LeftPanel({ collapsed = false, onToggle }: Props) {
                           onChange={() => toggleClass(c)}
                           aria-label={CLASS_STYLES[c].label}
                         />
+                        {/* 键盘序号：复核时按 1–9 改判，但用户没法从界面上知道"3 是谁"。
+                            序号取自 CLASS_KEY_ORDER（与 ReviewList 的键盘流同一份顺序），
+                            所以屏幕上第几个就是按几 —— 不用记。 */}
+                        <span className="cls-k" aria-hidden>
+                          {CLASS_KEY_ORDER.indexOf(c) + 1}
+                        </span>
                         <span className="cls-label">{CLASS_STYLES[c].label}</span>
                       </label>
                       {/* 检测前不显示一串 0：那一列全是 0 的时候，它在视觉上就是噪声 */}

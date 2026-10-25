@@ -55,6 +55,17 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
    * 状态栏三处还在说"已就绪"。用户对着黑屏判断"这块是不是空地"，只能瞎判。
    */
   const tilesState = useAppStore((s) => s.tilesState)
+  /**
+   * 连续失败计数（跨事件回调共享）。
+   *
+   * ⚠️ 必须在组件作用域，并且**换影像时归零**：这个计数器原来写在 init effect 里，
+   *    而那个 effect 只在挂载时跑一次 —— 换影像后旧图攒下的失败次数会被新图继承，
+   *    于是新图只要再失败 1 次（而不是 3 次）就判"瓦片读不出来"。
+   */
+  const tileFailsRef = useRef(0)
+  useEffect(() => {
+    tileFailsRef.current = 0
+  }, [meta?.source])
   const tilesFailed = tilesState === 'failed'
   /** 舞台要不要挂"没有影像"的说明：服务没连上，**或者**连上了但瓦片读不出来 */
   const showStageHint = !backendOnline || tilesFailed
@@ -121,20 +132,27 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
      * 为什么不用 `sourcedata` 的 `isSourceLoaded`：瓦片全失败时它也会触发，
      * 拿它当"成功"会把最该报警的情况判成正常。
      */
-    let tileFails = 0
     map.on('data', (e) => {
       const ev = e as unknown as { sourceId?: string; tile?: unknown }
       if (ev.sourceId !== 'ortho' || !ev.tile) return
-      tileFails = 0
+      tileFailsRef.current = 0
       if (useAppStore.getState().tilesState !== 'ok') useAppStore.getState().setTilesState('ok')
     })
     map.on('error', (e) => {
-      const ev = e as unknown as { sourceId?: string; error?: { status?: number } }
+      const ev = e as unknown as {
+        sourceId?: string
+        error?: { status?: number; message?: string }
+      }
       if (ev.sourceId !== 'ortho') return
+      // 404 = 这一级/这一块没有瓦片，属正常（超出影像范围），不算失败。
       if (ev.error?.status === 404) return
-      tileFails += 1
+      // **被中止的请求不算失败**（2026-10-25 审核补的护栏）：
+      // 平移/缩放时 MapLibre 会主动中止在途瓦片，中止产生的错误没有 status。
+      // 不排掉它，用户只是拖一下地图就可能被判成"影像读不出来"。
+      if (/abort/i.test(String(ev.error?.message ?? ''))) return
+      tileFailsRef.current += 1
       const st = useAppStore.getState()
-      if (tileFails >= 3 && st.tilesState !== 'ok') st.setTilesState('failed')
+      if (tileFailsRef.current >= 3 && st.tilesState !== 'ok') st.setTilesState('failed')
     })
 
     map.on('load', () => {
@@ -610,7 +628,8 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
           {tilesFailed ? (
             <>
               <span>
-                服务应答正常，但影像文件读不到 —— 多半是被移动、改名，或被别的程序占用了。
+                服务应答正常，但影像瓦片加载失败 —— 影像文件可能被移动 / 改名 / 被别的程序占用，
+                也可能是服务端读盘出错。
               </span>
               <span className="dim">
                 点右上角「⋯ 更多 → 更换影像或结果文件」重新指一下；多边形与清单仍可用。
