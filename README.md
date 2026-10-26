@@ -159,7 +159,7 @@ scripts\一键配置环境.bat
 ## 开发与测试
 
 ```bash
-# 前端类型检查 + 断言（815 项）
+# 前端类型检查 + 断言（816 项）
 cd desktop && npx tsc --noEmit && npm test
 
 # Rust 单测（81 项）
@@ -172,7 +172,7 @@ cd desktop/src-tauri && cargo test
 .venv\Scripts\python.exe scripts\check_all.py
 ```
 
-**验收基线**：`npm test` 815 · `cargo test` 81 · 契约 95/95 · `check_all.py` 12 层全绿。
+**验收基线**：`npm test` 816 · `cargo test` 81 · 契约 95/95 · `check_all.py` 12 层全绿。
 任何一项掉了都算回归。
 
 ## 文档索引
