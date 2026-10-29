@@ -9,7 +9,7 @@
   3. 退出码：成功=0，参数错=1，内部错=2
   4. 错误码分段：E1xxx IO / E2xxx CRS / E9xxx 内部
   5. 参数校验：非法参数被拒且报 E1002
-  6. 结果契约：schema_version=0.3、blocks[].gaps[] 有几何、summary 有 by_class
+  6. 结果契约：schema_version=0.4、blocks[].gaps[] 有几何、summary 有 by_class
   7. 告警码：未知字段 W1001、kml 未启用 W1002
 
 为什么要合成影像
@@ -295,8 +295,8 @@ def test_success_path(tmpdir: Path) -> None:
     for field in ("job", "pid", "sidecar_version", "schema_version",
                   "params_echo", "started_at"):
         check(field in st, f"started 含 {field}")
-    check(st.get("schema_version") == "0.3",
-          f"started.schema_version == 0.3（实际 {st.get('schema_version')}）")
+    check(st.get("schema_version") == "0.4",
+          f"started.schema_version == 0.4（实际 {st.get('schema_version')}）")
     check(st["params_echo"].get("progress_every") == 3,
           "params_echo 回显了实际生效参数")
     check(st["params_echo"].get("input") == str(tif), "params_echo.input 正确")
@@ -340,7 +340,7 @@ def test_success_path(tmpdir: Path) -> None:
     check(out.exists(), f"结果文件已落盘 {out.name}")
     if out.exists():
         gj = json.loads(out.read_text(encoding="utf-8"))
-        check(gj.get("schema_version") == "0.3",
+        check(gj.get("schema_version") == "0.4",
               f"文件 schema_version == 0.3（实际 {gj.get('schema_version')}）")
         check(gj.get("type") == "FeatureCollection", "type == FeatureCollection")
         check(gj.get("crs") == "EPSG:4326", f"crs == EPSG:4326（实际 {gj.get('crs')}）")

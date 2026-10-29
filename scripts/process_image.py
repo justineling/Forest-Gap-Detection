@@ -138,7 +138,12 @@ def shp_transform(func, geom):
 
     return _shp_transform_new(geom, _apply, include_z=False)
 
-SCHEMA_VERSION = "0.3"
+# ⚠️ 0.3 → 0.4（2026-10-29）：`GridModel.to_dict()` 精度 4 dp → 8 dp。
+#    旧文件里的 `planting_grid` 带 0.306 m 的格点偏差（见 to_dict 注释）。
+#    这个版本号**必须同时进指纹**（见 fingerprint），否则改完精度后旧瓦片缓存
+#    照命中 → 老 grid_cell（旧格号语义）与新 planting_grid 混在一个文件里，
+#    而且不报错 —— 正是坑清单第 49 条那个形状（"产物存在 ≠ 产物新鲜"）。
+SCHEMA_VERSION = "0.4"
 DEFAULT_JOB_NAME = "wgr17-full"
 
 
@@ -155,6 +160,10 @@ def fingerprint(input_path: str, params: dict) -> str:
     p = Path(input_path)
     st = p.stat() if p.exists() else None
     payload = {
+        # ⚠️ 序列化格式的版本必须进指纹：`to_dict()` 的精度变了（4 dp → 8 dp），
+        #    旧瓦片里存的 `grid_cell` 是按旧格点算的，与新 `planting_grid` 不自洽。
+        #    不把版本算进指纹，改完精度后旧缓存会照命中，新旧格号混用一个文件且不报错。
+        "schema_version": SCHEMA_VERSION,
         "image": {
             "name": p.name,
             "size": st.st_size if st else 0,

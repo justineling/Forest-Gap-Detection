@@ -358,16 +358,62 @@ class GridModel:
         return float(gx), float(gy), float(np.hypot(x - nx, y - ny))
 
     def to_dict(self) -> dict[str, Any]:
+        """序列化为 JSON 友好的 dict。
+
+        ⚠️ **精度必须是 8 位小数，不能是 4 位**（2026-10-29 实测的 0.306 m 事故）
+
+        原因：`origin_*_m` 是**第 (0,0) 格**的坐标（本幅影像只有 ~159 m），
+        而 AOI 落在**第 54,090 格**附近。任何一个"从文件重建格点"的下游都要算
+
+            x = origin_x_m + ix * plant_pitch_m + iy * skew_offset_m
+
+        `ix ≈ 54,090` 会把 `plant_pitch_m` 的舍入误差放大 5 个数量级：
+        4 dp 舍入（5e-5 m/格）× 54,090 格 ≈ **0.3 m 的刚性平移**。
+        实测三个结果文件（10-14/10-15/10-16）的 δ 完全一致 `|δ|=0.3064 m`，
+        方向几乎纯 +Y —— 这正是 `Δrow·iy + Δpitch·ix` 的合成。
+
+        后果：任何从文件重建格点的下游（前端排点、导出放样、ArcGIS 属性连接、
+        以及"用文件里的 grid 重跑分类"这种验证）都会偏 0.3 m（= 株距的 3.7%）。
+        实测它会让"重跑分类与文件记录的一致性"从 99.93% 掉到 94.57%。
+
+        8 dp 时同样算式的误差 ≈ 5e-9 × 54,090 ≈ 0.0003 m，足够。
+
+        另外补 `grid_frame` 字段说明坐标框架 —— 这个框架（局部原点 + 全局整数格号）
+        是 10-16 当时 `probe_frame.py` 三种假设全退化、`probe_slots.py` 输出 0 株位的
+        真正原因，写进文件免得后人再猜。
+        """
         d = asdict(self)
         for k, v in list(d.items()):
             if isinstance(v, float):
-                d[k] = round(v, 4)
-        d["pitch_m"] = round(self.pitch_m, 4)
-        d["equivalent_square_pitch_m"] = round(self.equivalent_square_pitch_m, 4)
-        d["unit_cell_area_sqm"] = round(self.unit_cell_area_sqm, 4)
-        d["skew_angle_deg"] = round(self.skew_angle_deg, 3)
+                d[k] = round(v, 8)
+        d["pitch_m"] = round(self.pitch_m, 8)
+        d["equivalent_square_pitch_m"] = round(self.equivalent_square_pitch_m, 8)
+        d["unit_cell_area_sqm"] = round(self.unit_cell_area_sqm, 8)
+        d["skew_angle_deg"] = round(self.skew_angle_deg, 6)
         d["is_triangular"] = bool(self.is_triangular)
+        # 坐标框架声明：格点 = origin + (ix, iy) 按基矢展开，ix/iy 是**全局整数格号**
+        d["grid_frame"] = "local-origin+absolute-index"
         return d
+
+    def normalized(self, ix0: int = 0, iy0: int = 0) -> "GridModel":
+        """返回原点平移到第 (ix0, iy0) 格的**等价**网格（格号相应减小）。
+
+        用途：给下游一个"格号从 0 开始"的视图，这样 `origin + ix*pitch`
+        里的 ix 只有 2~3 位数字，任何精度损失都不会被放大。
+
+        为什么不直接改 `to_dict()` 存归一化值：`GridModel` 是全流程共用的，
+        归一化会改变 `ix/iy` 的语义（缓存键、`grid_cell` 字段、跨瓦片对齐都依赖
+        绝对格号）。所以只**提供一个可选视图**，由需要精度的下游显式调用。
+        """
+        import dataclasses
+
+        shift_x = ix0 * self.plant_pitch_m + iy0 * self.skew_offset_m
+        shift_y = iy0 * self.row_pitch_m
+        return dataclasses.replace(
+            self,
+            origin_x_m=self.origin_x_m + shift_x,
+            origin_y_m=self.origin_y_m + shift_y,
+        )
 
 
 @dataclass

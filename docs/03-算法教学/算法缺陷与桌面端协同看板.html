@@ -99,6 +99,26 @@ h2.sec{font-size:1.15rem;margin:2.2rem 0 .9rem;padding-bottom:.4rem;border-botto
   </div>
 </header>
 
+<div class="warnbox" style="border-width:2px">
+  <h3>🔴 冻结后新增 P0（2026-10-29）—— 本页统计口径不含此项</h3>
+  <p><strong>跨瓦片多边形既不按 core 裁剪、也不做全局融合</strong>：相邻瓦片各向外扩 128 px，
+    于是同一条 <strong>8.45 m 宽的重叠带</strong>被两块瓦片各算一遍。</p>
+  <ul>
+    <li>实测 <strong>1,449 对多边形相互重叠 / 80,123 m²</strong>（成对和，占总面积 <strong>18.3%</strong>，
+      这是<strong>上界</strong>：三块以上交叠处被重复计入）；</li>
+    <li>按精确并集去重（按类 union）：<strong>需补种口径 323,652 → 276,219 m²（−14.7%）</strong>、
+      全部 7 类 <strong>−12.6%</strong>；其中连片空地
+      <strong>306,602 → 259,452 m²（−15.4%）</strong>；</li>
+    <li>融合后块数：连片空地 <strong>474 → 230（−51%）</strong>、道路 <strong>180 → 94（−48%）</strong>、
+      确定需补种 <strong>751 → 485（−35%）</strong>；</li>
+    <li>后果：<strong>需补种面积 / 占园比例 / 块数 / 面积折算株数系统性偏大</strong>，
+      而<strong>放样点数（3,691）不受影响</strong>（按 cm 级坐标去重）。</li>
+  </ul>
+  <p>这一项<strong>不属于"判得准不准"，属于"算了两遍"</strong>，优先级高于本页所有条目，
+    且应在 150 块真值打标之前修复 —— 否则真值验的是一份口径已偏的底稿。</p>
+  <p>完整证据、三种修复方案、复现脚本：<code>docs/03-算法教学/评审文档_20261029001.md</code></p>
+</div>
+
 <div class="kpi-grid">
   <div class="kpi">
     <div class="kpi-label">Stage 14 已攻克</div>
