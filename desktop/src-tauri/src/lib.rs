@@ -5052,7 +5052,7 @@ mod tests {
             .unwrap_or_default();
         let abs = image.to_string_lossy().replace('\\', "\\\\");
         let body = format!(
-            "{{\"type\":\"FeatureCollection\",\"schema_version\":\"0.3\",\
+            "{{\"type\":\"FeatureCollection\",\"schema_version\":\"0.4\",\
              \"source_image\":\"{name}\",\
              \"inputs_snapshot\":{{\"image\":{{\"path\":\"{abs}\",\"mtime\":0,\"size\":0}}}},\
              \"features\":[]}}"

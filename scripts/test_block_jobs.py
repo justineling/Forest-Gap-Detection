@@ -92,7 +92,7 @@ def write_result(
     `source_image` 为 None 时连 `source_image` 也不写（模拟损坏 / 非本程序产物）。
     """
     p.parent.mkdir(parents=True, exist_ok=True)
-    obj: dict = {"type": "FeatureCollection", "schema_version": "0.3"}
+    obj: dict = {"type": "FeatureCollection", "schema_version": "0.4"}
     if source_image is not None:
         obj["source_image"] = source_image
     if source_path is not None:
