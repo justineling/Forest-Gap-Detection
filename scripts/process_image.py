@@ -509,6 +509,7 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
     # 实测本机 7 个采样块里有 1 块是 90°：剔除后 0.67°、不剔除 0.80°——
     # 两者都远好于旧值 21.2°，剔除更稳。
     az_kept = list(azimuths)
+    az_before = azimuth          # 剔除前的合成值（要记进 notes，见下面的说明）
     if is_tri and len(azimuths) >= 4:
         dev = np.abs(((np.asarray(azimuths, dtype=float) - azimuth + 30.0)
                       % 60.0) - 30.0)
@@ -520,7 +521,8 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
             log(f"  方位角合成：按 6θ（模 60°）圆统计；剔除 "
                 f"{len(azimuths) - len(az_kept)} 个对偶轴离群块"
                 f"（偏离主方向 >15°）→ 用 {len(az_kept)}/{len(azimuths)} 块"
-                f"合成 {azimuth:.2f}°")
+                f"合成 {azimuth:.2f}°（剔除前 {az_before:.2f}°）")
+
 
     # --- 全局原点：把各采样块的绝对原点投到全局网格上，取相位中位数 ---
     # 做法：把每块的 origin 当"一个格点候选"，取其相对全局网格的相位，
@@ -569,7 +571,12 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
         angle_conc=med([g.angle_conc for g, _, _ in results]),
         notes=f"由 {len(results)}/{n_want} 个采样瓦片合成"
               + ("（三角形/错行种植，方位角按 6θ 模 60° 圆统计"
+                 # ⚠️ 剔除前后两个值都要记（2026-10-29）：
+                 #    只记"剔除 N 个"的话，事后无法判断文件里的方位角是哪个阶段的值。
+                 #    实测同一采样集 剔除前 1.00° / 剔除后 0.83°；
+                 #    而 10-16 结果文件记的是 0.6664°（既不是前者也不是后者）→ 追不回去。
                  + (f"，剔除 {len(azimuths) - len(az_kept)} 个对偶轴离群块"
+                    f"（{az_before:.4f}° → {azimuth:.4f}°）"
                     if len(az_kept) < len(azimuths) else "")
                  + "）"
                  if is_tri else "（正方形/对齐种植，方位角按 2θ 模 180° 圆统计）"),
@@ -1078,6 +1085,12 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--node-tol-ratio", type=float, default=0.35)
     ap.add_argument("--elongate-ratio", type=float, default=2.2)
     ap.add_argument("--min-coverage-for-slot", type=float, default=0.15)
+    ap.add_argument("--grid-from", type=str, default=None,
+                    help="从 JSON 直接读网格，跳过勘察。支持两种来源："
+                         "① --grid-only 产出的 <work-dir>/<job>/grid-survey.json（读 consensus）；"
+                         "② 任一结果文件的 planting_grid。"
+                         "用途：A/B 对比时把网格变量钉死 —— 否则采样集会随金字塔层数变化，"
+                         "方位角实测有 0.4~0.83° 的极差（500 m 上 3.8 m，比 node_tol 2.5 m 还大）")
     ap.add_argument("--survey-samples", type=int, default=7,
                     help="网格勘察的采样瓦片数，默认 7")
     ap.add_argument("--target-density", type=float,
@@ -1271,13 +1284,30 @@ def main() -> int:
         log(f"ROI 内仅 {len(tiles)} 块瓦片，网格勘察回退到全图 {len(good)} 块采样"
             f"（保证网格拟合稳定；空地检测仍限制在 ROI 内）")
 
-    grid, report = survey_grid(ds, survey_tiles, px_m, sample_n=args.survey_samples,
-                               prior_pitch_m=args.prior_pitch_m,
-                               pct=args.pct, sigma=args.sigma,
-                               exg_threshold=args.exg_threshold,
-                               use_saturation=args.use_saturation,
-                               exg_lo=args.exg_lo, exg_hi=args.exg_hi,
-                               n_valid_hint=len(good),
+    if args.grid_from:
+        # ---- 从文件读网格，跳过勘察（A/B 对比用）----
+        import dataclasses as _dc
+
+        from grid_prior import GridModel as _GM
+
+        _raw = json.loads(Path(args.grid_from).read_text(encoding="utf-8"))
+        # 两种来源：grid-survey.json 的 consensus / 结果文件的 planting_grid
+        _gd = _raw.get("consensus") or _raw.get("planting_grid") or _raw
+        _fields = {f.name for f in _dc.fields(_GM)}
+        grid = _GM(**{k: v for k, v in _gd.items() if k in _fields})
+        log(f"网格来自 {args.grid_from}（跳过勘察）："
+            f"株距 {grid.plant_pitch_m} / 行距 {grid.row_pitch_m} / "
+            f"方位 {grid.row_azimuth_deg:.4f}° / 质量 {grid.quality:.3f}")
+        report = {"source": "grid-from", "path": str(args.grid_from),
+                  "requested": 0, "probed": 0, "used": 0, "samples": []}
+    else:
+        grid, report = survey_grid(ds, survey_tiles, px_m, sample_n=args.survey_samples,
+                                   prior_pitch_m=args.prior_pitch_m,
+                                   pct=args.pct, sigma=args.sigma,
+                                   exg_threshold=args.exg_threshold,
+                                   use_saturation=args.use_saturation,
+                                   exg_lo=args.exg_lo, exg_hi=args.exg_hi,
+                                   n_valid_hint=len(good),
                                target_density_per_ha=args.target_density,
                                verbose=not args.quiet)
     atomic_write_json(job_dir / "grid-survey.json", {
