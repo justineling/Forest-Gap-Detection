@@ -1919,3 +1919,37 @@ kbd {
 .detect-bar.running .db-head b {
   color: var(--ark-signal);
 }
+
+/* ---------- 40. 复核草稿恢复条 + 地图「全图」按钮（2026-11-03） ---------- */
+
+/* 恢复条：信息而非警告 → 用信号青左沿（与 .rv-flash-bar.is-on 同一语法），不用琥珀。
+   ⚠️ display 写在设计层：布局层写 display 会被本文件更早的规则压住（四条硬坑之 ②）。 */
+.rv-restored {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 6px 10px;
+  background: var(--ark-scan);
+  border-left: 2px solid var(--ark-signal);
+  border-bottom: 1px solid var(--ark-line);
+  font-size: 11px;
+  color: var(--ark-paper);
+}
+/* 文字独占一行：右栏只有 300px，同行放两个按钮时省略号恰好吃掉"删 N · 改 N"这几个数字 */
+.rv-restored-text {
+  flex: 1 1 100%;
+  line-height: 1.5;
+}
+.rv-restored .btn:first-of-type {
+  margin-left: auto;
+}
+
+/* 「全图」：挂在缩放 +/− 同一组里，字形用 mono 两字，和控件组的方块语法一致 */
+.maplibregl-ctrl button.fgd-ctrl-home {
+  width: 30px;
+  font-family: var(--ark-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--ark-paper);
+}

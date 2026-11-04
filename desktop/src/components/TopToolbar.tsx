@@ -135,12 +135,18 @@ export default function TopToolbar({
           <span className={healthy ? 'dot ok' : 'dot bad'} />
         </button>
 
+        {/* 悬停直接说出**这一下撤的是什么**（缺陷台账 P2-3：只看到「↶ 3」不敢按）。
+            名字取自撤销栈顶 —— 与日志里「↶ 撤销：…」是同一个字符串。 */}
         <button
           type="button"
           className="btn icon"
           onClick={undo}
           disabled={past.length === 0}
-          title={`撤销（Ctrl+Z）—— 可撤 ${past.length} 步；批量操作算一步`}
+          title={
+            past.length === 0
+              ? '撤销（Ctrl+Z）—— 还没有可撤销的修改'
+              : `撤销「${past[past.length - 1].label}」（Ctrl+Z）—— 共可撤 ${past.length} 步，批量操作算一步`
+          }
         >
           ↶<span className="icon-n">{past.length || ''}</span>
         </button>
@@ -149,7 +155,11 @@ export default function TopToolbar({
           className="btn icon"
           onClick={redo}
           disabled={future.length === 0}
-          title={`重做（Ctrl+Y / Ctrl+Shift+Z）—— 可重做 ${future.length} 步`}
+          title={
+            future.length === 0
+              ? '重做（Ctrl+Y / Ctrl+Shift+Z）—— 没有可重做的步骤'
+              : `重做「${future[0].label}」（Ctrl+Y / Ctrl+Shift+Z）—— 共可重做 ${future.length} 步`
+          }
         >
           ↷<span className="icon-n">{future.length || ''}</span>
         </button>

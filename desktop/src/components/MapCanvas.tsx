@@ -101,6 +101,38 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
     //    现在卡片已改成地图列下沿的命令条（不再压影像），但控件留在右上角 ——
     //    那里空着，而右下角现在是批量操作栏与命令条的入口区。
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
+    // 「全图」：飞到某块复核完，一键回到整幅影像（缺陷台账 P2-6，2026-11-03 补）。
+    // 以前只能滚轮一级级缩回去 —— 5 GB 的影像从 z20 缩到全图要滚十几下。
+    // 读 store 的 meta 而不是闭包：这个 effect 只在挂载时跑一次，换影像后外接框会变。
+    map.addControl(
+      {
+        onAdd: () => {
+          const box = document.createElement('div')
+          box.className = 'maplibregl-ctrl maplibregl-ctrl-group'
+          const btn = document.createElement('button')
+          btn.type = 'button'
+          btn.className = 'fgd-ctrl-home'
+          btn.textContent = '全图'
+          btn.title = '回到整幅影像'
+          btn.setAttribute('aria-label', '回到整幅影像')
+          btn.addEventListener('click', () => {
+            const b = useAppStore.getState().meta?.bounds_wgs84
+            if (!b) return
+            map.fitBounds(
+              [
+                [b[0], b[1]],
+                [b[2], b[3]],
+              ],
+              { padding: 40, duration: 500 },
+            )
+          })
+          box.appendChild(btn)
+          return box
+        },
+        onRemove: () => {},
+      },
+      'top-right',
+    )
     map.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left')
     mapRef.current = map
 
