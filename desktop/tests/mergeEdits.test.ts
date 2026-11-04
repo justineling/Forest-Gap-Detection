@@ -243,5 +243,47 @@ console.log('\nI. 一条删除命中多块（重跑后裂开）→ 提示复核'
   )
 }
 
+// ---------- J. 接缝窄条重叠不算同一块（2026-11-03 复审） ----------
+// 真实结果里瓦片接缝两侧的多边形会互相压一条窄缝。凹形块（U 形）的面内点可能恰好落在
+// 这条缝里 —— 只看"一个点落入"就会把用户没碰过的邻块当成被删的那块一起删掉。
+console.log('\nJ. 凹形邻块只压一条窄缝 → 删除不外溢')
+{
+  const d = 1 / 111_000 // ≈ 1 m
+  const lon = 111.2
+  const lat = 1.18
+  // U 形 30 m × 30 m，开口朝上，两臂各宽 8 m、底宽 8 m；面内点落在左臂下部
+  const u: GapFeature = {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [lon, lat],
+          [lon + 30 * d, lat],
+          [lon + 30 * d, lat + 30 * d],
+          [lon + 22 * d, lat + 30 * d],
+          [lon + 22 * d, lat + 8 * d],
+          [lon + 8 * d, lat + 8 * d],
+          [lon + 8 * d, lat + 30 * d],
+          [lon, lat + 30 * d],
+          [lon, lat],
+        ],
+      ],
+    },
+    properties: { gap_id: 'NU', class: 'open_patch', area_sqm: 548 },
+  }
+  // 被删的邻块：只压住 U 形左下角一小片（约占 U 的 10%）
+  const small = mkFeature('Gsmall', lon - 4 * d * 0, lat - 0, 8)
+  const ip = matchFeature(u, small)
+  check(ip !== 'centroid', '★ U 形只有一小片压在被删块上 → 强判据不成立', ip)
+  const r = mergeManualEdits({ prevFeatures: [], deletedFeatures: [small], newFeatures: [u], mode: 'keep_manual' })
+  check(r.features.some((f) => f.properties.gap_id === 'NU'), '★ 重跑后 U 形块保留（没被连带删除）')
+
+  // 对照：新块几乎就是旧块（轻微变形）→ 强判据仍然成立
+  const same = mkFeature('Gsame', lon, lat, 20)
+  const shifted = mkFeature('Nsame', lon + 0.5 * d, lat + 0.5 * d, 20)
+  check(matchFeature(shifted, same) === 'centroid', '对照：同一块轻微变形 → 仍判为同一块')
+}
+
 console.log(`\n${failures === 0 ? '✅ 全部通过' : `❌ ${failures} 项失败`}`)
 process.exit(failures === 0 ? 0 : 1)

@@ -14,7 +14,7 @@
  * 该文件不入库（output/ 走 Google Drive），缺失时自动跳过并说明。
  */import { existsSync, readFileSync } from 'node:fs'
 import { estimate, SINGLE_TREE_AREA_M2, DEFAULT_GRID } from '../src/lib/estimate'
-import { polygonAreaM2 } from '../src/lib/geometry'
+import { pointInGeometry, polygonAreaM2 } from '../src/lib/geometry'
 import type { GapFeature, PlantingGrid } from '../src/types'
 
 /** 结果文件在仓库根，而 npm script 的 cwd 是 desktop/ —— 两个位置都试 */
@@ -114,21 +114,26 @@ console.log('\nC. 点位自检')
 let outside = 0
 let tooClose = 0
 let slotPts = 0
+let slotOutside = 0
 for (const p of res.points) {
   const f = features.find((x) => x.properties.gap_id === p.gap_id)
   if (!f) {
     outside++
     continue
   }
-  // vacant_slot 的点位是"质心标记"（规则＝每块 1 株），不适用退让检查
+  // vacant_slot 的点位是"株位标记"（规则＝每块 1 株），不适用退让检查 ——
+  // 但**必须落在自己的多边形里**：这是放样点，落在洞外 = 让人把苗种在老树冠下。
+  // （2026-11-03 补：以前这里整条豁免，于是 24 块凹形/带洞株位的质心落在外面没人发现）
   if (f.properties.class === 'vacant_slot') {
     slotPts++
+    if (!pointInGeometry([p.lon, p.lat], f.geometry)) slotOutside++
     continue
   }
   if (p.edge_dist_m < res.grid.clearance_m - 1e-6) tooClose++
 }
 check(outside === 0, '所有点位都能找到所属多边形', `越界 ${outside}`)
 check(tooClose === 0, '网格点位满足退让距离', `不足 ${tooClose}`)
+check(slotOutside === 0, '★ 株位标记全部落在自己的多边形内', `落在外面 ${slotOutside} / ${slotPts}`)
 console.log(`        （其中株位标记 ${slotPts} 个，不适用退让）`)
 
 // ---------- D. 退让敏感度 ----------

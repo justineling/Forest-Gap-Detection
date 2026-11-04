@@ -1,5 +1,5 @@
 import type { GapFeature } from '../types'
-import { centroid, pointInGeometry, polygonAreaM2 } from './geometry'
+import { insidePoint, pointInGeometry, polygonAreaM2 } from './geometry'
 
 /**
  * 编辑后重跑的合并策略（PRD 附录 C · R-P1-8；交接简报 §12 裁定第 3 条）。
@@ -17,7 +17,8 @@ import { centroid, pointInGeometry, polygonAreaM2 } from './geometry'
  *
  * ⚠️ 为什么这里**不**算真正的多边形 IoU：前端零依赖（不引 turf/polygon-clipping），
  * 做多边形布尔运算要上百行且容易在自相交几何上崩。这里用两级判据替代：
- *   1. **质心落入**（强判据）：新要素的质心落在旧多边形内 → 同一个对象
+ *   1. **主体落入**（强判据）：新要素的面内点落在旧多边形内，且新要素 ≥ 50% 的面积
+ *      （8×8 采样）也在旧多边形内 → 同一个对象（防瓦片接缝处的窄条重叠误配）
  *   2. **外接框 IoU > 0.5 且面积比 ∈ [0.5, 2]**（弱判据）：形状变化较大时兜底
  * 两级都命中不了就当作「新出现的空地」，原样保留。
  * 判据选择会写进 `warnings`，让人能复核"这条重放是不是猜的"。
@@ -97,8 +98,15 @@ function bboxIoU(a: GapFeature, b: GapFeature): number {
  * 面积比约束是为了避免"一个大空地框住一堆小空地"时被误判成同一个。
  */
 export function matchFeature(nf: GapFeature, old: GapFeature): MatchKind {
-  const c = centroid(nf.geometry)
-  if (pointInGeometry(c, old.geometry)) return 'centroid'
+  // 用"保证在 nf 面内的点"而不是裸质心：凹形块（实测 21% 的连片空地）的质心在自己外面，
+  // 拿它去判"落入旧块"等于先天失配，只能靠外接框兜底（还会多一条 warning）。
+  //
+  // ⚠️ 但单个点落入**不够**（2026-11-03 复审抓到）：瓦片接缝处相邻多边形会互相重叠，
+  //    凹形块的面内点可能恰好落在只占它 1%~12% 的那条重叠缝里 —— 用户删掉邻块，
+  //    重跑后这块从没碰过的空地也被一起"重放删除"，而且没有任何提示。
+  //    所以强判据要求 nf 的**主体**（≥ 50% 的面内采样点）落在旧块里。
+  const c = insidePoint(nf.geometry)
+  if (pointInGeometry(c, old.geometry) && mostlyInside(nf, old)) return 'centroid'
 
   const iou = bboxIoU(nf, old)
   if (iou > 0.5) {
@@ -110,6 +118,29 @@ export function matchFeature(nf: GapFeature, old: GapFeature): MatchKind {
     }
   }
   return 'none'
+}
+
+/**
+ * nf 的主体是否落在 old 里：在 nf 外接框上取 8×8 个格子中心，只看落在 nf 内的那些，
+ * 其中 ≥ 50% 也在 old 内才算。一个格子都没落进 nf（极细 / 极小的块）时不否决 ——
+ * 退回单点判据的结论，与改动前的行为一致。
+ */
+const OVERLAP_GRID = 8
+function mostlyInside(nf: GapFeature, old: GapFeature): boolean {
+  const [x0, y0, x1, y1] = bboxOf(nf)
+  const dx = (x1 - x0) / OVERLAP_GRID
+  const dy = (y1 - y0) / OVERLAP_GRID
+  let inNew = 0
+  let inBoth = 0
+  for (let i = 0; i < OVERLAP_GRID; i++) {
+    for (let j = 0; j < OVERLAP_GRID; j++) {
+      const p: [number, number] = [x0 + (i + 0.5) * dx, y0 + (j + 0.5) * dy]
+      if (!pointInGeometry(p, nf.geometry)) continue
+      inNew++
+      if (pointInGeometry(p, old.geometry)) inBoth++
+    }
+  }
+  return inNew === 0 || inBoth * 2 >= inNew
 }
 
 /** 把旧要素的人工改判「贴」到新要素上（几何/面积用新的，类别用旧的） */

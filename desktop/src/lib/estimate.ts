@@ -7,9 +7,9 @@ import type {
 } from '../types'
 import { CLASS_STYLES } from './classes'
 import {
-  centroid,
   distToBoundaryM,
   geometryOrigin,
+  insidePoint,
   metersPerDeg,
   pointInGeometry,
   polygonAreaM2,
@@ -109,9 +109,11 @@ function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, num
   const toLocal = (p: [number, number]): [number, number] => [(p[0] - lon0) * mx, (p[1] - lat0) * my]
   const toLonLat = (x: number, y: number): [number, number] => [lon0 + x / mx, lat0 + y / my]
 
-  const rings = f.geometry.type === 'Polygon' ? f.geometry.coordinates : f.geometry.coordinates.flat()
-  const outer = rings[0]
-  const locals = outer.map(toLocal)
+  // 外接框必须覆盖**每一个**外环：MultiPolygon 只取 rings[0] 的话，
+  // 第二块及以后的部分一个格点都取不到（排坑静默少算）。洞在外环之内，不影响外接框。
+  const outers =
+    f.geometry.type === 'Polygon' ? [f.geometry.coordinates[0]] : f.geometry.coordinates.map((p) => p[0])
+  const locals = outers.flat().map(toLocal)
   const xs = locals.map((p) => p[0])
   const ys = locals.map((p) => p[1])
   const bx0 = Math.min(...xs)
@@ -250,11 +252,13 @@ export function estimate(
     //   ① 用 2 m 退让去铺 8.45 m 间距的格点会大量落空（实测 196 个窄块得 0）；
     //   ② 面积口径 floor(63/66.67) = 0，但语义上它就是 **1 株**。
     // 因此株位空缺两个口径都记 1（点位取质心）；连片空地/人工新增走网格排坑。
+    // ⚠️ 质心落在面外（U 形 / 环形缺口，实测 24/253 块）时退回面内点 ——
+    //    与 Python `planting_points._slot_point` 同一规则，否则地图上的株位点与交付包对不上。
     const byArea = isSlot ? 1 : estimateByArea(area)
 
     let pts: PlantingPoint[]
     if (isSlot) {
-      const c = centroid(f.geometry)
+      const c = insidePoint(f.geometry)
       pts = [
         {
           lon: c[0],
