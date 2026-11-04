@@ -117,6 +117,12 @@ h2.sec{font-size:1.15rem;margin:2.2rem 0 .9rem;padding-bottom:.4rem;border-botto
   <p>这一项<strong>不属于"判得准不准"，属于"算了两遍"</strong>，优先级高于本页所有条目，
     且应在 150 块真值打标之前修复 —— 否则真值验的是一份口径已偏的底稿。</p>
   <p>完整证据、三种修复方案、复现脚本：<code>docs/03-算法教学/评审文档_20261029001.md</code></p>
+  <p>✅ <strong>2026-11-04 已修</strong>：core 裁剪 + 全局缝合 + 在完整几何上重分类；林地掩膜改为沿掩膜切开；
+    桌面端补上了漏掉的林地掩膜（与 CLI 共用 <code>finalize_features</code>）。
+    同网格 A/B：重叠 <strong>62,317 m² → 0</strong>、跨缝矛盾 <strong>135 对 → 0</strong>、
+    确定需补种 <strong>702 块 / 309,193 m² → 451 块 / 261,710 m²</strong>
+    （旧算法自己的真实覆盖是 262,164 m²），换瓦片配置面积只差 0.009%。
+    详见评审文档第三轮；<strong>正式交付文件与验证集尚待按新算法重跑 / 重抽</strong>。</p>
 </div>
 
 <div class="kpi-grid">
