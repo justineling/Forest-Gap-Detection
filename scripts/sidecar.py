@@ -843,7 +843,7 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
 def self_test() -> int:
     """不跑算法，只验证事件通道与参数管线。"""
     emit("started", job="_self_test", pid=os.getpid(),
-         sidecar_version=SIDECAR_VERSION, schema_version="0.3",
+         sidecar_version=SIDECAR_VERSION, schema_version="0.4",
          params_echo={"input": "/fake/path.tif"}, started_at=_now())
 
     # 1) 参数归一
@@ -977,7 +977,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     emit("started", job=args.job, pid=os.getpid(),
-         sidecar_version=SIDECAR_VERSION, schema_version="0.3",
+         sidecar_version=SIDECAR_VERSION, schema_version="0.4",
          params_echo=params_echo(args), started_at=_now())
 
     for w in warns:

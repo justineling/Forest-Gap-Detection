@@ -125,6 +125,8 @@ interface RawResult {
   type?: string
   features?: GapCollection['features']
   blocks?: Array<{ block_id?: string; block_name?: string; gaps?: GapCollection['features'] }>
+  /** 算法输出的格式版本（`process_image.SCHEMA_VERSION`）。0.4 起 to_dict 精度 8 dp */
+  schema_version?: string
   planting_grid?: GapCollection['planting_grid']
   summary?: Record<string, unknown>
   /** 后端读不到结果文件时给的人类说明（`features` 为空时才有意义） */
@@ -148,14 +150,34 @@ interface RawResult {
  * "没找到文件"就退化成了"检测结果是 0 块" —— 用户看到"没有空地"，
  * 完全不知道检测其实成功了、只是文件在别处。所以 `error` 必须原样透传。
  */
+/** 当前程序期望的结果文件格式版本（与 `scripts/process_image.SCHEMA_VERSION` 对齐） */
+export const EXPECTED_SCHEMA = '0.4'
+
 export function normalizeCollection(raw: RawResult | null | undefined): GapCollection {
   const grid = raw?.planting_grid
   const error = typeof raw?.error === 'string' && raw.error ? raw.error : undefined
   // 过期提示也要原样带出去 —— 它和 error 一样属于"数字可能不对"的信号，
   // 丢了用户就完全看不到（这正是 error 曾经被丢掉的同一类问题）
-  const stale = Array.isArray(raw?.stale_warnings) && raw.stale_warnings.length > 0
-    ? (raw.stale_warnings as string[])
-    : undefined
+  const staleList: string[] =
+    Array.isArray(raw?.stale_warnings) && raw.stale_warnings.length > 0
+      ? [...(raw.stale_warnings as string[])]
+      : []
+
+  // ⚠️ 格式版本不匹配：**警告但不崩溃**（2026-10-29）
+  //
+  // 为什么需要：`SCHEMA_VERSION` 从 0.3 升到 0.4 时，`GridModel.to_dict()` 的精度
+  // 从 4 dp 变成 8 dp —— 旧文件里的 `planting_grid` 带 0.306 m 的格点偏差。
+  // 若程序静默读旧文件，界面上的"到格点距离 / 株位判定"全部偏 0.3 m 而不报错。
+  // 走 `stale_warnings` 这条已有通道：它会显示在界面上（与"结果过期"同一类提示），
+  // 但不会阻断用户 —— 旧文件仍可看，只是数字不能当准。
+  const ver = typeof raw?.schema_version === 'string' ? raw.schema_version : null
+  if (ver && ver !== EXPECTED_SCHEMA) {
+    staleList.push(
+      `结果文件格式版本是 ${ver}，当前程序期望 ${EXPECTED_SCHEMA} —— ` +
+        '格点精度可能不同，株位判定与面积请以重跑结果为准',
+    )
+  }
+  const stale = staleList.length > 0 ? staleList : undefined
   if (raw?.features?.length) {
     return { type: 'FeatureCollection', features: raw.features, planting_grid: grid, error, stale_warnings: stale }
   }
