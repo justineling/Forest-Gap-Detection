@@ -19,6 +19,14 @@ import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeE
 import { CHM_PRESETS, type ChmPreset } from '../lib/chm'
 import type { ReviewKind } from '../lib/selection'
 import type { GtLabel, GtRecord, GtSample } from '../lib/validation'
+import { applyDraft, baselineSig, loadDraft, maxManualSeq, type DraftStats } from '../lib/reviewDraft'
+
+/** 草稿恢复在撤销栈里的那一步的名字（ReviewList 靠它判断"撤销恢复"按钮还有没有意义） */
+/**
+ * ⚠️ 不能写「未导出」：导出后草稿照样保留（那些修改仍是用户的成果），
+ *    下次打开时恢复的可能正是已经交付过的修改 —— 说「未导出」会让人怀疑交付包。
+ */
+export const RESTORE_LABEL = '恢复上次的复核修改'
 
 const MAX_LOGS = 300
 
@@ -168,6 +176,19 @@ export interface HistoryEntry {
   manualAdded: number
   manualDeleted: number
   manualEdited: number
+  /** 这份快照对应的数据版本（撤销 / 重做时一起还原，导出新旧判定靠它） */
+  rev: number
+  /**
+   * 这份快照所在的基线（2026-11-03 复审补）。
+   *
+   * ⚠️ 必须随撤销一起还原：「重跑合并」会换基线，撤销它之后 gaps 回到旧结果，
+   *    基线若还停在新结果上，草稿就拿旧数据去和新基线比 —— 几乎每块都成了「改过」，
+   *    草稿膨胀到 12 MB 写不进存储，还谎报「本地存储已满」。
+   */
+  baseGaps: GapFeature[]
+  baseSig: string
+  /** 「已恢复上次的修改」说明条：撤销恢复时它要一起消失，重做时一起回来 */
+  draftRestored: AppState['draftRestored']
 }
 
 const IDLE_DETECT: DetectRun = {
@@ -295,6 +316,33 @@ export interface AppState {
    * 见 `lib/mergeEdits.ts`。
    */
   deletedFeatures: GapFeature[]
+  /**
+   * 本轮的**基线**：载入（或重跑合并）那一刻的算法结果，以及它的签名。
+   * 复核草稿只存相对它的差异（见 `lib/reviewDraft.ts`）。空结果时 `baseSig === ''`。
+   */
+  baseGaps: GapFeature[]
+  baseSig: string
+  /**
+   * 最近一次基线变化是不是撤销 / 重做造成的（App 的自动保存据此决定旧基线的草稿怎么处理）。
+   *
+   * 撤销「重跑合并」会把基线换回一个**磁盘上已经被新结果覆盖**的文件：留着新基线的草稿，
+   * 下次启动就会把用户刚撤销掉的状态恢复回来。所以这种切换要删掉被离开那份基线的草稿；
+   * 而换区块 / 重新载入换的基线，各自的草稿都还有效，不能删。
+   */
+  baseSwitchedByHistory: boolean
+  /** 启动时从草稿恢复了多少修改（非 null 时复核清单顶部挂一条说明） */
+  draftRestored: (DraftStats & { savedAt: number }) | null
+
+  /**
+   * 数据版本号：每次改动结果（含撤销 / 重做）都会变。
+   *
+   * 不用"改了几次"的计数：撤销回去之后数据和导出时**一模一样**，界面就不该再喊"需重导"。
+   * 所以版本号随快照一起存、撤销时一起还原；新操作永远取一个从未用过的新号
+   * （否则"撤销 → 改别的"可能撞回导出时的号，把不同的数据误判成没变）。
+   */
+  editRev: number
+  /** 上次成功导出时的版本号与退让距离；两者任一变了 = 磁盘上的交付包已过期 */
+  exportSnap: { rev: number; clearance: number } | null
 
   // —— ROI（需求 2）——
   roi: PolygonGeometry | null
@@ -337,6 +385,13 @@ export interface AppState {
   setTilesState: (v: TilesState) => void
   /** 标记流程进度（detected / reviewed / exported） */
   markWorkflow: (patch: Partial<WorkflowFlags>) => void
+  /**
+   * 导出成功：置 `workflow.exported` 并记下**发起导出那一刻**的版本号与退让。
+   * 版本号要在 await 之前取 —— 导出期间若有改动，交付包里是改动前的数据。
+   */
+  markExported: (snap: { rev: number; clearance: number }) => void
+  /** 收起"已恢复上次修改"的说明条 */
+  dismissDraftNotice: () => void
   /** 改复核筛选条件（一次传齐，避免中间态出现"预设和自定义同时生效"） */
   setReviewFilter: (patch: Partial<ReviewFilter>) => void
   /** 载入/生成验证集（已有本地进度则复用，不重抽） */
@@ -410,6 +465,8 @@ export interface AppState {
 }
 
 let manualSeq = 0
+/** 数据版本号发号器：只增不减，保证每次新操作拿到的号都没出现过（见 `editRev`） */
+let revSeq = 0
 
 /**
  * 上一次几何编辑（用于合并连续拖拽）。
@@ -433,6 +490,10 @@ function snap(s: AppState, label: string): HistoryEntry {
     manualAdded: s.manualAdded,
     manualDeleted: s.manualDeleted,
     manualEdited: s.manualEdited,
+    rev: s.editRev,
+    baseGaps: s.baseGaps,
+    baseSig: s.baseSig,
+    draftRestored: s.draftRestored,
   }
 }
 
@@ -445,17 +506,70 @@ function snap(s: AppState, label: string): HistoryEntry {
  *    这种时间线分叉。
  */
 function commit(s: AppState, label: string, patch: Partial<AppState>): Partial<AppState> {
+  // 任何一次独立提交都结束上一段拖拽（复审补）：否则"拖 → 别的操作 → 再拖同一块"会被合并
+  lastGeomEdit = null
   return {
     ...patch,
     past: [...s.past, snap(s, label)].slice(-HISTORY_LIMIT),
     future: [],
     estimateResult: null,
+    editRev: ++revSeq,
   }
 }
 
 /** 选择集变化时同步便捷字段 `selectedId` */
 function sel(ids: string[]): Pick<AppState, 'selectedIds' | 'selectedId'> {
   return { selectedIds: ids, selectedId: ids.length === 1 ? ids[0] : null }
+}
+
+/**
+ * `setGaps` 的"换一份干净基线"部分（不含草稿恢复）。
+ * 抽出来是因为恢复草稿要在它的结果上再叠一层，两条路径必须共用同一份重置清单。
+ */
+function setGapsFresh(
+  s: AppState,
+  features: GapFeature[],
+  plantingGrid: PlantingGrid | null | undefined,
+  sig: string,
+): Partial<AppState> & { logs: string[] } {
+  return {
+    gaps: features,
+    plantingGrid: plantingGrid ?? null,
+    baseGaps: features,
+    baseSig: sig,
+    baseSwitchedByHistory: false,
+    draftRestored: null,
+    // 新基线的版本号归零；上一份数据的导出记录不适用于这一份
+    editRev: 0,
+    exportSnap: null,
+    // 载入新一轮结果 = 换基线，上一轮的删除记录与历史都不再适用
+    // （撤销到"上一份数据"没有意义，而且会和新基线混在一起）
+    deletedFeatures: [],
+    past: [],
+    future: [],
+    ...sel([]),
+    estimateResult: null,
+    // 人工编辑计数也要归零：换了一批数据，上一轮的"删了 5 块"不该记在新交付上
+    manualAdded: 0,
+    manualDeleted: 0,
+    manualEdited: 0,
+    // 换了基线 → 流程重新开始。只保留"载入过结果"这一位
+    //（它是第 3 步算完成的依据；detected 必须留 false，
+    // 否则首次载入磁盘结果时界面会谎称"刚跑完检测"）。
+    workflow: { ...WORKFLOW_INIT, loaded: features.length > 0 },
+    // 换数据后重置筛选：上一批设的"≥1000"可能让新结果一条都不剩，
+    // 用户会以为检测没出东西
+    reviewFilter: { ...REVIEW_FILTER_INIT },
+    // 验证集也要清空内存里的（磁盘进度按 scope 保留，回到同一园区还能续标）
+    validation: { scope: '', samples: [], records: {}, seed: 42 },
+    logs: appendLog(
+      s.logs,
+      `载入 ${features.length} 个多边形` +
+        (plantingGrid?.anchor_lon != null
+          ? '（已对齐算法种植网格锚点）'
+          : '（无算法网格锚点，估算相位不可复现）'),
+    ),
+  }
 }
 
 export const useAppStore = create<AppState>()((set, get) => ({
@@ -470,6 +584,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
   selectedId: null,
   plantingGrid: null,
   deletedFeatures: [],
+  baseGaps: [],
+  baseSig: '',
+  baseSwitchedByHistory: false,
+  draftRestored: null,
+  editRev: 0,
+  exportSnap: null,
 
   roi: null,
 
@@ -496,6 +616,17 @@ export const useAppStore = create<AppState>()((set, get) => ({
 
   markWorkflow: (patch) =>
     set((s) => ({ workflow: { ...s.workflow, ...patch } })),
+
+  markExported: (snap) =>
+    set((s) => ({ workflow: { ...s.workflow, exported: true }, exportSnap: { ...snap } })),
+
+  // 撤销栈里的快照也一起清：否则「知道了」之后再撤销一步，说明条又从快照里冒出来
+  dismissDraftNotice: () =>
+    set((s) => ({
+      draftRestored: null,
+      past: s.past.map((h) => (h.draftRestored ? { ...h, draftRestored: null } : h)),
+      future: s.future.map((h) => (h.draftRestored ? { ...h, draftRestored: null } : h)),
+    })),
 
   setReviewFilter: (patch) =>
     set((s) => ({ reviewFilter: { ...s.reviewFilter, ...patch } })),
@@ -565,37 +696,51 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setGaps: (features, plantingGrid) => {
     // 换基线时重置拖拽合并窗口，否则紧接着的第一次编辑会被误判成"上一次拖拽的后续"
     lastGeomEdit = null
-    set((s) => ({
-      gaps: features,
-      plantingGrid: plantingGrid ?? null,
-      // 载入新一轮结果 = 换基线，上一轮的删除记录与历史都不再适用
-      // （撤销到"上一份数据"没有意义，而且会和新基线混在一起）
-      deletedFeatures: [],
-      past: [],
-      future: [],
-      ...sel([]),
-      estimateResult: null,
-      // 人工编辑计数也要归零：换了一批数据，上一轮的"删了 5 块"不该记在新交付上
-      manualAdded: 0,
-      manualDeleted: 0,
-      manualEdited: 0,
-      // 换了基线 → 流程重新开始。只保留"载入过结果"这一位
-      //（它是第 3 步算完成的依据；detected 必须留 false，
-      // 否则首次载入磁盘结果时界面会谎称"刚跑完检测"）。
-      workflow: { ...WORKFLOW_INIT, loaded: features.length > 0 },
-      // 换数据后重置筛选：上一批设的"≥1000"可能让新结果一条都不剩，
-      // 用户会以为检测没出东西
-      reviewFilter: { ...REVIEW_FILTER_INIT },
-      // 验证集也要清空内存里的（磁盘进度按 scope 保留，回到同一园区还能续标）
-      validation: { scope: '', samples: [], records: {}, seed: 42 },
-      logs: appendLog(
-        s.logs,
-        `载入 ${features.length} 个多边形` +
-          (plantingGrid?.anchor_lon != null
-            ? '（已对齐算法种植网格锚点）'
-            : '（无算法网格锚点，估算相位不可复现）'),
-      ),
-    }))
+    const sig = baselineSig(features)
+    // 基线自己可能带 M 编号（重新打开的交付包）：续号必须跳过它们，否则新补画撞号
+    manualSeq = Math.max(manualSeq, maxManualSeq(features))
+    // 同一份基线上次的复核修改（关窗 / 断电前自动存的）—— 有就贴回来
+    const draft = loadDraft(sig)
+    set((s) => {
+      const fresh = setGapsFresh(s, features, plantingGrid, sig)
+      if (!draft) return fresh
+      const r = applyDraft(features, draft)
+      manualSeq = Math.max(manualSeq, maxManualSeq(draft))
+      // 恢复本身是**一步可撤销的操作**：撤销栈底压一份"干净基线"，
+      // 用户不想要这些修改时 Ctrl+Z 一下就回到纯算法结果（草稿随后被自动删掉）
+      const pristine: HistoryEntry = {
+        label: RESTORE_LABEL,
+        gaps: features.slice(),
+        deletedFeatures: [],
+        selectedIds: [],
+        manualAdded: 0,
+        manualDeleted: 0,
+        manualEdited: 0,
+        rev: 0,
+        baseGaps: features,
+        baseSig: sig,
+        draftRestored: null,
+      }
+      const when = new Date(draft.savedAt).toLocaleString('zh-CN', { hour12: false })
+      return {
+        ...fresh,
+        gaps: r.features,
+        deletedFeatures: r.deleted,
+        manualAdded: draft.counters.manualAdded,
+        manualDeleted: draft.counters.manualDeleted,
+        manualEdited: draft.counters.manualEdited,
+        past: [pristine],
+        editRev: ++revSeq,
+        draftRestored: { ...r.stats, savedAt: draft.savedAt },
+        logs: appendLog(
+          fresh.logs,
+          `已恢复上次的复核修改（保存于 ${when}）：删除 ${r.stats.deleted} · ` +
+            `改判/改边界 ${r.stats.edited} · 补画 ${r.stats.manual}` +
+            (r.stats.missing ? ` · ${r.stats.missing} 条对不上已忽略` : '') +
+            '。不要的话按 Ctrl+Z 撤销整次恢复',
+        ),
+      }
+    })
   },
 
   toggleClass: (cls) =>
@@ -631,11 +776,15 @@ export const useAppStore = create<AppState>()((set, get) => ({
       focus: { id, nonce: (s.focus?.nonce ?? 0) + 1 },
     })),
 
+  // ⚠️ 推进对侧栈的快照必须沿用**被撤销 / 被重做那一步的名字**（2026-11-03 修）：
+  //    以前写死 '当前状态'，于是撤销后再重做，日志是「↷ 重做：当前状态」，
+  //    再撤销一次又是「↶ 撤销：当前状态」—— 用户不知道这一下撤的是什么，就不敢按。
   undo: () =>
     set((s) => {
       const prev = s.past[s.past.length - 1]
       if (!prev) return {}
-      const cur = snap(s, '当前状态')
+      lastGeomEdit = null
+      const cur = snap(s, prev.label)
       return {
         gaps: prev.gaps,
         deletedFeatures: prev.deletedFeatures,
@@ -643,10 +792,21 @@ export const useAppStore = create<AppState>()((set, get) => ({
         manualAdded: prev.manualAdded,
         manualDeleted: prev.manualDeleted,
         manualEdited: prev.manualEdited,
+        editRev: prev.rev,
+        baseGaps: prev.baseGaps,
+        baseSig: prev.baseSig,
+        draftRestored: prev.draftRestored,
         past: s.past.slice(0, -1),
         future: [cur, ...s.future].slice(0, HISTORY_LIMIT),
         estimateResult: null,
-        logs: appendLog(s.logs, `↶ 撤销：${prev.label}`),
+        baseSwitchedByHistory: prev.baseSig !== s.baseSig,
+        logs: appendLog(
+          s.logs,
+          `↶ 撤销：${prev.label}` +
+            (prev.baseSig !== s.baseSig && prev.label === '重跑合并'
+              ? '。⚠️ 磁盘上的结果文件已经是新一轮的 —— 撤销回来的这份只在本次会话里有效，要留下请在关闭前导出'
+              : ''),
+        ),
       }
     }),
 
@@ -654,7 +814,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((s) => {
       const next = s.future[0]
       if (!next) return {}
-      const cur = snap(s, '当前状态')
+      lastGeomEdit = null
+      const cur = snap(s, next.label)
       return {
         gaps: next.gaps,
         deletedFeatures: next.deletedFeatures,
@@ -662,9 +823,14 @@ export const useAppStore = create<AppState>()((set, get) => ({
         manualAdded: next.manualAdded,
         manualDeleted: next.manualDeleted,
         manualEdited: next.manualEdited,
+        editRev: next.rev,
+        baseGaps: next.baseGaps,
+        baseSig: next.baseSig,
+        draftRestored: next.draftRestored,
         past: [...s.past, cur].slice(-HISTORY_LIMIT),
         future: s.future.slice(1),
         estimateResult: null,
+        baseSwitchedByHistory: next.baseSig !== s.baseSig,
         logs: appendLog(s.logs, `↷ 重做：${next.label}`),
       }
     }),
@@ -788,17 +954,21 @@ export const useAppStore = create<AppState>()((set, get) => ({
       const now = Date.now()
       const coalesce =
         lastGeomEdit !== null && lastGeomEdit.id === id && now - lastGeomEdit.at < 1500
-      lastGeomEdit = { id, at: now }
 
       if (coalesce) {
+        lastGeomEdit = { id, at: now }
         // 同一次拖拽的后续帧：只更新几何，不再压历史、不再刷日志
-        return { gaps, manualEdited: s.manualEdited + 1, estimateResult: null }
+        // 版本号照样换：数据确实变了（导出若恰好夹在两帧之间，也要能判出"已过期"）
+        return { gaps, manualEdited: s.manualEdited + 1, estimateResult: null, editRev: ++revSeq }
       }
-      return commit(s, `修改 ${id} 的边界`, {
+      const patch = commit(s, `修改 ${id} 的边界`, {
         gaps,
         manualEdited: s.manualEdited + 1,
         logs: appendLog(s.logs, `修改 ${id} 的边界`),
       })
+      // ⚠️ 必须在 commit 之后记：commit 会把合并窗口清零
+      lastGeomEdit = { id, at: now }
+      return patch
     }),
 
   setGapClass: (id, cls) =>
@@ -877,11 +1047,22 @@ export const useAppStore = create<AppState>()((set, get) => ({
       newFeatures,
       mode,
     })
+    const outIds = new Set(r.features.map((f) => f.properties.gap_id))
+    const dropped = newFeatures.filter((f) => !outIds.has(f.properties.gap_id))
     set((cur) =>
       commit(cur, '重跑合并', {
       gaps: r.features,
-      // 合并完就换基线：新结果的 gap_id 已经是新的，旧删除记录不再适用
-      deletedFeatures: [],
+      // 合并完就换基线：删除记录换成**新基线里被合并丢掉的那些块**（2026-11-03 复审修）。
+      // ⚠️ 以前直接清空 —— 同一会话第二次重跑时，第一次之前删掉的误报全部复活；
+      //    而中途重启过的话，草稿恢复（applyDraft）会从基线重建删除记录，不会复活。
+      //    同一份数据合并出两种结果。现在两条路径同一口径。
+      deletedFeatures: dropped,
+      // 草稿的基线也换成这次的算法结果：重放出来的删除 / 改判 / 补画
+      // 相对它都是"修改"，关窗后还能原样恢复
+      baseGaps: newFeatures,
+      baseSig: baselineSig(newFeatures),
+      baseSwitchedByHistory: false,
+      draftRestored: null,
       ...sel([]),
       logs: appendLog(
         s.logs,

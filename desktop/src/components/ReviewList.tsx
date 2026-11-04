@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAppStore } from '../store/useAppStore'
+import { RESTORE_LABEL, useAppStore } from '../store/useAppStore'
 import { CLASS_KEY_ORDER, CLASS_STYLES } from '../lib/classes'
 import {
   REVIEW_KIND_LABEL,
@@ -83,6 +83,12 @@ export default function ReviewList({ mode }: Props) {
   const initValidation = useAppStore((s) => s.initValidation)
   const resetValidation = useAppStore((s) => s.resetValidation)
   const pushLog = useAppStore((s) => s.pushLog)
+  const draftRestored = useAppStore((s) => s.draftRestored)
+  const dismissDraftNotice = useAppStore((s) => s.dismissDraftNotice)
+  const undo = useAppStore((s) => s.undo)
+  const canUndoRestore = useAppStore(
+    (s) => s.past.length > 0 && s.past[s.past.length - 1].label === RESTORE_LABEL,
+  )
 
   /** 自定义框有内容时，预设档位不高亮（否则会同时亮两个，用户不知道哪个生效） */
   const usingCustom = customArea.trim() !== ''
@@ -510,6 +516,26 @@ export default function ReviewList({ mode }: Props) {
         </>
       ) : (
         <>
+          {/* 草稿恢复说明（2026-11-03）：启动时把上次没导出的修改自动贴回来了，
+              必须**当面说清楚**贴了什么 —— 否则用户看到"已处理"区里多出一批块，
+              会以为是算法结果变了。只有恢复仍在撤销栈顶时才给「撤销恢复」，
+              之后再撤就会连带撤掉用户新做的修改，按钮不能撒这个谎。 */}
+          {draftRestored && (
+            <div className="rv-restored" role="status">
+              <span className="rv-restored-text">
+                已恢复上次的复核修改：删 {draftRestored.deleted} · 改 {draftRestored.edited} · 补画{' '}
+                {draftRestored.manual}
+              </span>
+              {canUndoRestore && (
+                <button className="btn tiny" onClick={undo} title="回到纯算法结果（自动保存的草稿随之作废）">
+                  撤销恢复
+                </button>
+              )}
+              <button className="btn tiny" onClick={dismissDraftNotice}>
+                知道了
+              </button>
+            </div>
+          )}
           {/* 四片「仪表片」而不是胶囊：计数是这批筛选片唯一的决策数据
               （40 块待复核 → 今天做不做得完），双行排布让 4 个数字落在同一条基线上，
               可以直接比大小；胶囊横排会把它读成 4 个按钮。 */}

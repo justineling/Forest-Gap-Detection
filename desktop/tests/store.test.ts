@@ -220,7 +220,13 @@ console.log('\n⑥ 重跑合并（applyRerun）—— 删除与改判要能被�
     '留痕 replayed_from 指向旧 id',
     String(b2feat?.properties.replayed_from),
   )
-  check(S2.getState().deletedFeatures.length === 0, '合并后换基线：删除记录清空')
+  // 2026-11-03 语义变更：以前是"合并后删除记录清空"—— 那正是同一会话第二次重跑时
+  // 误报复活的根源。现在换成新基线里被合并丢掉的那块（A2），下一次重跑还能接着重放。
+  check(
+    S2.getState().deletedFeatures.map((f) => f.properties.gap_id).join(',') === 'A2',
+    '合并后换基线：删除记录换成新基线里被丢掉的块（A2），不再清空',
+    S2.getState().deletedFeatures.map((f) => f.properties.gap_id).join(','),
+  )
 
   // 完全覆盖：人工痕迹全丢
   S2.getState().deleteGap('B2')
@@ -441,6 +447,35 @@ console.log('\n⑧ 撤销/重做与批量操作 —— 批量必须算一步')
   check(S.getState().selectedId === 'U3', '聚焦同时选中')
 
   S.getState().setGaps([], null)
+}
+
+// ---------- 撤销 / 重做的名字 + 导出过期判定（2026-11-03）----------
+console.log('\n撤销 / 重做标签 · 导出版本号')
+{
+  const S2 = useAppStore
+  S2.getState().setGaps([feat('R1', 'open_patch', 111.2, 1.18), feat('R2', 'uncertain', 111.201, 1.18)], null)
+  S2.getState().deleteGap('R1')
+  S2.getState().undo()
+  check(S2.getState().future[0]?.label === '删除 R1', '★ 撤销后重做栈顶 = 被撤的那一步（不再是「当前状态」）', S2.getState().future[0]?.label)
+  S2.getState().redo()
+  const logs = S2.getState().logs
+  check(logs[logs.length - 1].endsWith('↷ 重做：删除 R1'), '★ 重做日志写出做的是什么', logs[logs.length - 1])
+  check(S2.getState().past[S2.getState().past.length - 1]?.label === '删除 R1', '重做后再撤销，名字仍是「删除 R1」')
+
+  // 版本号：导出 → 改 → 过期；撤销回去 → 不过期；撤销后改别的 → 必须过期（号不能撞回去）
+  S2.getState().setGaps([feat('V1', 'open_patch', 111.2, 1.18), feat('V2', 'uncertain', 111.201, 1.18)], null)
+  check(S2.getState().editRev === 0 && S2.getState().exportSnap === null, '换基线：版本号归零、导出记录清空')
+  S2.getState().markExported({ rev: S2.getState().editRev, clearance: S2.getState().clearanceM })
+  check(S2.getState().workflow.exported, 'markExported 置 workflow.exported')
+  const rev0 = S2.getState().exportSnap!.rev
+  S2.getState().setGapClass('V2', 'open_patch')
+  const revA = S2.getState().editRev
+  check(revA !== rev0, '★ 改判后版本号变了（→ 交付包过期）', `${rev0} → ${revA}`)
+  S2.getState().undo()
+  check(S2.getState().editRev === rev0, '★ 撤销回导出时的数据 → 版本号也回去（不误报过期）', `${S2.getState().editRev}`)
+  S2.getState().deleteGap('V1')
+  check(S2.getState().editRev !== rev0 && S2.getState().editRev !== revA, '★ 撤销后改别的：拿全新的号，不会撞回导出时的号')
+  S2.getState().setGaps([], null)
 }
 
 // ---------- 汇总 ----------

@@ -33,7 +33,15 @@ import {
   waitBackend,
   type AppStatus,
 } from './api/backend'
-import { computeSteps, nextAction, toInput, type ActionKind, type StepKey } from './lib/workflow'
+import {
+  computeSteps,
+  exportStaleReason,
+  nextAction,
+  toInput,
+  type ActionKind,
+  type StepKey,
+} from './lib/workflow'
+import { baselineSwitchAction, persistDraft, removeDraft } from './lib/reviewDraft'
 import { decideGapsLoad, shouldLoadAfterWizard, shouldLoadJobResultOnSwitch } from './lib/gapsLoad'
 import { shouldShowOverviewNotice } from './lib/overview'
 import OverviewNotice from './components/OverviewNotice'
@@ -384,6 +392,9 @@ export default function App() {
   const manualAdded = useAppStore((s) => s.manualAdded)
   const manualDeleted = useAppStore((s) => s.manualDeleted)
   const manualEdited = useAppStore((s) => s.manualEdited)
+  const editRev = useAppStore((s) => s.editRev)
+  const exportSnap = useAppStore((s) => s.exportSnap)
+  const clearanceM = useAppStore((s) => s.clearanceM)
   const detectBegin = useAppStore((s) => s.detectBegin)
   const detectProgress = useAppStore((s) => s.detectProgress)
   const detectFinish = useAppStore((s) => s.detectFinish)
@@ -1268,12 +1279,74 @@ export default function App() {
         detected: wfFlags.detected,
         reviewed: wfFlags.reviewed,
         exported: wfFlags.exported,
+        exportStale: exportStaleReason({ exportSnap, editRev, clearanceM }),
         manualAdded,
         manualDeleted,
         manualEdited,
       }),
-    [backendOnline, gaps, roi, detect.running, wfFlags, manualAdded, manualDeleted, manualEdited],
+    [
+      backendOnline,
+      gaps,
+      roi,
+      detect.running,
+      wfFlags,
+      exportSnap,
+      editRev,
+      clearanceM,
+      manualAdded,
+      manualDeleted,
+      manualEdited,
+    ],
   )
+
+  /**
+   * 复核草稿自动保存（2026-11-03，缺陷台账 P1-10）。
+   *
+   * 结果一变就（防抖 800 ms）把"相对基线的差异"写进 localStorage；
+   * 下次载入**同一份**结果时 `setGaps` 会自动贴回来（见 `lib/reviewDraft.ts`）。
+   *
+   * · 订阅 store 而不是放 effect 依赖：拖顶点时 gaps 一秒变几十次，effect 会每帧重挂；
+   * · `pagehide` 时立刻落盘：防抖窗口里关窗，最后那一下修改也不能丢；
+   * · 写失败（配额满）只提示一次 —— 每次改动都刷一条警告等于没提示。
+   */
+  useEffect(() => {
+    let timer: number | null = null
+    let warned = false
+    const flush = (src = useAppStore.getState()): void => {
+      timer = null
+      if (persistDraft(src) === 'failed' && !warned) {
+        warned = true
+        useAppStore
+          .getState()
+          .pushLog('⚠️ 复核修改没能自动保存（本地存储已满或不可用）—— 关掉软件前请先导出一次')
+      }
+    }
+    const unsub = useAppStore.subscribe((s, prev) => {
+      if (s.gaps === prev.gaps && s.baseSig === prev.baseSig) return
+      if (timer !== null) window.clearTimeout(timer)
+      timer = null
+      // 基线换了：旧基线的草稿是"按旧基线立刻落盘"还是"删掉"，规则见 baselineSwitchAction
+      // （撤销跨过重跑合并 → 删，否则下次启动会恢复用户亲手撤销的状态；其余 → 立刻落盘，
+      //  等 800 ms 再读 getState() 就只剩新基线了）
+      const act = baselineSwitchAction(s, prev)
+      if (act === 'remove-prev') removeDraft(prev.baseSig)
+      else if (act === 'flush-prev') flush(prev)
+      timer = window.setTimeout(() => flush(), 800)
+    })
+    const onHide = (): void => {
+      if (timer === null) return
+      window.clearTimeout(timer)
+      flush()
+    }
+    window.addEventListener('pagehide', onHide)
+    window.addEventListener('beforeunload', onHide)
+    return () => {
+      unsub()
+      onHide()
+      window.removeEventListener('pagehide', onHide)
+      window.removeEventListener('beforeunload', onHide)
+    }
+  }, [])
   /** 当前步（给顶部索引条用；StepRail 内部自己也算一次，纯函数，各算各的最省心） */
   const steps = useMemo(() => computeSteps(workflowInput), [workflowInput])
   const curStep = steps.find((st) => st.status === 'active') ?? steps[steps.length - 1]

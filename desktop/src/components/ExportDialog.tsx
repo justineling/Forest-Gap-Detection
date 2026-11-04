@@ -31,7 +31,7 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
   const roi = useAppStore((s) => s.roi)
   const outputDir = useAppStore((s) => s.outputDir)
   const setOutputDir = useAppStore((s) => s.setOutputDir)
-  const markWorkflow = useAppStore((s) => s.markWorkflow)
+  const markExported = useAppStore((s) => s.markExported)
   const pushLog = useAppStore((s) => s.pushLog)
 
   const [dir, setDir] = useState(outputDir)
@@ -76,6 +76,8 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
     setErr(null)
     setRes(null)
     if (dir) setOutputDir(dir)
+    // 发起导出这一刻的数据版本 —— 导出完成后"交付包是否过期"拿它比（见 lib/workflow.ts）
+    const rev = useAppStore.getState().editRev
     try {
       const collection: GapCollection = { type: 'FeatureCollection', features: gaps }
       const out = await exportBundle({
@@ -111,7 +113,9 @@ export default function ExportDialog({ onClose }: { onClose: () => void }) {
       // 于是第 ⑤ 步永远不算完成、卡片永远停在「导出交付包」，
       // 而 `lib/workflow.ts` 里 `isStepDone('review')` 的 `|| exported`
       // 也是一条永远走不到的死分支。判定逻辑本身是对的，缺的是喂值。
-      markWorkflow({ exported: true })
+      //
+      // 同时记下版本号与退让（2026-11-03）：之后再改结果或退让，第 ⑤ 步要退回「需重导」。
+      markExported({ rev, clearance: clearanceM })
       pushLog(`导出完成 → ${out.outdir}（${out.files.length} 个文件）`)
       for (const f of out.files) pushLog(`  · ${baseName(f)}`)
       for (const n of out.notes ?? []) pushLog(`  ⚠️ ${n}`)

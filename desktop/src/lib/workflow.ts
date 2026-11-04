@@ -62,8 +62,39 @@ export interface WorkflowInput {
   reviewed: boolean
   /** 已导出过交付包 */
   exported: boolean
+  /**
+   * 导出之后又发生了什么（非空 = 磁盘上的交付包已过期），由 `exportStaleReason` 生成。
+   *
+   * 为什么必须有（2026-11-03）：以前导出一次 `exported` 就永远为 true ——
+   * 之后再删 30 块、改退让，卡片照样写「已完成 · 打开输出文件夹」，
+   * 用户拿走的是**改动之前**的交付包，界面却说做完了。
+   */
+  exportStale?: string | null
   /** 结果要素数（写进文案） */
   gapCount: number
+}
+
+/**
+ * 交付包是否过期、为什么（纯函数，可单测）。
+ *
+ * 判据只有两条，都是"会改变交付内容"的：数据版本号变了（删 / 改判 / 改边界 / 补画 / 重跑合并），
+ * 或排坑退让变了（放样点位与株数随之变）。撤销回导出时的版本 → 不算过期。
+ */
+export function exportStaleReason(p: {
+  exportSnap: { rev: number; clearance: number } | null
+  editRev: number
+  clearanceM: number
+}): string | null {
+  const snap = p.exportSnap
+  if (!snap) return null
+  const dataChanged = snap.rev !== p.editRev
+  const clrChanged = Math.abs(snap.clearance - p.clearanceM) > 1e-9
+  if (dataChanged && clrChanged) {
+    return `结果又改过，排坑退让也从 ${snap.clearance} m 改成了 ${p.clearanceM} m`
+  }
+  if (dataChanged) return '结果又改过（删除 / 改判 / 改边界 / 补画）'
+  if (clrChanged) return `排坑退让从 ${snap.clearance} m 改成了 ${p.clearanceM} m，放样点位和株数都会变`
+  return null
 }
 
 export interface Step {
@@ -123,7 +154,7 @@ export function isStepDone(key: StepKey, s: WorkflowInput): boolean {
       // "去复核"——流程倒退比不提示更糟。
       return s.reviewed || s.edited || s.exported
     case 'export':
-      return s.exported
+      return s.exported && !s.exportStale
   }
 }
 
@@ -184,7 +215,8 @@ function summaryOf(key: StepKey, s: WorkflowInput): string | undefined {
     case 'review':
       return s.edited ? '已修改' : undefined
     case 'export':
-      return s.exported ? '已导出' : undefined
+      if (!s.exported) return undefined
+      return s.exportStale ? '需重导' : '已导出'
   }
 }
 
@@ -344,7 +376,20 @@ export function nextAction(s: WorkflowInput, exportedDir?: string | null): NextA
       label: '导出交付包',
       kind: 'export',
       pill: '导出交付',
-      body: '生成 Shapefile / KML / 放样点位 / 一页报告，共 21 个文件。',
+      // ⚠️ 不写死文件数：按类别分包的件数随数据变（10~20 个），写 21 就是在说谎
+      //    （帮助与导出窗早已改掉，这里是漏网的最后一处，2026-11-03）
+      body: '生成 Shapefile / KML / 放样点位 / 一页报告 —— 件数按当前数据定，导出前会在窗里逐项列出。',
+    }
+  }
+
+  if (s.exportStale) {
+    return {
+      step: 'export',
+      finished: false,
+      label: '重新导出',
+      kind: 'export',
+      pill: '需重导',
+      body: `导出之后${s.exportStale} —— 磁盘上那份交付包还是旧的，重新导出一次再拿去用。`,
     }
   }
 
@@ -370,6 +415,7 @@ export function toInput(p: {
   detected: boolean
   reviewed: boolean
   exported: boolean
+  exportStale?: string | null
   manualAdded: number
   manualDeleted: number
   manualEdited: number
@@ -385,6 +431,7 @@ export function toInput(p: {
     edited: p.manualAdded + p.manualDeleted + p.manualEdited > 0,
     reviewed: p.reviewed,
     exported: p.exported,
+    exportStale: p.exportStale ?? null,
     gapCount: p.gaps.length,
   }
 }

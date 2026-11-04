@@ -4,7 +4,28 @@
  * 为什么值得单独测：按钮顺序错乱、可选步骤把流程卡死，都是商用软件里
  * 最难被人工发现的一类 bug —— 编译器不报错，界面也不崩，只是"用起来不对劲"。
  */
-import { computeSteps, nextAction, isStepDone, toInput, type WorkflowInput } from '../src/lib/workflow'
+import {
+  computeSteps,
+  exportStaleReason,
+  nextAction,
+  isStepDone,
+  toInput,
+  type WorkflowInput,
+} from '../src/lib/workflow'
+
+/** toInput 的最小参数（导出过期的透传测试用） */
+const TO_INPUT_BASE = {
+  backendOnline: true,
+  gaps: [1],
+  roi: null,
+  detectRunning: false,
+  detected: false,
+  reviewed: false,
+  exported: false,
+  manualAdded: 0,
+  manualDeleted: 0,
+  manualEdited: 0,
+}
 
 let failures = 0
 function check(ok: boolean, label: string, detail = ''): void {
@@ -374,6 +395,40 @@ console.log('\nI. ★ 导出成功（exported=true）→ 第 ⑤ 步 done，卡�
     '★ 直接导出（没点「复核完成」）→ 第 ④ 步也算 done',
     JSON.stringify(statusOf(exportedNoReview)),
   )
+}
+
+// ---------- 导出后又改了 → 交付包过期（2026-11-03）----------
+console.log('\n导出后再改动：第 ⑤ 步退回「需重导」')
+{
+  const snap = { rev: 7, clearance: 0.5 }
+  check(exportStaleReason({ exportSnap: null, editRev: 3, clearanceM: 0.5 }) === null, '没导出过 → 无所谓过期')
+  check(exportStaleReason({ exportSnap: snap, editRev: 7, clearanceM: 0.5 }) === null, '版本与退让都没变 → 不过期')
+  const dataOnly = exportStaleReason({ exportSnap: snap, editRev: 9, clearanceM: 0.5 })
+  check(!!dataOnly && dataOnly.includes('改过'), '★ 版本变了 → 过期（结果又改过）', String(dataOnly))
+  const clrOnly = exportStaleReason({ exportSnap: snap, editRev: 7, clearanceM: 1 })
+  check(!!clrOnly && clrOnly.includes('0.5 m') && clrOnly.includes('1 m'), '★ 退让变了 → 过期，并写明从几改到几', String(clrOnly))
+  const both = exportStaleReason({ exportSnap: snap, editRev: 8, clearanceM: 2 })
+  check(!!both && both.includes('改过') && both.includes('2 m'), '两者都变 → 一句话说全', String(both))
+
+  const done: WorkflowInput = { ...withGaps, edited: true, exported: true }
+  const stale: WorkflowInput = { ...done, exportStale: '结果又改过（删除 / 改判 / 改边界 / 补画）' }
+  check(isStepDone('export', done), '导出且未过期 → 第 ⑤ 步完成')
+  check(!isStepDone('export', stale), '★ 过期 → 第 ⑤ 步不再算完成')
+  check(isStepDone('review', stale), '过期不影响第 ④ 步（导出过 = 复核过）')
+  const a = nextAction(stale, 'D:/out')
+  check(
+    a.step === 'export' && !a.finished && a.kind === 'export' && a.label === '重新导出',
+    '★ 卡片给「重新导出」，而不是「已完成 · 打开输出文件夹」',
+    `${a.label} / finished=${a.finished}`,
+  )
+  check(a.body.includes('结果又改过') && a.pill === '需重导', '卡片正文写明为什么要重导', a.body)
+  const st = computeSteps(stale).find((x) => x.key === 'export')
+  check(st?.summary === '需重导' && st.status === 'active', '步进器第 ⑤ 步摘要 = 需重导、重新成为当前步', JSON.stringify(st))
+  check(toInput({ ...TO_INPUT_BASE, exported: true, exportStale: 'x' }).exportStale === 'x', 'toInput 透传 exportStale')
+  check(toInput({ ...TO_INPUT_BASE, exported: true }).exportStale === null, 'toInput 不传 → null（旧调用方不受影响）')
+
+  const toExport = nextAction({ ...withGaps, edited: true })
+  check(!/\d+ 个文件/.test(toExport.body), '★ 导出卡片不再写死「共 21 个文件」', toExport.body)
 }
 
 // ---------- 汇总 ----------
