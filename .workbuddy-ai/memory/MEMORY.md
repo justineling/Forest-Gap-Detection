@@ -67,12 +67,20 @@ CSS 分两层 —— `styles.css` 管布局、`ark.css` 管语法（**必须后 
 旧变量名保留为别名。规范见 `docs/08-桌面端/界面设计规范-ArkUI.md`。
 另有平行方案 `feat/ui-rhine-lab`（Rhine Lab 纸感，`rhine.css`），两者都从 main 起、未合并。
 ⚠️ 改视觉只改 ark.css；⚠️ 类别色唯一来源 `lib/classes.ts` 的 CLASS_STYLES。
-⚠️ 窄窗验证用 `desktop/tests/e2e/shot-narrow.mjs`（CDP 精确视口 + 溢出断言）。验收基线：`npm test` **801** 断言 · `cargo test` **81** 项 · `test_block_jobs` **60** · 契约 95/95 · `test_overviews` **42** 项 · `verify_render` **171**（需 dev server）。
+⚠️ 窄窗验证用 `desktop/tests/e2e/shot-narrow.mjs`（CDP 精确视口 + 溢出断言）。验收基线（2026-11-03）：`npm test` **921** 断言 / 20 文件 · `cargo test` **81** 项 · `test_block_jobs` **60** · 契约 95/95 · `test_overviews` **42** 项 · `verify_render` **191**（需 dev server；Node 20 要 `node --experimental-websocket`）。
 **端口不再写死 8765**（坑 48）：`pick_backend_port()` 试 8765~8776，空闲就用/自己的服务复用/别人的跳过；实际端口在 `ACTIVE_PORT`，前端用 `backend.ts` 的 `ensurePort()` + `backendUrl()` 跟随，`MapCanvas` 用 `tileUrlTemplate()`。
 致命 5 条：① `output/*.geojson` 是 `blocks[].gaps` 结构、无顶层 features；② 结果路径只按"扫目录+名含 gaps+mtime 取最新"，候选目录必须含 `cwd/output`，`/gaps` 空时绝不能 `applyRerun([])`；③ 检测前必须预检（W1001/W1004/W3001 都是"算偏不报错"）；④ Tauri↔sidecar 两线程分读 stdout/stderr（64 KB 管道填满→死锁）；⑤ 撤销栈 1.5 s 时间窗合并 TerraDraw change，框选必须传 `visibleClasses`。
 ⚠️ 第 6 条（2026-10-20 交付事故）：**8765 有人监听 ≠ 我们的服务在跑** —— 复用前必须验 `/meta` 的 `app` 字段；子进程 stderr 必须落 `app.log`（release 无控制台，`eprintln!` 是黑洞）并用 `try_wait` 记退出码；启动失败要当场抛回前端。详见坑 47。
 打包：`desktop_entry.py` 单入口 → PyInstaller onedir → NSIS 67.7 MiB。红线：`freeze_support()` 是 `__main__` 第一行；`PROJ_DATA` 优先 rasterio；`codegen-units=4` + `lto="thin"`。
 验证集（10-19）：150 块 Neyman 分层 + H-T 权重（**Σwᵢ 必须精确 = 1726.0**）；`scripts/eval_validation.py --selftest` 13 项；`uncertain` 不允许"确认"；`initValidation` effect deps 必须含 scope/samples.length。
+
+**11-03 几何与持久化**（交接文档 §21，坑 63~67）：
+⚠️ 经纬度上做乘法累加必须先减局部原点（旧 `centroid` 株位点 P50 偏 17 m）；外环/洞按环序不按绕向；测试几何放真实园区坐标。
+⚠️ 质心≠面内点（`insidePoint`，与 Python `_slot_point` 同规则）；重跑合并强判据要 ≥50% 面内采样点落入（防接缝窄条误删）。
+复核草稿 `lib/reviewDraft.ts`：只存相对基线的差异（全量超配额），`setGaps` 同签名自动恢复为一步可撤销；
+⚠️ `HistoryEntry` 必须带 `baseGaps/baseSig/draftRestored`（撤销重跑合并）；防抖窗口内换基线按 prev 落盘；
+撤销/重做换的基线要删旧草稿（`baselineSwitchAction`）；基线自带人工块不算补画；重跑合并后删除记录 = 新基线被丢的块（坑 68）。
+导出过期：`editRev` 发号器只增不减、随快照还原 + `exportSnap` → `exportStaleReason` → 第 ⑤ 步「需重导」。
 
 ## 7. 批处理脚本（项目根，UTF-8 无 BOM + CRLF）
 - 入口**按功能编号**（2026-10-21 改名）：`1. 启动桌面端.bat` / `2. 构建安装包.bat` / `3. Build Installer.bat`（英文）/ `4. 诊断影像服务.bat`；共享库 `_环境准备.bat` **不能改名**（各入口用 `%~dp0` 相对调用）。
@@ -97,8 +105,9 @@ CSS 分两层 —— `styles.css` 管布局、`ark.css` 管语法（**必须后 
 - 契约测试 `scripts/test_sidecar_contract.py` 期望 95/95；PowerShell 5.1 读 `.ps1` 必须有 UTF-8 BOM；别手删安装目录（NSIS 弹 "Unable to install"）。
 - **CI（2026-10-20 修复）**：Python 依赖唯一清单是根目录 `requirements.txt`（CI 与本地共用，别再手写 pip 清单——漏过 Pillow 导致 CI 从未绿）；`desktop/runtime/desktop_entry/.gitkeep` 必须保留（tauri-build 对 bundle.resources 做存在性硬检查，目录没了 `cargo test` 编译期就挂）；frontend 钉 `ubuntu-24.04`（latest 已迁 Ubuntu 26）；`cargo test`(debug) 不需要 `dist`（codegen 仅在非 dev 且无 devUrl 时 panic）。
 - **"装了包但服务起不来"的排查顺序**（2026-10-21 实战）：① `py-runtime\desktop_entry\desktop_entry.exe --self-test`（证明 exe 可跑，`ok:true` 即排除 DLL/依赖/杀软）；② 手动 `--run-tile-server --source <tif> --port 8799` 看 `/meta` 与 stderr；③ 完全按外壳方式起（cwd=`%LOCALAPPDATA%\fgd\data`、8765、三个 PYTHON* 变量）；④ 以上全绿才怀疑外壳（旧版无 stderr 转存/退出码，管道 64 KB 填满会让服务阻塞）。⚠️ 别用开发机的 `desktop/runtime` 判断包是否完整——那里没打包就只有 `.gitkeep`。
-- `check_all.py` **12 层**静态检查（tsc/npm test/ruff/CLI --help/cargo test/仓库卫生/契约/金字塔冒烟/多区块选结果等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。验收基线 **801 / 81 / 60 / 95 / 42 / 12 层**；⚠️ 看退出码，不要只看 grep 输出。
+- `check_all.py` **12 层**静态检查（tsc/npm test/ruff/CLI --help/cargo test/仓库卫生/契约/金字塔冒烟/多区块选结果等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。验收基线 **921 / 81 / 60 / 95 / 42 / 12 层**；⚠️ 看退出码，不要只看 grep 输出。
 
 ## 9. 待办
 - ⏳ 真实 150 块打标（用户亲自做）→ 裁决 702 vs 727、解锁算法后续项。
 - ⏳ 安装包签名；`active_learning.py` 仍未跑过。
+- ⏳ Tauri 真机验 §21.5 四项（草稿关窗落盘只在浏览器验过）。
