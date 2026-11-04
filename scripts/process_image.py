@@ -146,6 +146,14 @@ def shp_transform(func, geom):
 SCHEMA_VERSION = "0.4"
 DEFAULT_JOB_NAME = "wgr17-full"
 
+# 瓦片拼接算法的版本（2026-11-04 起：core 裁剪 + 全局缝合，见 stitch_seams）。
+#
+# ⚠️ 必须进指纹：瓦片缓存里存的是**每块瓦片自己输出的几何**。旧版按质心判归属、
+#    几何原样保留（含 4.2 m 外扩带）；新版只保留 core 内那部分、跨缝的打 `_seam` 标记。
+#    不换指纹，新代码会把旧缓存的"整块几何"当成"core 内碎块"去缝合 —— 重复计数照旧，
+#    而且不报错。
+STITCH_VERSION = "core-clip-union-v1"
+
 
 # ============================================================================
 # 参数指纹：影像或参数一变，旧瓦片缓存自动失效
@@ -164,6 +172,7 @@ def fingerprint(input_path: str, params: dict) -> str:
         #    旧瓦片里存的 `grid_cell` 是按旧格点算的，与新 `planting_grid` 不自洽。
         #    不把版本算进指纹，改完精度后旧缓存会照命中，新旧格号混用一个文件且不报错。
         "schema_version": SCHEMA_VERSION,
+        "stitch_version": STITCH_VERSION,
         "image": {
             "name": p.name,
             "size": st.st_size if st else 0,
@@ -614,6 +623,104 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
 # ============================================================================
 # 单瓦片处理
 # ============================================================================
+# 判定"贴着 core 边"的容差（源坐标系单位；经纬度下 1e-8° ≈ 1.1 mm）
+_SEAM_EPS = 1e-8
+
+
+def _own_core(g_utm, core_box, fwd, bwd) -> list[tuple]:
+    """唯一所有权：只保留落在本瓦片 core 内的几何（2026-11-04）。
+
+    返回 ``[(源坐标系几何, UTM 几何, 是否跨缝碎块)]``。
+
+    - 完整落在 core 内、且不贴 core 边 → 原样返回（与旧行为逐位一致，ID 与分类都不变）；
+    - 越过或贴着 core 边 → 裁到 core 内，标记为碎块，交给 ``stitch_seams`` 全局缝合。
+      "贴边也算碎块"是故意的：两块瓦片对缝两侧的判断不一致时（纯 RGB 回退路径的
+      阈值按瓦片分位统计），可能一边恰好止于缝、另一边从缝开始 —— 不当碎块就会留下
+      两块贴在一起却没合并的多边形。
+
+    ⚠️ 必须在**源坐标系**里裁剪：core 框在源坐标系里是轴对齐矩形，``clip_by_rect`` 产出的
+       缝上顶点坐标**恰好等于**框的边界值，相邻瓦片两侧完全相等，缝合时能精确合上。
+       在 UTM 里裁的话框是斜的，两侧交点各自计算、差几个 ulp，union 会留 1 mm 的缝。
+    """
+    import shapely
+
+    g_src = shp_transform(bwd, g_utm)
+    if g_src.within(core_box) and g_src.distance(core_box.exterior) > _SEAM_EPS:
+        return [(g_src, g_utm, False)]
+    xmin, ymin, xmax, ymax = core_box.bounds
+    clipped = shapely.clip_by_rect(g_src, xmin, ymin, xmax, ymax)
+    out: list[tuple] = []
+    for part in getattr(clipped, "geoms", [clipped]):
+        if part.is_empty or part.geom_type != "Polygon":
+            continue
+        if not part.is_valid:
+            part = part.buffer(0)
+            if part.is_empty or part.geom_type != "Polygon":
+                continue
+        piece = shp_transform(fwd, part)
+        if piece.area <= 0:
+            continue
+        out.append((part, piece, True))
+    return out
+
+
+def _gap_feature(gid: str, p_utm, area: float, lab: dict, g_src,
+                 seam: bool = False) -> dict:
+    """空地要素（瓦片阶段与缝合阶段共用同一套属性，避免两边字段漂移）。"""
+    c_utm = p_utm.centroid
+    props = {
+        "gap_id": gid,
+        "class": lab.get("class", CLASS_UNCERTAIN),
+        "class_label": lab.get("class_label", CLASS_LABEL_CN[CLASS_UNCERTAIN]),
+        "class_confidence": lab.get("class_confidence", 0.0),
+        "class_method": lab.get("class_method", "planting_grid_prior"),
+        "class_reason": lab.get("class_reason", ""),
+        "class_semantics": lab.get("class_semantics", ""),
+        "area_sqm": round(area, 2),
+        "centroid_utm": [round(c_utm.x, 2), round(c_utm.y, 2)],
+        "grid_cell": lab.get("grid", {}).get("cell"),
+        "node_distance_m": lab.get("grid", {}).get("node_distance_m"),
+        "coverage_ratio": lab.get("grid", {}).get("coverage_ratio"),
+        "elongation": lab.get("shape", {}).get("elongation"),
+        "slot_score": lab.get("evidence", {}).get("slot_score"),
+        "patch_score": lab.get("evidence", {}).get("patch_score"),
+        "alley_score": lab.get("evidence", {}).get("alley_score"),
+        "confidence": None,
+    }
+    if seam:
+        props["_seam"] = True
+    return {"type": "Feature", "properties": props, "geometry": mapping(g_src)}
+
+
+def _unplantable_feature(gid: str, p_utm, area: float, cls: str, g_src,
+                         seam: bool = False) -> dict:
+    """不可种植要素（道路 / 水体 / 办公区）。"""
+    c_utm = p_utm.centroid
+    props = {
+        "gap_id": gid,
+        "class": cls,
+        "class_label": CLASS_LABEL_CN[cls],
+        "class_confidence": None,
+        "class_method": "landcover_mask",
+        "class_reason": (f"该区域命中{CLASS_LABEL_CN[cls]}掩膜 → "
+                         f"不可种植，已从需补种面积中按像素扣除"),
+        "class_semantics": CLASS_SEMANTICS[cls],
+        "area_sqm": round(area, 2),
+        "centroid_utm": [round(c_utm.x, 2), round(c_utm.y, 2)],
+        "grid_cell": None,
+        "node_distance_m": None,
+        "coverage_ratio": None,
+        "elongation": None,
+        "slot_score": None,
+        "patch_score": None,
+        "alley_score": None,
+        "confidence": None,
+    }
+    if seam:
+        props["_seam"] = True
+    return {"type": "Feature", "properties": props, "geometry": mapping(g_src)}
+
+
 def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                  args, out_dir: Path, elevation=None,
                  elev_params=None, roi_geom=None) -> dict:
@@ -719,8 +826,7 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                        - abs(ds.transform.a) * 0.5,
                        (tile.row_core + tile.h_core) * ds.transform.e + ds.transform.f
                        - abs(ds.transform.e) * 0.5)
-    # core_box 用的是影像原坐标系；下面统一在 UTM 下比较，所以转换一次
-    core_box_utm = shp_transform(fwd, core_box)
+    # core_box 在影像原坐标系里是轴对齐矩形 —— 裁剪就在这里做（见 _own_core 的说明）
 
     # --- 不可种植地物：按像素从空地中扣除，并单独成层 ---------------------
     # 设计变更（2026-10-13）：
@@ -762,14 +868,14 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
                 g_utm = shp_transform(fwd, g)
                 if args.simplify_m > 0:
                     g_utm = g_utm.simplify(args.simplify_m, preserve_topology=True)
-                a = float(g_utm.area)
-                if a < args.min_area:
-                    continue
-                if not core_box_utm.contains(g_utm.centroid):
-                    continue
-                gid = f"{tile.tile_id}-U{len(unplantable_polys)+1:04d}"
-                unplantable_polys.append((gid, g_utm, a, cls))
-                unplantable_stats[cls] = unplantable_stats.get(cls, 0.0) + a
+                # 唯一所有权：只输出 core 内那部分（理由见 _own_core / stitch_seams）
+                for g_src, piece, seam in _own_core(g_utm, core_box, fwd, bwd):
+                    a = float(piece.area)
+                    if not seam and a < args.min_area:
+                        continue
+                    gid = f"{tile.tile_id}-U{len(unplantable_polys)+1:04d}"
+                    unplantable_polys.append((gid, piece, a, cls, g_src, seam))
+                    unplantable_stats[cls] = unplantable_stats.get(cls, 0.0) + a
 
     polys_utm: list[tuple[str, object, float]] = []
     n_dim = int(min(gap_units.sum(), 1e12))
@@ -783,17 +889,22 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
         g_utm = shp_transform(fwd, g)
         if args.simplify_m > 0:
             g_utm = g_utm.simplify(args.simplify_m, preserve_topology=True)
-        area = float(g_utm.area)
-        if area < args.min_area:
-            continue
-        # --- 归属判定：质心落在本瓦片 core 区才算本瓦片的产物 ---
-        # 这样跨边界的空地只会被"它质心所在的那块"输出一次，不会重复也不会丢
-        if not core_box_utm.contains(g_utm.centroid):
-            continue
-        polys_utm.append((f"{tile.tile_id}-G{len(polys_utm)+1:04d}", g_utm, area))
+        # --- 归属判定：唯一所有权（2026-11-04 改）---
+        # 旧做法"质心落在本瓦片 core 才输出、几何原样保留"会把 4.2 m 外扩带一起带出去：
+        # 比外扩带宽的空地，两块瓦片各输出一次（质心各在各的 core 里），
+        # 中间 8.45 m 的重叠带算两遍 —— 实测全园面积虚高 12.6%、连片空地块数虚高一倍
+        # （docs/03-算法教学/评审文档_20261029001.md 缺陷 A/A′）。
+        # 现在：只保留 core 内那部分；被切开的碎块打 _seam 标记，由 stitch_seams 全局缝合后
+        # 再按完整几何重新分类。碎块不过 min_area（两半各 20 m² 的 40 m² 空地不能丢）。
+        for g_src, piece, seam in _own_core(g_utm, core_box, fwd, bwd):
+            area = float(piece.area)
+            if not seam and area < args.min_area:
+                continue
+            polys_utm.append((f"{tile.tile_id}-G{len(polys_utm)+1:04d}", piece, area,
+                              g_src, seam))
 
     # --- 株行距分类 ---
-    geoms = [gap_geometry(p, gid, a) for gid, p, a in polys_utm]
+    geoms = [gap_geometry(p, gid, a) for gid, p, a, _src, _seam in polys_utm]
     labels = classify_gaps(geoms, grid,
                            node_tol_ratio=args.node_tol_ratio,
                            elongate_ratio=args.elongate_ratio,
@@ -804,62 +915,14 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
 
     features = []
     total_area = 0.0
-    for gid, p, area in sorted(polys_utm, key=lambda t: -t[2]):
-        lab = lab_by_id.get(gid, {})
-        c_utm = p.centroid
+    for gid, p, area, g_src, seam in sorted(polys_utm, key=lambda t: -t[2]):
         total_area += area
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "gap_id": gid,
-                "class": lab.get("class", CLASS_UNCERTAIN),
-                "class_label": lab.get("class_label", CLASS_LABEL_CN[CLASS_UNCERTAIN]),
-                "class_confidence": lab.get("class_confidence", 0.0),
-                "class_method": lab.get("class_method", "planting_grid_prior"),
-                "class_reason": lab.get("class_reason", ""),
-                "class_semantics": lab.get("class_semantics", ""),
-                "area_sqm": round(area, 2),
-                "centroid_utm": [round(c_utm.x, 2), round(c_utm.y, 2)],
-                "grid_cell": lab.get("grid", {}).get("cell"),
-                "node_distance_m": lab.get("grid", {}).get("node_distance_m"),
-                "coverage_ratio": lab.get("grid", {}).get("coverage_ratio"),
-                "elongation": lab.get("shape", {}).get("elongation"),
-                "slot_score": lab.get("evidence", {}).get("slot_score"),
-                "patch_score": lab.get("evidence", {}).get("patch_score"),
-                "alley_score": lab.get("evidence", {}).get("alley_score"),
-                "confidence": None,
-            },
-            "geometry": mapping(shp_transform(bwd, p)),
-        })
+        features.append(_gap_feature(gid, p, area, lab_by_id.get(gid, {}), g_src, seam))
 
     # 不可种植地物单独成层（class = road/water/office），供 ArcGIS 分层查看。
     # 它们不在 polys_utm 里（已被按像素扣除），因此不计入需补种面积。
-    for gid, p, area, cls in unplantable_polys:
-        c_utm = p.centroid
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "gap_id": gid,
-                "class": cls,
-                "class_label": CLASS_LABEL_CN[cls],
-                "class_confidence": None,
-                "class_method": "landcover_mask",
-                "class_reason": (f"该区域命中{CLASS_LABEL_CN[cls]}掩膜 → "
-                                 f"不可种植，已从需补种面积中按像素扣除"),
-                "class_semantics": CLASS_SEMANTICS[cls],
-                "area_sqm": round(area, 2),
-                "centroid_utm": [round(c_utm.x, 2), round(c_utm.y, 2)],
-                "grid_cell": None,
-                "node_distance_m": None,
-                "coverage_ratio": None,
-                "elongation": None,
-                "slot_score": None,
-                "patch_score": None,
-                "alley_score": None,
-                "confidence": None,
-            },
-            "geometry": mapping(shp_transform(bwd, p)),
-        })
+    for gid, p, area, cls, g_src, seam in unplantable_polys:
+        features.append(_unplantable_feature(gid, p, area, cls, g_src, seam))
 
     counts = summarize_classes(labels)
     if len(labels) != len(features):
@@ -1471,22 +1534,13 @@ def main() -> int:
         all_features, class_totals, area_total = _reload_from_disk(tiles_dir, tiles, fp)
         log(f"已从磁盘载入 {len(tiles)} 个瓦片结果，共 {len(all_features)} 块空地")
 
+    src_crs = ds.crs
     ds.close()
 
-    # --- 非种植区掩膜（2026-10-16）-------------------------------------------
-    # 用户核实园区南部为未开发天然林/次生林，不属油棕种植区。该处林间自然林窗
-    # 会被误判为「需补种空地」。用掩膜改判为 undeveloped（不计入需补种）。
-    if getattr(args, "forest_mask", None):
-        all_features, area_total, n_msk, a_msk = _apply_forest_mask(
-            all_features, args.forest_mask, area_total)
-        # 改判后重算类别计数（比逐个迁移更不易出错）
-        class_totals = {c: 0 for c in CLASS_LABEL_CN}
-        for f in all_features:
-            k = f["properties"]["class"]
-            if k in class_totals:
-                class_totals[k] += 1
-        if n_msk:
-            log(f"  掩膜改判后，需补种面积 {area_total:,.0f} m²")
+    # --- 跨瓦片缝合 + 非种植区掩膜（唯一后处理入口，与桌面端 sidecar 共用）---
+    # 掩膜背景：用户核实园区南部为未开发天然林/次生林，不属油棕种植区（2026-10-16）。
+    all_features, class_totals, area_total = finalize_features(
+        all_features, grid, args, src_crs)
 
     # --- 合并输出 ---
     log("-" * 78)
@@ -1698,37 +1752,183 @@ def _roi_mask_for(roi_geom, win_buf, ds, shape) -> np.ndarray:
     return m.astype(bool)
 
 
-def _apply_forest_mask(features: list[dict], mask_path: str,
-                       area_total: float) -> tuple[list[dict], float, int, float]:
-    """把落在「非种植区掩膜」内的需补种空地改判为 `undeveloped`。
+# ============================================================================
+# 跨瓦片缝合 + 统一后处理（2026-11-04）
+# ============================================================================
+PLANTABLE_GAP_CLASSES = (CLASS_VACANT_SLOT, CLASS_ALLEY_GAP,
+                         CLASS_OPEN_PATCH, CLASS_UNCERTAIN)
 
-    背景（2026-10-16 用户核实）
-    --------------------------
-    园区南部（原「油棕-南部」参考点所在处）是**尚未开发的天然林 / 次生林**，
-    不属于油棕种植区。该处野生乔木排列随机、没有 8.35 m 的种植行距，
-    林间自然林窗（低矮灌木、林隙）会被算法当作「油棕园里的空地」框出来，
-    虚增全园需补种面积。
+
+def stitch_seams(features: list[dict], grid: GridModel, args, src_crs
+                 ) -> tuple[list[dict], dict]:
+    """把各瓦片的跨缝碎块（``_seam``）全局缝合，并在完整几何上重新分类。
+
+    为什么必须有（评审文档 2026-10-29 缺陷 A / A′）
+    ------------------------------------------
+    瓦片向外扩 overlap 读取（防止形态学运算在边缘失真），旧做法又按质心判归属、几何
+    原样保留 —— 比外扩带宽的空地会被相邻两块瓦片**各输出一次**，重叠带算两遍；
+    同一片地被切成两块后还**各自分类**，出现"一片地两个结论"。
 
     做法
     ----
-    掩膜是一组多边形（GeoJSON，EPSG:4326）。**只改判需补种的 4 类**，
-    道路 / 水体 / 办公区不受影响（它们本来就不计入需补种）。
-    改判后的要素**仍保留在输出里**，单独成层（`undeveloped`），
-    便于在 ArcGIS 中复核，但**不计入需补种面积**。
+    1. 瓦片阶段只保留 core 内几何（``_own_core``），被切开的打 ``_seam``；
+    2. 这里把碎块按组 union：空地四类**不分类别**一起合（否则修不掉跨缝矛盾标签），
+       道路 / 水体 / 办公区各自合；
+    3. 合并结果过 ``min_area``（瓦片阶段碎块不过门槛，两半各 20 m² 的 40 m² 空地不能丢）；
+    4. 空地在合并后的完整几何上**重新分类**（``classify_gaps`` 只依赖几何与全局网格）。
 
-    掩膜来源
-    --------
-      · 自动：`scripts/build_forest_mask.py`（基于 DJI 树心密度的区块判定）
-      · 手动：用户在 ArcGIS / QGIS 里沿未开发林边界手绘后导出 GeoJSON
-    ⚠️ 自动掩膜对阈值敏感（实测 4%~26% 区间），**建议人工复核后再定稿**。
+    单块碎块（没和任何邻居合并，例如贴着影像外边缘）原样保留，ID 与分类不变。
+    合并产生的新要素 ID = 面积最大那块碎块的瓦片号 + ``-S`` 序号，并记 ``seam_pieces``。
     """
-    import json as _json
-    from shapely.geometry import shape as _shape, Point
+    from shapely.ops import unary_union
     from shapely.strtree import STRtree
 
+    to_utm = Transformer.from_crs(src_crs, TARGET_CRS, always_xy=True)
+
+    def fwd(x, y, z=None):
+        return to_utm.transform(x, y)
+
+    kept: list[dict] = []
+    groups: dict[str, list[dict]] = {}
+    for f in features:
+        pr = f["properties"]
+        if not pr.get("_seam"):
+            kept.append(f)
+            continue
+        key = "gap" if pr["class"] in PLANTABLE_GAP_CLASSES else pr["class"]
+        groups.setdefault(key, []).append(f)
+
+    stitched: list[dict] = []
+    info = {"seam_pieces": 0, "merged": 0, "merged_from": 0, "dropped_small": 0}
+    seq: dict[str, int] = {}
+    for key in sorted(groups):
+        fs = groups[key]
+        info["seam_pieces"] += len(fs)
+        pieces = [shape(f["geometry"]) for f in fs]
+        tree = STRtree(pieces)
+        merged = unary_union(pieces)
+        parts = [g for g in getattr(merged, "geoms", [merged])
+                 if g.geom_type == "Polygon" and not g.is_empty]
+        new_items: list[tuple[str, object, object, float, int]] = []
+        for m in parts:
+            m_utm = shp_transform(fwd, m)
+            area = float(m_utm.area)
+            if area < args.min_area:
+                info["dropped_small"] += 1
+                continue
+            idx = sorted(int(i) for i in tree.query(m)
+                         if m.covers(pieces[int(i)].representative_point()))
+            if len(idx) == 1:
+                f0 = fs[idx[0]]
+                props = {k: v for k, v in f0["properties"].items() if k != "_seam"}
+                stitched.append({**f0, "properties": props})
+                continue
+            info["merged"] += 1
+            info["merged_from"] += len(idx)
+            owner = max(idx, key=lambda i: (fs[i]["properties"]["area_sqm"],
+                                            fs[i]["properties"]["gap_id"]))
+            tid = fs[owner]["properties"]["gap_id"].rsplit("-", 1)[0]
+            seq[tid] = seq.get(tid, 0) + 1
+            new_items.append((f"{tid}-S{seq[tid]:04d}", m, m_utm, area, len(idx)))
+
+        if key == "gap" and new_items:
+            labels = classify_gaps(
+                [gap_geometry(mu, gid, a) for gid, _m, mu, a, _k in new_items], grid,
+                **classify_kwargs(args))
+            lab_by = {lab["gap_id"]: lab for lab in labels}
+            for gid, m, mu, a, k in new_items:
+                feat = _gap_feature(gid, mu, a, lab_by[gid], m)
+                feat["properties"]["seam_pieces"] = k
+                stitched.append(feat)
+        else:
+            for gid, m, mu, a, k in new_items:
+                feat = _unplantable_feature(gid, mu, a, key, m)
+                feat["properties"]["seam_pieces"] = k
+                stitched.append(feat)
+
+    # 确定性顺序：完整要素保持瓦片顺序；缝合要素按面积降序（同面积按 ID）
+    stitched.sort(key=lambda f: (-f["properties"]["area_sqm"], f["properties"]["gap_id"]))
+    return kept + stitched, info
+
+
+def finalize_features(features: list[dict], grid: GridModel, args, src_crs,
+                      say=None) -> tuple[list[dict], dict, float]:
+    """瓦片结果 → 交付要素的**唯一**后处理入口（CLI 与桌面端 sidecar 共用）。
+
+    ⚠️ 为什么必须只有一个入口（2026-11-04）：以前 CLI 的 main() 与 sidecar 各写一遍
+       "收集瓦片 → 掩膜 → 输出"，sidecar 那份**漏了林地掩膜** —— 预检界面写着
+       「已自动启用（剔除未开发林）」，桌面端结果却把南部天然林算成需补种。
+       两条路径从结构上走同一个函数，才不会再"改一边忘一边"。
+
+    返回 ``(features, class_totals, area_total)``；``area_total`` = 空地四类面积之和
+    （不可种植与未开发林不计），与旧口径一致。
+    """
+    say = say or log
+    features, info = stitch_seams(features, grid, args, src_crs)
+    say(f"跨瓦片缝合：{info['seam_pieces']} 块跨缝碎块 → 合并出 {info['merged']} 块"
+        f"（来自 {info['merged_from']} 块碎块），{info['dropped_small']} 块合并后仍"
+        f" < {args.min_area:g} m² 已丢弃")
+    if getattr(args, "forest_mask", None):
+        features, _a, n_msk, a_msk = _apply_forest_mask(
+            features, args.forest_mask, 0.0, say=say, grid=grid, args=args,
+            src_crs=src_crs)
+    class_totals = {c: 0 for c in CLASS_LABEL_CN}
+    for f in features:
+        k = f["properties"]["class"]
+        if k in class_totals:
+            class_totals[k] += 1
+    area_total = float(sum(f["properties"]["area_sqm"] for f in features
+                           if f["properties"]["class"] in PLANTABLE_GAP_CLASSES))
+    return features, class_totals, area_total
+
+
+def classify_kwargs(args) -> dict:
+    """classify_gaps 的可调参数（瓦片、缝合、掩膜切分三处共用，避免各写一份漂移）。"""
+    return {
+        "node_tol_ratio": getattr(args, "node_tol_ratio", 0.35),
+        "elongate_ratio": getattr(args, "elongate_ratio", 2.2),
+        "min_coverage_for_slot": getattr(args, "min_coverage_for_slot", 0.15),
+    }
+
+
+def _apply_forest_mask(features: list[dict], mask_path: str, area_total: float,
+                       say=None, grid: GridModel | None = None, args=None,
+                       src_crs="EPSG:4326") -> tuple[list[dict], float, int, float]:
+    """把落在「非种植区掩膜」内的需补种空地划为 `undeveloped` —— **按掩膜切开**。
+
+    背景（2026-10-16 用户核实）
+    --------------------------
+    园区南部是**尚未开发的天然林 / 次生林**，不属于油棕种植区。林间自然林窗会被算法
+    当作「油棕园里的空地」框出来，虚增需补种面积。
+
+    做法（2026-11-04 改）
+    ---------------------
+    旧做法用"外环顶点的算术均值"一个点决定整块改不改判：凹形块这个点可能不在多边形里、
+    忽略洞，跨掩膜边界的大空地要么整块改判、要么整块漏判。跨瓦片缝合把碎块连成大块后
+    这个问题被放大 —— 实测改判面积随瓦片配置在 5,804 ~ 16,637 m² 之间跳。
+
+    现在与"不可种植地物按像素扣除"同一思路：**把多边形沿掩膜切开**。
+
+    - 掩膜内部分 < min_area（只是擦到边）→ 原样保留；
+    - 掩膜外部分 < min_area（几乎全在林里）→ 整块改判；
+    - 否则切开：掩膜内的各部分成为 `undeveloped` 要素（ID 加 ``F`` 序号），
+      掩膜外的各部分保留为空地，并在**新几何上重新分类**（ID 不变或加 ``P`` 序号）；
+      切下来不到 min_area 的碎片丢弃（与全管线的面积门槛一致）。
+
+    结果与阈值无关，也与瓦片怎么切无关（掩膜内的面积就是几何交集的面积）。
+    只处理需补种的 4 类；道路 / 水体 / 办公区不受影响。
+    """
+    import copy as _copy
+    import json as _json
+
+    from shapely.geometry import shape as _shape
+    from shapely.ops import unary_union as _union
+    from shapely.strtree import STRtree
+
+    say = say or log
     p = Path(mask_path)
     if not p.exists():
-        log(f"⚠️ 非种植区掩膜不存在，已跳过：{p}")
+        say(f"⚠️ 非种植区掩膜不存在，已跳过：{p}")
         return features, area_total, 0, 0.0
 
     gj = _json.loads(p.read_text(encoding="utf-8"))
@@ -1741,45 +1941,117 @@ def _apply_forest_mask(features: list[dict], mask_path: str,
         except Exception:  # noqa: BLE001
             continue
     if not geoms:
-        log(f"⚠️ 非种植区掩膜无有效多边形，已跳过：{p}")
+        say(f"⚠️ 非种植区掩膜无有效多边形，已跳过：{p}")
         return features, area_total, 0, 0.0
 
+    to_utm = Transformer.from_crs(src_crs, TARGET_CRS, always_xy=True)
+
+    def fwd(x, y, z=None):
+        return to_utm.transform(x, y)
+
+    min_area = float(getattr(args, "min_area", 30.0)) if args is not None else 30.0
     tree = STRtree(geoms)
     plant_cls = (CLASS_VACANT_SLOT, CLASS_ALLEY_GAP,
                  CLASS_OPEN_PATCH, CLASS_UNCERTAIN)
-    n_masked = 0
+
+    def polys(g):
+        return [x for x in getattr(g, "geoms", [g])
+                if x.geom_type == "Polygon" and not x.is_empty]
+
+    def as_undeveloped(f: dict, frac: float) -> dict:
+        pr = f["properties"]
+        pr["class"] = CLASS_UNDEVELOPED
+        pr["class_label"] = CLASS_LABEL_CN[CLASS_UNDEVELOPED]
+        pr["class_semantics"] = CLASS_SEMANTICS[CLASS_UNDEVELOPED]
+        # 后缀保持短（dbf 的 class_method 字段宽 24 字节，
+        # "planting_grid_prior+forest_mask" 会被静默截断）
+        pr["class_method"] = (pr.get("class_method", "") + "+mask").lstrip("+")
+        pr["class_reason"] = (f"{frac*100:.0f}% 面积落在非种植区掩膜内（未开发林等），"
+                              "不计入补种范围")
+        return f
+
+    out: list = []
+    pending: list[tuple[str, object, object, float, dict]] = []   # 掩膜外部分，待重新分类
+    n_masked = n_split = 0
     a_masked = 0.0
     for f in features:
         pr = f["properties"]
         if pr["class"] not in plant_cls:
+            out.append(f)
             continue
-        ring = f["geometry"]["coordinates"][0]
-        pt = Point(sum(c[0] for c in ring) / len(ring),
-                   sum(c[1] for c in ring) / len(ring))
-        hit = False
-        for g in tree.query(pt):
-            # shapely 2.x 返回索引，1.8 返回几何对象 —— 两种都兼容
-            geom = geoms[g] if isinstance(g, (int, np.integer)) else g
-            if geom.contains(pt):
-                hit = True
-                break
-        if hit:
-            pr["class"] = CLASS_UNDEVELOPED
-            pr["class_label"] = CLASS_LABEL_CN[CLASS_UNDEVELOPED]
-            pr["class_semantics"] = CLASS_SEMANTICS[CLASS_UNDEVELOPED]
-            # 后缀保持短（dbf 的 class_method 字段宽 24 字节，
-            # "planting_grid_prior+forest_mask" 会被静默截断）
-            pr["class_method"] = (
-                (pr.get("class_method", "") + "+mask").lstrip("+"))
-            pr["class_reason"] = ("落在非种植区掩膜内（未开发林等），"
-                                  "不计入补种范围")
+        poly = _shape(f["geometry"])
+        cand = [geoms[g] if isinstance(g, (int, np.integer)) else g
+                for g in tree.query(poly)]
+        if poly.is_empty or not cand:
+            out.append(f)
+            continue
+        m = _union(cand)
+        if not poly.intersects(m):
+            out.append(f)
+            continue
+        inside, outside = poly.intersection(m), poly.difference(m)
+        a_in = float(shp_transform(fwd, inside).area) if not inside.is_empty else 0.0
+        a_out = float(shp_transform(fwd, outside).area) if not outside.is_empty else 0.0
+        frac = a_in / max(a_in + a_out, 1e-9)
+        if a_in < min_area:                 # 只擦到掩膜边：照旧
+            out.append(f)
+            continue
+        if a_out < min_area:                # 几乎全在林里：整块改判
+            out.append(as_undeveloped(f, frac))
             n_masked += 1
             a_masked += float(pr.get("area_sqm", 0.0))
+            continue
+        # —— 跨掩膜边界：切开 ——
+        n_split += 1
+        gid = pr["gap_id"]
+        for k, part in enumerate(polys(inside), 1):
+            pu = shp_transform(fwd, part)
+            if pu.area < min_area:
+                continue
+            g2 = _copy.deepcopy(f)
+            g2["geometry"] = mapping(part)
+            q = g2["properties"]
+            q["gap_id"] = f"{gid}F{k}"
+            q["area_sqm"] = round(float(pu.area), 2)
+            q["centroid_utm"] = [round(pu.centroid.x, 2), round(pu.centroid.y, 2)]
+            for key in ("grid_cell", "node_distance_m", "coverage_ratio", "elongation",
+                        "slot_score", "patch_score", "alley_score"):
+                q[key] = None            # 这些是按切开前的几何算的，留着会误导
+            out.append(as_undeveloped(g2, 1.0))
+            n_masked += 1
+            a_masked += float(pu.area)
+        outs = [(part, shp_transform(fwd, part)) for part in polys(outside)]
+        outs = [(ps, pu) for ps, pu in outs if pu.area >= min_area]
+        for k, (ps, pu) in enumerate(outs, 1):
+            gid_k = gid if len(outs) == 1 else f"{gid}P{k}"
+            out.append(gid_k)            # 占位：重新分类后回填，保持输出顺序
+            pending.append((gid_k, ps, pu, float(pu.area), pr))
 
-    log(f"非种植区掩膜：{len(geoms)} 个多边形 ← {p.name}；"
-        f"改判 {n_masked} 块 / {a_masked:,.0f} m² 为「{CLASS_LABEL_CN[CLASS_UNDEVELOPED]}」"
-        f"（不计入需补种）")
-    return features, area_total - a_masked, n_masked, a_masked
+    if pending:
+        labs: dict[str, dict] = {}
+        if grid is not None:
+            labels = classify_gaps([gap_geometry(pu, gk, a) for gk, _ps, pu, a, _pr in pending],
+                                   grid, **classify_kwargs(args))
+            labs = {lab["gap_id"]: lab for lab in labels}
+        made: dict[str, dict] = {}
+        for gk, ps, pu, a, base in pending:
+            if gk in labs:
+                feat = _gap_feature(gk, pu, a, labs[gk], ps)
+            else:                        # 没有网格（只给了结果文件）：沿用原类别，只更新几何
+                feat = {"type": "Feature", "geometry": mapping(ps),
+                        "properties": {**base, "gap_id": gk, "area_sqm": round(a, 2),
+                                       "centroid_utm": [round(pu.centroid.x, 2),
+                                                        round(pu.centroid.y, 2)]}}
+            if "seam_pieces" in base:
+                feat["properties"]["seam_pieces"] = base["seam_pieces"]
+            feat["properties"]["mask_split"] = True
+            made[gk] = feat
+        out = [made[x] if isinstance(x, str) else x for x in out]
+
+    say(f"非种植区掩膜：{len(geoms)} 个多边形 ← {p.name}；"
+        f"切开 {n_split} 块跨边界空地，划出 {n_masked} 块 / {a_masked:,.0f} m² "
+        f"为「{CLASS_LABEL_CN[CLASS_UNDEVELOPED]}」（不计入需补种）")
+    return out, area_total - a_masked, n_masked, a_masked
 
 
 def _density_check_payload(grid, args) -> dict:

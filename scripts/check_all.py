@@ -251,6 +251,16 @@ def main() -> int:
     )
     rec("block-jobs", ok, dt)
 
+    # ---- 12b. 跨瓦片缝合（2026-11-04）----
+    # 守的是"同一块空地被瓦片缝切开就算两遍 / 两半各判各的类"（评审文档 10-29 缺陷 A/A′）：
+    # 面积虚高 12.6%、块数虚高一倍，数字自洽、不报错。纯合成几何，秒级，进 --fast。
+    print("\n[12b] 跨瓦片缝合（一块就是一块、面积不多不少、与瓦片怎么切无关）")
+    ok, dt = run(
+        [str(PY), "scripts/test_stitch.py"],
+        ROOT, "test_stitch（缝合 / 重分类 / 不变性 / 掩膜切开）",
+    )
+    rec("stitch", ok, dt)
+
     # ---- 13. 契约测试 ----
     if not args.fast:
         print("\n[13] 契约测试")

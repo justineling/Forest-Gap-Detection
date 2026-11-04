@@ -153,3 +153,8 @@ jobs:
 
       - name: 契约测试（95 项）
         run: python scripts/test_sidecar_contract.py
+
+      # 跨瓦片缝合：同一块空地被瓦片缝切开不能算两遍、两半不能各判各的类
+      # （评审文档 2026-10-29 缺陷 A/A′）。纯合成几何，秒级。
+      - name: 跨瓦片缝合
+        run: python scripts/test_stitch.py

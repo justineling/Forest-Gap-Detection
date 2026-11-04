@@ -774,11 +774,18 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                  message=f"{failed}/{total} 个瓦片处理失败（已跳过），"
                          f"结果仍产出但可能不完整")
 
+        src_crs = ds.crs
         ds.close()
 
         # --- 合并导出 ---
         stage = "merge"
         emit("log", level="info", stage="merge", message="合并整幅结果…")
+        # 跨瓦片缝合 + 非种植区掩膜：与 CLI 走**同一个**函数（2026-11-04）。
+        # ⚠️ 以前这里直接把瓦片结果拼起来就导出 —— 既有跨瓦片重复计数，
+        #    又**漏了林地掩膜**（预检明明报「已自动启用」），桌面端结果比 CLI 多算未开发林。
+        all_features, class_totals, area_total = PI.finalize_features(
+            all_features, grid, args, src_crs,
+            say=lambda m: emit("log", level="info", stage="merge", message=m))
         result = PI.build_full_geojson(
             args, in_path, px_m, area_ha, grid, report,
             all_features, class_totals, area_total, total, len(all_tiles))

@@ -12,8 +12,9 @@
        → 秒级得到重新分类后的结果
     4. scripts/export_arcgis.py --input <新结果>
 
-改判规则与管线内完全一致（直接复用 `process_image._apply_forest_mask`），
-只改判需补种的 4 类，道路/水体/办公区不受影响。
+改判规则与管线内完全一致（直接复用 `process_image._apply_forest_mask`）：
+**沿掩膜切开**（2026-11-04 起，不再由一个代表点决定整块），掩膜外的部分用结果文件里的
+`planting_grid` 在新几何上重新分类。只处理需补种的 4 类，道路/水体/办公区不受影响。
 
 用法
 ----
@@ -33,6 +34,8 @@ import numpy as np
 
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
+
+from types import SimpleNamespace  # noqa: E402
 
 from process_image import _apply_forest_mask  # noqa: E402
 from grid_prior import (  # noqa: E402
@@ -71,7 +74,21 @@ def main() -> int:
     for f in gaps:
         before_area[f["properties"]["class"]] += f["properties"]["area_sqm"]
 
-    gaps, area_new, n_msk, a_msk = _apply_forest_mask(gaps, args.mask, area_total)
+    # 切开后掩膜外的部分要重新分类 → 需要网格与分类参数（都在结果文件里）
+    import dataclasses as _dc
+
+    from grid_prior import GridModel as _GM
+    pg = d.get("planting_grid") or {}
+    names = {f.name for f in _dc.fields(_GM)}
+    grid = _GM(**{k: v for k, v in pg.items() if k in names}) if pg else None
+    prm = d.get("params", {})
+    cls_args = SimpleNamespace(min_area=prm.get("min_area_sqm", 30.0),
+                               node_tol_ratio=prm.get("node_tol_ratio", 0.35),
+                               elongate_ratio=prm.get("elongate_ratio", 2.2),
+                               min_coverage_for_slot=0.15)
+    gaps, area_new, n_msk, a_msk = _apply_forest_mask(
+        gaps, args.mask, area_total, grid=grid, args=cls_args,
+        src_crs=d.get("crs", "EPSG:4326"))
     d["blocks"][0]["gaps"] = gaps
 
     # --- 重算 summary ---
