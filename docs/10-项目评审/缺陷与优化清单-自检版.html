@@ -246,12 +246,17 @@
 </div>
 
 <div class="def">
-  <div class="def-h"><span class="lv lv-p1">P1-9</span><b>"排坑退让距离"改了要重新导出，但界面没说</b></div>
+  <div class="def-h"><span class="lv lv-p1">P1-9</span><b>"排坑退让距离"改了要重新导出，但界面没说</b><span class="tag">已闭环</span></div>
   <div class="def-b">
     <div class="kv"><span>现状</span><span>左栏改退让 → 点位重算 → 但已经导出的交付包还是旧的</span></div>
     <div class="kv"><span>建议</span><span>导出后如果改了退让，在「下一步」卡片上提示"退让已改，需重新导出"。
       store 里记一个 <code>lastExportClearance</code> 即可</span></div>
     <div class="kv"><span>成本</span><span>小（半天）</span></div>
+    <div class="kv"><span>已落地</span><span>2026-11-03：范围比建议更宽 —— 不只是退让，<b>导出后任何改动结果的操作</b>
+      （删除 / 改判 / 改边界 / 补画 / 重跑合并）都会让交付包过期。store 记导出那一刻的
+      <b>数据版本号 + 退让</b>（<code>exportSnap</code>），任一变化 → 第 ⑤ 步退回「需重导」，
+      卡片主按钮变「重新导出」并写明原因；撤销回导出时的数据会自动恢复「已导出」
+      （版本号随撤销快照一起还原，新操作永远拿没用过的号）。判定是纯函数 <code>workflow.exportStaleReason</code>，有单测</span></div>
   </div>
 </div>
 
@@ -267,6 +272,11 @@
     <div class="kv"><span>已落地</span><span>2026-10-19：验证集打标进度按 <code>localStorage</code>
       （key 含 scope，即 job/影像指纹）逐块写入，关软件不丢。<br>
       <b>但只覆盖了验证集，复核本身仍未持久化</b> —— 那一半还开着，原因见「Q1 已落地」末尾</span></div>
+    <div class="kv"><span>再落地</span><span>2026-11-03：<b>复核这一半也闭环了</b>。不存"看过没看过"（那在数据上分不清），
+      而是存<b>复核的成果</b>：删除 / 改判 / 改边界 / 补画相对算法基线的差异（<code>lib/reviewDraft.ts</code>），
+      结果一变就防抖写进 <code>localStorage</code>（真实数据上一次改动约 700 字节），关窗前再落一次盘。
+      下次载入<b>同一份</b>结果（按块数 + gap_id 哈希认）自动贴回，作为一步可撤销的操作；
+      重跑检测 gap_id 重编 → 签名不同 → 不会贴错。已处理的块照旧沉底，所以"做到哪了"也一起回来了</span></div>
   </div>
 </div>
 
@@ -290,10 +300,13 @@
     <tr><td>P2-2</td><td>没有键盘导航 <span class="tag">已闭环（验证集）</span></td><td>复核清单不能用 ↑↓ 移动、回车选中。1,726 块纯鼠标点很累。<br>
       <b>2026-10-19</b>：验证集模式已全套键盘（<code>↑↓</code> 换块 + <code>1-4</code> 打标 + 自动跳下一条），
       护栏抽成 <code>lib/hotkeys.ts</code> 可单测；<b>复核模式本身仍是鼠标流</b>，没顺手改（理由见下节）</td></tr>
-    <tr><td>P2-3</td><td>没有"撤销历史"面板</td><td>只有 ↶ 3 这个数字。用户不知道撤的是什么，不敢按</td></tr>
+    <tr><td>P2-3</td><td>没有"撤销历史"面板 <span class="tag">部分闭环</span></td><td>只有 ↶ 3 这个数字。用户不知道撤的是什么，不敢按<br>
+      <b>2026-11-03</b>：撤销 / 重做按钮悬停直接写出下一步是什么（「撤销『批量删除 12 块』」）；
+      顺手修了重做日志永远写「当前状态」的 bug（快照名字写死了）。<b>历史面板本身没做</b></td></tr>
     <tr><td>P2-4</td><td>影像元信息不完整</td><td>状态栏只有分辨率，没有采集日期 / 航高 / 云量 —— 实际复核时会看</td></tr>
     <tr><td>P2-5</td><td>多选后批量改判没有预览</td><td>选中 40 块改成一类，点下去才知道结果。可以 hover 预览</td></tr>
-    <tr><td>P2-6</td><td>地图没有"回到全园"按钮</td><td>飞远之后只能滚轮缩回来</td></tr>
+    <tr><td>P2-6</td><td>地图没有"回到全园"按钮 <span class="tag">已闭环</span></td><td>飞远之后只能滚轮缩回来<br>
+      <b>2026-11-03</b>：缩放组下加了「全图」，按当前影像的外接框飞回整幅</td></tr>
     <tr><td>P2-7</td><td><code>sidecar.py</code> 与 <code>tile_server.py</code> 共享逻辑靠复制</td><td>两处都有 GeoJSON 读取与类别标签，改一处忘了另一处就分叉</td></tr>
     <tr><td>P2-8</td><td>Python 侧无类型检查</td><td>没有 mypy / pyright。这次 <code>mask_skip</code> 未定义就是自己发现的（运行时报 NameError）</td></tr>
     <tr><td>P2-9</td><td><code>scripts/</code> 19 个文件平铺</td><td>算法 / 导出 / 测试 / 打包脚本混在一起，新人不知道从哪读</td></tr>

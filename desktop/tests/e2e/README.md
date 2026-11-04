@@ -15,6 +15,14 @@ cd <仓库根>
 node desktop/tests/e2e/ui_regress.mjs
 ```
 
+> ⚠️ **Node 20 没有全局 `WebSocket`**（Node 22 才默认有）：所有走 CDP 的 `.mjs`
+> （`verify_render` / `shot-narrow` / `ui_regress` …）都要加旗标，否则先报
+> `ReferenceError: WebSocket is not defined`、再把 Chrome 挂在那里直到超时：
+>
+> ```bash
+> node --experimental-websocket desktop/tests/e2e/verify_render.mjs
+> ```
+
 ---
 
 ## ⚠️ 二号大坑：CDP 脚本必须 hermetic —— 本机装了软件就会假失败
