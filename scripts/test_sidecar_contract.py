@@ -503,6 +503,51 @@ def test_cache_hit_helper(tmpdir: Path) -> None:
     check(not hit and obj is None, "--force → 强制不命中")
 
 
+def test_evidence_contract(tmpdir: Path) -> None:
+    """R14：别的地块的 CHM 不能拿来定本次影像的全园网格。
+
+    构造一张与影像同 CRS、但整体往东平移约 5 km 的 CHM。旧代码只检查
+    "文件存在"就读整张 CHM 求周期图 —— 逐瓦片融合读不到它（无害），
+    全园网格却用别人家的株距 / 方位 / 原点，质量还很高，没有任何警告。
+    """
+    print("\n[6d] R14 证据图约定：不重叠 CHM → 警告 + 退回旧勘察")
+    import rasterio
+    from rasterio.transform import from_origin
+
+    tif = tmpdir / "far-chm-ortho.tif"
+    make_synthetic(tif, w=2048, h=2048)
+    with rasterio.open(tif) as src:
+        crs, px, ob = src.crs, src.transform.a, src.bounds
+
+    chm = tmpdir / "far-away-chm.tif"
+    # 常数 10 m 的高度场 → chm_tree_tops 会得到大量"树冠顶点"，
+    # 但它们全部落在影像之外；过滤后应为 0，从而触发退回。
+    data = np.full((1, 512, 512), 10.0, dtype=np.float32)
+    tr = from_origin(float(ob.left) + 0.045, float(ob.top),
+                     abs(px) * 8, abs(px) * 8)
+    with rasterio.open(chm, "w", driver="GTiff", width=512, height=512,
+                       count=1, dtype="float32", crs=crs, transform=tr) as dst:
+        dst.write(data)
+
+    events, rc, _ = run_sidecar({
+        "input": str(tif), "job": "contract-evidence",
+        "work_dir": str(tmpdir / "jobs"),
+        "out_json": str(tmpdir / "evidence-gaps.geojson"),
+        "chm_path": str(chm),
+        "min_area": 10.0, "min_canopy_blob": 200,
+    }, expect_exit=0)
+    check(rc == 0, "约定外输入只警告、不中断（rc=0）", str(rc))
+    codes = [e.get("code") for e in events if e["event"] == "warn"]
+    check("W1005" in codes, "发出 W1005（CHM 没覆盖影像）", f"warn={codes}")
+    logs = [e.get("message", "") for e in events if e["event"] == "log"]
+    check(any("CHM 与影像不重叠" in m for m in logs),
+          "日志写明「CHM 与影像不重叠」并退回勘察")
+    r = [e for e in events if e["event"] == "result"][0]
+    method = r["planting_grid"]["method"]
+    check(method != "chm_periodogram", "全园网格退回 RGB 勘察，不再用别家 CHM",
+          f"method={method}")
+
+
 def test_no_crs(tmpdir: Path) -> None:
     print("\n[7] 缺失坐标信息 → E1005")
     from rasterio.transform import Affine
@@ -581,6 +626,7 @@ def main() -> int:
         test_resume(tmpdir)
         test_failed_cache(tmpdir)
         test_cache_hit_helper(tmpdir)
+        test_evidence_contract(tmpdir)
         test_no_crs(tmpdir)
         test_undefined_behavior(tmpdir)
 

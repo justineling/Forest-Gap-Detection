@@ -29,7 +29,7 @@
 > 一个假数字（这比不写更糟 —— 看的人会以为测试没跑全）。项数以 `npm test` /
 > `cargo test` 自己的输出为准；要看的基线在 `README.md` 里。
 | **仓库卫生** | `.gitkeep` 是否仍被 git 跟踪（CI 编译期硬依赖） | ~0.1 s |
-| 契约测试 | 113 项 sidecar 契约（R11 新增失败缓存 / 共用判定） | ~60 s |
+| 契约测试 | 117 项 sidecar 契约（R11 失败缓存 / R14 证据图约定） | ~60 s |
 
 ### ⚠️ 为什么还要查 `.gitkeep`（2026-10-21 一天丢两次）
 
@@ -285,7 +285,7 @@ def main() -> int:
     if not args.fast:
         print("\n[13] 契约测试")
         ok, dt = run([str(PY), "scripts/test_sidecar_contract.py"], ROOT,
-                     "test_sidecar_contract（113 项）")
+                     "test_sidecar_contract（117 项）")
         rec("contract", ok, dt)
 
     # ---- 汇总 ----

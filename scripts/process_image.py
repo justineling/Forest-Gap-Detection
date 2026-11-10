@@ -1505,6 +1505,9 @@ def main() -> int:
     ds = rasterio.open(in_path)
     log(f"影像 {in_path.name}：{ds.width} × {ds.height} 像素，"
         f"{ds.count} 波段，CRS={ds.crs}")
+    # R14 第 2 条：证据图与影像的坐标系 / 覆盖约定，启动时查一次（只警告）
+    for _w in check_evidence_inputs(ds, args):
+        log(f"⚠️ 输入约定：{_w}")
 
     # --- 地面分辨率 ---
     b = ds.bounds
@@ -1589,7 +1592,7 @@ def main() -> int:
             f"方位 {grid.row_azimuth_deg:.4f}° / 质量 {grid.quality:.3f}")
         report = {"source": "grid-from", "path": str(args.grid_from),
                   "requested": 0, "probed": 0, "used": 0, "samples": []}
-    elif (_chm_grid := grid_from_chm(args)) is not None:
+    elif (_chm_grid := grid_from_chm(args, image_bounds_utm=image_bounds_utm(ds))) is not None:
         grid, report = _chm_grid
     else:
         grid, report = survey_grid(ds, survey_tiles, px_m, sample_n=args.survey_samples,
@@ -2090,9 +2093,91 @@ LATTICE_MIN_CONTRAST = 50.0
 LATTICE_RADIUS_M = 40.0
 LATTICE_MIN_TOPS = 12
 LATTICE_MIN_COHERENCE = 0.2
+# R14：落在影像范围内的树冠顶点少于这个数，就认为 CHM 属于别的地块
+CHM_GRID_MIN_TOPS = 200
 
 
-def grid_from_chm(args, say=None) -> tuple[GridModel, dict] | None:
+def image_bounds_utm(ds) -> tuple[float, float, float, float] | None:
+    """影像四角 → UTM 49N 外接矩形（R14，CLI 与 sidecar 共用）。
+
+    用 ``rasterio.warp.transform_bounds`` 而不是只转左下 / 右上两个点：
+    带旋转 / 跨带时四角变换后的外接矩形才是真正的覆盖范围。
+    """
+    from rasterio.warp import transform_bounds
+
+    if ds.crs is None:
+        return None
+    try:
+        vals = transform_bounds(ds.crs, TARGET_CRS, *ds.bounds)
+        return (float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]))
+    except Exception:  # noqa: BLE001 —— 约定检查只警告，不能让主流程挂掉
+        return None
+
+
+def check_evidence_inputs(ds, args) -> list[str]:
+    """启动时的输入约定检查（R14 第 2 条），返回警告文本（**只警告、不中断**）。
+
+    `ElevationEvidence` 写明的约定：正射影像 / CHM / 分割图**同坐标系、范围覆盖**，
+    只是分辨率不同。约定外的输入以前完全静默：
+      · CHM 是别的地块的 → 逐瓦片融合读不到（无害），但全园格网却用它定出来
+        （R14 的主症状：所有空地按别人家的株距 / 方位分类、放样）；
+      · 分割图覆盖不全 → 同一块地在"窗口部分落在图外"与"完全在图外"两种
+        瓦片切法下结果不同；
+      · 坐标系不同 → 证据配准失效。
+    本函数只负责**发现**，输出方式由调用方决定：CLI 打日志，sidecar 发 W1005。
+    容差 = 1 个证据图像素（CRS 不同时退化为 1 个影像像素）。
+    """
+    import rasterio
+    from pyproj import CRS
+    from rasterio.warp import transform_bounds
+
+    out: list[str] = []
+    if ds.crs is None:
+        return out
+    for label, path in (("CHM", getattr(args, "chm", "")),
+                        ("分割图", getattr(args, "segment", ""))):
+        if not path or not Path(path).exists():
+            continue
+        try:
+            with rasterio.open(path) as ev:
+                ev_crs = ev.crs
+                if ev_crs is None and label == "分割图":
+                    # `elevation.ElevationEvidence` 的既有约定（:157）：分割图
+                    # 没有内嵌 CRS 时按 `segment_crs` 补齐（默认 EPSG:4326，
+                    # 与正射影像同）。本园 segment.tif 正是这个形态（靠 .tfw
+                    # 定位 + 默认 CRS），不能每次跑都误报一条警告。
+                    ev_crs = getattr(args, "segment_crs", None) or ds.crs
+                if ev_crs is None:
+                    out.append(f"{label} 没有坐标系信息，无法与正射影像对齐：{path}")
+                    continue
+                try:
+                    same_crs = CRS.from_user_input(ev_crs).equals(
+                        CRS.from_user_input(ds.crs), ignore_axis_order=True)
+                except Exception:  # noqa: BLE001
+                    same_crs = str(ev_crs) == str(ds.crs)
+                if not same_crs:
+                    out.append(f"{label} 与正射影像坐标系不同"
+                               f"（{ev_crs} vs {ds.crs}）：{path}")
+                try:
+                    eb = transform_bounds(ev_crs, ds.crs, *ev.bounds)
+                except Exception:  # noqa: BLE001
+                    eb = ev.bounds
+                src = ev if same_crs else ds
+                tol_x = abs(src.transform.a) if src.transform else 0.0
+                tol_y = abs(src.transform.e) if src.transform else 0.0
+                ob = ds.bounds
+                if (eb[0] > ob.left + tol_x or eb[1] > ob.bottom + tol_y
+                        or eb[2] < ob.right - tol_x or eb[3] < ob.top - tol_y):
+                    out.append(
+                        f"{label} 没有覆盖整幅影像（证据图 "
+                        f"{tuple(round(float(v), 6) for v in eb)} vs 影像 "
+                        f"{tuple(round(float(v), 6) for v in ob)}）：{path}")
+        except Exception as e:  # noqa: BLE001
+            out.append(f"{label} 读取失败，约定检查跳过：{type(e).__name__}: {e}")
+    return out
+
+
+def grid_from_chm(args, say=None, image_bounds_utm=None) -> tuple[GridModel, dict] | None:
     """用 CHM 树冠顶点的二维周期图估全局格网参数（2026-11-04；CLI 与 sidecar 共用）。
 
     旧勘察（RGB 抽 7 块瓦片拟合树心）与真实树位完全不相关（见 grid_prior 里
@@ -2101,12 +2186,31 @@ def grid_from_chm(args, say=None) -> tuple[GridModel, dict] | None:
 
     全局原点只作兜底与前端锚点：园区分块种植、各块相位不同，真正用于分类与放样的是
     ``finalize_features`` 里每块空地自己的局部相位。顶点数组挂在 ``args._lattice_tops`` 上复用。
+
+    R14：``image_bounds_utm`` 是**本次输入影像**的 UTM 外接矩形（由共用函数
+    `image_bounds_utm(ds)` 算）。只保留落在其中的树冠顶点；剩得太少就说明这张
+    CHM 属于别的地块，退回旧勘察。有 ROI 时仍然传整幅影像范围（样本越多越稳）。
     """
     say = say or log
     chm = getattr(args, "chm", None)
     if getattr(args, "no_elevation", False) or not chm or not Path(chm).exists():
         return None
     tops = chm_tree_tops(chm, TARGET_CRS)
+    if image_bounds_utm is not None:
+        x0, y0, x1, y1 = image_bounds_utm
+        before = len(tops)
+        if before:
+            keep = ((tops[:, 0] >= x0) & (tops[:, 0] <= x1)
+                    & (tops[:, 1] >= y0) & (tops[:, 1] <= y1))
+            tops = tops[keep]
+        if len(tops) < CHM_GRID_MIN_TOPS:
+            say(f"CHM 与影像不重叠：落在影像范围内的树冠顶点 {len(tops):,}/{before:,} "
+                f"< {CHM_GRID_MIN_TOPS}，退回 RGB 网格勘察"
+                f"（请检查 --chm / chm_path 是否指向本园区的高度图：{chm}）")
+            return None
+        if len(tops) < before:
+            say(f"CHM 树冠顶点按影像范围裁剪：{before:,} → {len(tops):,} 个"
+                "（影像外的顶点属于别的地块，不参与本次格网估计）")
     lat = lattice_from_tops(tops)
     if lat is None or lat["contrast"] < LATTICE_MIN_CONTRAST:
         say(f"CHM 周期图对比度不足（{(lat or {}).get('contrast', 0):.0f} < {LATTICE_MIN_CONTRAST:g}），"

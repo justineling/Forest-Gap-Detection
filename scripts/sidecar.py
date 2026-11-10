@@ -525,6 +525,9 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
         emit("log", level="info", stage="open_image",
              message=f"影像 {in_path.name}：{ds.width} × {ds.height} 像素，"
                      f"{ds.count} 波段，CRS={ds.crs}")
+        # R14 第 2 条：与 CLI 同一个约定检查，只发 warn、不中断
+        for _w in PI.check_evidence_inputs(ds, args):
+            emit("warn", code="W1005", message=f"输入约定：{_w}")
         emit("log", level="info", stage="open_image",
              message=f"地面分辨率 {px_m*100:.2f} cm/像素，覆盖 {area_ha:.1f} 公顷")
 
@@ -591,7 +594,8 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
 
         # 有 CHM 先用树冠顶点周期图（与 CLI 同一个函数），否则退回 RGB 勘察
         _chm_grid = PI.grid_from_chm(
-            args, say=lambda m: emit("log", level="info", stage="grid_survey", message=m))
+            args, say=lambda m: emit("log", level="info", stage="grid_survey", message=m),
+            image_bounds_utm=PI.image_bounds_utm(ds))
         if _chm_grid is not None:
             grid, report = _chm_grid
         else:
