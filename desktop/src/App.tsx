@@ -482,7 +482,11 @@ export default function App() {
           setStaleWarnings([])
         }
         if (opts?.rerun) {
-          applyRerun(feats, 'keep_manual')
+          // R4：重跑结果带的是**新一轮**的算法网格（株距 / 方位 / 局部相位
+          // 可能全变了）。以前这里只传要素，store 里的 plantingGrid 仍是旧的，
+          // estimate() 就拿新相位套旧网格 —— 预览点数与导出的交付对不上
+          // （探针 61 vs 51 点、最远差 7.9 m）。与首次载入 setGaps 同一口径。
+          applyRerun(feats, 'keep_manual', fc.planting_grid ?? null)
           setLoadingGaps(false)
           return
         }

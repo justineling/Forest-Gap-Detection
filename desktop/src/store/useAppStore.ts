@@ -189,6 +189,14 @@ export interface HistoryEntry {
   baseSig: string
   /** 「已恢复上次的修改」说明条：撤销恢复时它要一起消失，重做时一起回来 */
   draftRestored: AppState['draftRestored']
+  /**
+   * 这份快照对应的**算法种植网格**（R4，2026-11-10）。
+   *
+   * ⚠️ 必须随撤销 / 重做一起还原：重跑会用新一轮结果的 `planting_grid`
+   * 覆盖它；若撤销重跑后网格还停在新值，`estimate()` 就会拿新网格 + 旧要素
+   * 排坑，预览点数与交付对不上（探针 61 vs 51 点、最远差 7.9 m）。
+   */
+  plantingGrid: PlantingGrid | null
 }
 
 const IDLE_DETECT: DetectRun = {
@@ -433,8 +441,12 @@ export interface AppState {
    *
    * 不直接 setGaps —— 那会把用户上一轮的删除/改判全丢掉。
    * 走 `mergeManualEdits` 把人工操作重放到新结果上，返回统计供 UI 汇报。
+   *
+   * `plantingGrid`（R4）：新一轮结果的算法网格，同一次 commit 写入，
+   * 撤销 / 重做时随 gaps 一起回退。省略则保留当前网格（兼容其它调用方）。
    */
-  applyRerun: (newFeatures: GapFeature[], mode?: MergeMode) => MergeStats
+  applyRerun: (newFeatures: GapFeature[], mode?: MergeMode,
+               plantingGrid?: PlantingGrid | null) => MergeStats
   /** 改检测参数（自动持久化） */
   setDetectParam: (patch: Partial<DetectParams>) => void
   /**
@@ -494,6 +506,7 @@ function snap(s: AppState, label: string): HistoryEntry {
     baseGaps: s.baseGaps,
     baseSig: s.baseSig,
     draftRestored: s.draftRestored,
+    plantingGrid: s.plantingGrid,
   }
 }
 
@@ -720,6 +733,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         baseGaps: features,
         baseSig: sig,
         draftRestored: null,
+        plantingGrid: plantingGrid ?? null,
       }
       const when = new Date(draft.savedAt).toLocaleString('zh-CN', { hour12: false })
       return {
@@ -796,6 +810,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         baseGaps: prev.baseGaps,
         baseSig: prev.baseSig,
         draftRestored: prev.draftRestored,
+        plantingGrid: prev.plantingGrid,
         past: s.past.slice(0, -1),
         future: [cur, ...s.future].slice(0, HISTORY_LIMIT),
         estimateResult: null,
@@ -827,6 +842,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
         baseGaps: next.baseGaps,
         baseSig: next.baseSig,
         draftRestored: next.draftRestored,
+        plantingGrid: next.plantingGrid,
         past: [...s.past, cur].slice(-HISTORY_LIMIT),
         future: s.future.slice(1),
         estimateResult: null,
@@ -1039,7 +1055,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     }))
   },
 
-  applyRerun: (newFeatures, mode = 'keep_manual') => {
+  applyRerun: (newFeatures, mode = 'keep_manual', plantingGrid) => {
     const s = get()
     const r = mergeManualEdits({
       prevFeatures: s.gaps,
@@ -1052,6 +1068,11 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((cur) =>
       commit(cur, '重跑合并', {
       gaps: r.features,
+      // R4：新一轮结果的算法网格必须与 gaps 在**同一次 commit** 里写入，
+      //     否则撤销重跑时 gaps 回到旧结果、网格却还是新的 —— 预览拿新网格
+      //     排旧要素的点（探针 61 vs 51 点、最远差 7.9 m），导出又走磁盘上的新网格。
+      //     省略第三参数则保持现状（其它调用方不用改）。
+      ...(plantingGrid !== undefined ? { plantingGrid: plantingGrid ?? null } : {}),
       // 合并完就换基线：删除记录换成**新基线里被合并丢掉的那些块**（2026-11-03 复审修）。
       // ⚠️ 以前直接清空 —— 同一会话第二次重跑时，第一次之前删掉的误报全部复活；
       //    而中途重启过的话，草稿恢复（applyDraft）会从基线重建删除记录，不会复活。

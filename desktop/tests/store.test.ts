@@ -8,7 +8,7 @@
  */
 import { useAppStore, selectVisibleGaps, recommendWorkers } from '../src/store/useAppStore'
 import { estimate } from '../src/lib/estimate'
-import type { GapClass, GapFeature, PolygonGeometry } from '../src/types'
+import type { GapClass, GapFeature, PlantingGrid, PolygonGeometry } from '../src/types'
 
 let failures = 0
 function check(ok: boolean, label: string, detail = ''): void {
@@ -233,6 +233,53 @@ console.log('\n⑥ 重跑合并（applyRerun）—— 删除与改判要能被�
   const st2 = S2.getState().applyRerun([feat('C1', 'open_patch', 111.2400, 1.1900)], 'overwrite')
   check(st2.replayed_deletes === 0 && st2.replayed_edits === 0, 'overwrite 不重放任何人工操作')
   check(S2.getState().gaps.length === 1, 'overwrite 只留算法结果', String(S2.getState().gaps.length))
+}
+
+// ---------- ⑥b R4：重跑必须刷新算法网格，撤销/重做要同进同退 ----------
+console.log('\n⑥b R4 重跑合并（applyRerun + plantingGrid）—— 网格与要素同进同退')
+{
+  const S4 = useAppStore
+  const gridOld: PlantingGrid = {
+    plant_pitch_m: 8.45, row_pitch_m: 7.32, skew_offset_m: 4.225,
+    row_azimuth_deg: 0.67, azimuth_deg: 0.67,
+    origin_x_m: 522700, origin_y_m: 131500,
+    anchor_lon: 111.2039, anchor_lat: 1.18999,
+  }
+  // 新一轮：方位从 0.67° 变成实测 58.98°，原点也变了
+  const gridNew: PlantingGrid = {
+    ...gridOld, row_azimuth_deg: 58.98, azimuth_deg: 58.98,
+    origin_x_m: 522702.3, quality: 0.527,
+  }
+  S4.getState().setGaps([feat('R4-A', 'open_patch', 111.2200, 1.1900)], gridOld)
+  S4.setState({ past: [], future: [] })       // 干净起点，不受前面几节影响
+  check(S4.getState().plantingGrid === gridOld, '初始 plantingGrid = 旧网格')
+
+  S4.getState().applyRerun([feat('R4-B', 'open_patch', 111.2200, 1.1900)],
+    'keep_manual', gridNew)
+  check(S4.getState().plantingGrid === gridNew,
+    '★ 重跑后 plantingGrid = 新结果的 planting_grid',
+    `方位 ${S4.getState().plantingGrid?.row_azimuth_deg}°`)
+  check(S4.getState().gaps[0]?.properties.gap_id === 'R4-B', '要素也换成新结果')
+
+  S4.getState().undo()
+  check(S4.getState().plantingGrid === gridOld, '★ 撤销重跑后回到旧网格',
+    `方位 ${S4.getState().plantingGrid?.row_azimuth_deg}°`)
+  check(S4.getState().gaps[0]?.properties.gap_id === 'R4-A', '撤销后要素回到旧结果')
+
+  S4.getState().redo()
+  check(S4.getState().plantingGrid === gridNew, '重做后网格回到新值')
+  check(S4.getState().gaps[0]?.properties.gap_id === 'R4-B', '重做后要素回到新结果')
+
+  // 省略第三参数时保持现状（其它调用方不用跟着改）
+  S4.getState().applyRerun([feat('R4-C', 'open_patch', 111.2200, 1.1900)], 'keep_manual')
+  check(S4.getState().plantingGrid === gridNew, '不传网格时保持现状（兼容其它调用方）')
+
+  // 新结果没有网格：显式 null 必须清掉旧网格，撤销还能还原
+  S4.getState().applyRerun([feat('R4-D', 'open_patch', 111.2200, 1.1900)],
+    'keep_manual', null)
+  check(S4.getState().plantingGrid === null, '显式 null 时清掉旧网格（不拿旧相位套新结果）')
+  S4.getState().undo()
+  check(S4.getState().plantingGrid === gridNew, '撤销后 null 也回退到上一份网格')
 }
 
 // ---------- 检测状态（P0 检测面板） ----------
