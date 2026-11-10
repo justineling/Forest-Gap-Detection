@@ -222,5 +222,25 @@ ov = sum(gs[i].intersection(gs[j]).area for i in range(len(gs)) for j in range(i
 check(ov < 1e-6, "★ 空地之间重叠面积 = 0", f"{ov:.6f} m²")
 check(abs(sum(g.area for g in gs) - unary_union(gs).area) < 1e-6, "逐块相加 = 并集（没有重复计数）")
 
+print("\nI. 反投影后自交的多边形：先修复再裁剪，修出几块就留几块")
+# 真实全幅数据（2026-11-04）：UTM 里有效的空地反投影回经纬度后自交，旧代码 buffer(0) 修成
+# MultiPolygon 后因"不是 Polygon"整块丢弃 —— 两种瓦片配置丢的块不同，总面积差 0.83%。
+# 这里用最极端的自交（蝴蝶结）：两个三角形只在一点相交。
+import shapely  # noqa: E402
+from shapely.geometry import Polygon  # noqa: E402
+
+for name, xl, xr in (("压在缝上", X0 + 0.0001, XM + 0.0001), ("完整落在 core 内", X0 + 0.00005, XM - 0.00005)):
+    bow = Polygon([(xl, Y0 + 0.0001), (xr, Y0 + 0.0003), (xr, Y0 + 0.0001), (xl, Y0 + 0.0003)])
+    truth = utm(shapely.make_valid(bow)).area
+    pieces = [t for core in (CORE_A, CORE_B) for t in PI._own_core(utm(bow), core, fwd, bwd)]
+    got = sum(p.area for _s, p, _seam in pieces)
+    check(all(s.geom_type == "Polygon" and s.is_valid for s, _p, _seam in pieces) and abs(got - truth) / truth < 1e-6,
+          f"★ {name}：碎块全是有效单多边形，面积 = 修复后面积", f"{got:.1f} vs {truth:.1f} m²（buffer(0) 只剩 {utm(bow.buffer(0)).area:.1f}）")
+    feats = tile_features("A", CORE_A, [bow]) + tile_features("B", CORE_B, [bow])
+    out = run(feats)
+    check(abs(sum(area_of(f) for f in out) - truth) / truth < 1e-6
+          and all(f["geometry"]["type"] == "Polygon" for f in out),
+          f"{name}：缝合后总面积不丢、每个要素仍是 Polygon", f"{len(out)} 块")
+
 print(f"\n{'✅ 全部通过' if failures == 0 else f'❌ {failures} 项失败'}")
 sys.exit(0 if failures == 0 else 1)

@@ -1731,6 +1731,148 @@ def summarize_priority(labels: Sequence[dict[str, Any]]
     return out
 
 
+
+# ============================================================================
+# CHM 树冠顶点 → 周期图格网 → 每块空地的局部相位（2026-11-04）
+# ============================================================================
+#
+# 为什么要这一套（实测，大疆 tree_info.json 的 16,544 个树心作独立评分）
+# ------------------------------------------------------------------
+# 旧网格（RGB 抽 7 块瓦片勘察，株距 8.45 m / 方位 0.67°）与真实树位**完全不相关**：
+# 树心落在格点 1.5 m 内只有 10.7%，随机撒点是 11.2%。原因有二：
+#   ① 参数本身偏了：树冠顶点的周期图给出株距 8.55 m、方位 59.0°（≡ −1.0°，与 10-17 细扫的
+#      "最优 59.0°"吻合）—— 旧值差 1.2% 和 1.67°，300 m 里就漂出半个株距；
+#   ② 园区分块种植，每块起点相位不同（台账 D4）—— 全局只用一个相位注定对不齐。
+# 用正确参数 + 每 80 m 各自定相位，对齐率升到 62.9%（3 m 内 88.5%）。
+#
+# 周期图只看"频率"不看"相位"：各种植块相位不同不影响峰的位置，所以参数可以全局估；
+# 相位则在每块空地周围单独求 —— 新苗本来就该与这块空地周围存活的树对齐。
+
+PERIODOGRAM_METHOD = "chm_periodogram"
+
+
+def chm_tree_tops(chm_path, to_crs: str = "EPSG:32649", step: int = 2,
+                  min_h: float = 3.0, min_dist_m: float = 4.0,
+                  smooth_m: float = 0.8) -> np.ndarray:
+    """CHM 局部极大值 = 树冠顶点，返回 ``(N, 2)`` 的目标坐标系坐标（米）。
+
+    ``step`` 是读 CHM 时的降采样倍数（CHM 本身约 26 cm/px，2 倍 ≈ 0.5 m 已足够定位树冠中心）。
+    """
+    import rasterio
+    from pyproj import Transformer
+    from scipy import ndimage as ndi
+
+    with rasterio.open(chm_path) as ds:
+        h = ds.read(1, out_shape=(max(1, ds.height // step), max(1, ds.width // step)),
+                    resampling=rasterio.enums.Resampling.average).astype(np.float32)
+        tr = ds.transform * ds.transform.scale(ds.width / h.shape[1], ds.height / h.shape[0])
+        crs = ds.crs
+    h = np.nan_to_num(h, nan=0.0)
+    px = abs(tr.a) * (111320.0 if (crs is None or crs.is_geographic) else 1.0)
+    hs = ndi.gaussian_filter(h, sigma=max(smooth_m / px, 0.5))
+    r = max(1, int(round(min_dist_m / 2 / px)))
+    peak = (hs == ndi.maximum_filter(hs, size=2 * r + 1)) & (hs >= min_h)
+    rr, cc = np.nonzero(peak)
+    if rr.size == 0:
+        return np.zeros((0, 2))
+    xs, ys = (np.asarray(v, dtype=float) for v in rasterio.transform.xy(tr, rr, cc))
+    t = Transformer.from_crs(crs or "EPSG:4326", to_crs, always_xy=True)
+    xs, ys = t.transform(xs, ys)
+    return np.column_stack([xs, ys])
+
+
+def _lattice_vectors(pitch: float, row: float, skew: float, az_deg: float):
+    """格网基矢 a1（沿行）、a2（跨行）与对偶倒格矢 k1、k2（k·a 为单位阵）。"""
+    a = np.radians(az_deg)
+    u = np.array([np.cos(a), np.sin(a)])
+    v = np.array([-np.sin(a), np.cos(a)])
+    a1 = pitch * u
+    a2 = skew * u + row * v
+    k1 = (u - (skew / row) * v) / pitch          # k1·a1 = 1, k1·a2 = 0
+    k2 = v / row                                 # k2·a1 = 0, k2·a2 = 1
+    return a1, a2, k1, k2
+
+
+def lattice_from_tops(tops: np.ndarray, kmag_range=(1 / 7.9, 1 / 6.8),
+                      max_points: int = 8000, seed: int = 0) -> dict[str, float] | None:
+    """二维周期图：在三个互成 60° 的倒格矢上找能量最大处 → 等边三角形格网的株距与方位。
+
+    返回 ``{pitch, row, skew, azimuth_deg, contrast}``；点太少返回 None。
+    ``contrast`` = 峰值能量 / 同半径环上的中位能量，衡量格网周期性有多强（随机点约 1~3）。
+    """
+    if tops is None or len(tops) < 200:
+        return None
+    rng = np.random.default_rng(seed)
+    P = tops[rng.choice(len(tops), min(len(tops), max_points), replace=False)]
+    P = P - P.mean(axis=0)
+
+    def energy(th: float, km: float) -> float:
+        e = 0.0
+        for d in (0.0, np.pi / 3, 2 * np.pi / 3):
+            k = km * np.array([np.cos(th + d), np.sin(th + d)])
+            e += abs(np.exp(2j * np.pi * (P @ k)).sum()) ** 2
+        return e / len(P)
+
+    best = (-1.0, 0.0, 0.0)
+    for th in np.radians(np.arange(0, 60, 0.5)):
+        for km in np.linspace(*kmag_range, 46):
+            e = energy(th, km)
+            if e > best[0]:
+                best = (e, th, km)
+    _, th0, km0 = best
+    for th in th0 + np.radians(np.linspace(-0.6, 0.6, 49)):
+        for km in np.linspace(km0 * 0.992, km0 * 1.008, 41):
+            e = energy(th, km)
+            if e > best[0]:
+                best = (e, th, km)
+    e_pk, th, km = best
+    ring = [energy(t, km) for t in np.radians(np.arange(0, 60, 2.5)) if abs(t - th) > np.radians(4)]
+    row = 1.0 / km
+    pitch = row / np.sin(np.radians(60))
+    return {
+        "pitch": float(pitch),
+        "row": float(row),
+        "skew": float(pitch / 2),
+        # 行方向 ⟂ 该倒格矢；等边三角形格网三个行方向等价，统一取 [0, 60)
+        "azimuth_deg": float((np.degrees(th) + 90.0) % 60.0),
+        "contrast": float(e_pk / max(np.median(ring), 1e-9)),
+    }
+
+
+def lattice_phase_origin(points: np.ndarray, pitch: float, row: float, skew: float,
+                         az_deg: float, ref: np.ndarray | None = None
+                         ) -> tuple[np.ndarray, float] | None:
+    """由点集在两个倒格矢上的傅里叶系数辐角求格网相位 → 一个格点坐标与相干度。
+
+    相干度 = 两个系数模长（已按点数归一化）的较小者：1 = 点全部落在格点上，0 = 毫无周期性。
+    返回的格点取离 ``ref``（默认点集重心）最近的那个，避免原点离数据区几百公里放大舍入误差。
+    """
+    if points is None or len(points) == 0:
+        return None
+    _a1, _a2, k1, k2 = _lattice_vectors(pitch, row, skew, az_deg)
+    c = points.mean(axis=0) if ref is None else np.asarray(ref, dtype=float)
+    Q = points - c
+    z1 = np.exp(2j * np.pi * (Q @ k1)).mean()
+    z2 = np.exp(2j * np.pi * (Q @ k2)).mean()
+    K = np.vstack([k1, k2])
+    off = np.linalg.solve(K, np.array([np.angle(z1), np.angle(z2)]) / (2 * np.pi))
+    return c + off, float(min(abs(z1), abs(z2)))
+
+
+def lattice_node_distance(xy: np.ndarray, origin: np.ndarray, pitch: float, row: float,
+                          skew: float, az_deg: float) -> np.ndarray:
+    """点到格网最近格点的距离（米）。"""
+    a1, a2, _k1, _k2 = _lattice_vectors(pitch, row, skew, az_deg)
+    A = np.column_stack([a1, a2])
+    g = np.linalg.solve(A, (np.atleast_2d(xy) - origin).T).T
+    best = np.full(len(g), np.inf)
+    base = np.floor(g)
+    for di in (0, 1):
+        for dj in (0, 1):
+            n = base + np.array([di, dj])
+            best = np.minimum(best, np.hypot(*((np.atleast_2d(xy) - origin) - n @ A.T).T))
+    return best
+
 # ============================================================================
 # 自检：合成测试
 # ============================================================================

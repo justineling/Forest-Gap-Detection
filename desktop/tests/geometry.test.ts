@@ -126,5 +126,48 @@ console.log('\nD. 质心不依赖绕向')
   check(distM(centroid(cw), ll(100, 50)) < 0.01, '外环顺时针画的单块：质心不变')
 }
 
+// ---------- E. 每块空地自己的格网相位（2026-11-04） ----------
+console.log('\nE. 有 lattice_origin_lonlat 时按空地自己的格网排坑 / 定株位')
+{
+  const pitch = 8.553
+  const row = pitch * Math.sin(Math.PI / 3)
+  const az = 58.975
+  const th = (az * Math.PI) / 180
+  // 局部格网原点：故意与全局原点错开半个株距 —— 全局原点下的格点会落在两行之间
+  const localO = ll(3.1, 1.7)
+  const node = (i: number, j: number): Position => {
+    const along = i * pitch + j * (pitch / 2)
+    const x = 3.1 + along * Math.cos(th) - j * row * Math.sin(th)
+    const y = 1.7 + along * Math.sin(th) + j * row * Math.cos(th)
+    return ll(x, y)
+  }
+  const onLattice = (p: Position): number => {
+    let best = Infinity
+    for (let i = -20; i <= 20; i++) for (let j = -20; j <= 20; j++) best = Math.min(best, distM(p, node(i, j)))
+    return best
+  }
+  const big: GapGeometry = { type: 'Polygon', coordinates: [ring([[-30, -30], [40, -30], [40, 40], [-30, 40]])] }
+  const f = feat('P1', big, 'open_patch')
+  f.properties.lattice_origin_lonlat = [localO[0], localO[1]]
+  const opts = { origin: ll(0, 0), clearance_m: 0.5, plant_pitch_m: pitch, row_pitch_m: row, azimuth_deg: az, skew_m: pitch / 2 }
+  const r = estimate([f], opts)
+  const worst = Math.max(...r.points.map((p) => onLattice([p.lon, p.lat])))
+  check(r.points.length > 20 && worst < 0.01, '★ 排坑点全部落在这块空地自己的格网上', `${r.points.length} 点，最大偏差 ${(worst * 100).toFixed(2)} cm`)
+
+  // 株位空缺：面内点不在格点上 → 吸附到落在空地里的最近格点（缺的那棵树原来的位置）
+  const n0 = node(2, 1)
+  const toM = (p: Position): [number, number] => [(p[0] - LON0) * MX, (p[1] - LAT0) * MY]
+  const [cx, cy] = toM(n0)
+  const slot: GapGeometry = { type: 'Polygon', coordinates: [ring([[cx - 2.5, cy - 1.8], [cx + 3.3, cy - 1.8], [cx + 3.3, cy + 2.9], [cx - 2.5, cy + 2.9]])] }
+  const s = feat('S1', slot, 'vacant_slot')
+  s.properties.lattice_origin_lonlat = [localO[0], localO[1]]
+  const rs = estimate([s], opts)
+  const p = rs.points[0]
+  check(rs.by_grid === 1 && distM([p.lon, p.lat], n0) < 0.01, '★ 株位点 = 落在空地里的最近格点', `${distM([p.lon, p.lat], n0).toFixed(3)} m`)
+  const s2 = feat('S2', slot, 'vacant_slot')
+  const r2 = estimate([s2], opts)
+  check(distM([r2.points[0].lon, r2.points[0].lat], n0) > 0.3, '对照：没有局部相位时仍取面内点（不吸附到不可信的全局格网）')
+}
+
 console.log(failures === 0 ? '\n✅ 全部通过' : `\n❌ ${failures} 项失败`)
 process.exit(failures === 0 ? 0 : 1)

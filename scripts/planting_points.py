@@ -245,13 +245,30 @@ def generate_planting_points(
             continue
         poly_utm = shp_transform(tr_to_utm.transform, poly_wgs)
 
+        # 这块空地自己的格网相位（finalize 时按周围树冠顶点定的，2026-11-04）；没有就用全局原点
+        g_here = grid
+        lo = pr.get("lattice_origin_utm")
+        if lo and hasattr(grid, "origin_x_m"):
+            import dataclasses as _dc
+            try:
+                g_here = _dc.replace(grid, origin_x_m=float(lo[0]), origin_y_m=float(lo[1]))
+            except TypeError:
+                g_here = grid
+
         if cls == "vacant_slot":
-            # 一个种植单元缺 1 棵树 → 固定 1 个点
+            # 一个种植单元缺 1 棵树 → 固定 1 个点。
+            # 有局部格网时取"离质心最近、且落在空地里的格点"—— 那正是缺的那棵树原来的位置，
+            # 与同一行的邻树对齐；否则退回质心 / 面内点。
             pt = _slot_point(poly_utm)
+            if lo:
+                gx, gy, _d = g_here.xy_to_grid(pt.x, pt.y)
+                nx, ny = g_here.node_at(int(round(gx)), int(round(gy)))
+                if poly_utm.contains(Point(nx, ny)):
+                    pt = Point(nx, ny)
             cand = [(pt.x, pt.y)]
             source = "slot"
         else:
-            cand = _grid_points_in(poly_utm, grid, clearance_m)
+            cand = _grid_points_in(poly_utm, g_here, clearance_m)
             source = "grid"
             if not cand:
                 # 负缓冲后为空，或枚举后无点 → 记为"窄条排不下"

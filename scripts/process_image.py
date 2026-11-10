@@ -105,6 +105,7 @@ from detect import (  # noqa: E402
     DEFAULT_EXG_PCT, DEFAULT_EXG_LO, DEFAULT_EXG_HI,
 )
 from grid_prior import (  # noqa: E402
+    chm_tree_tops, lattice_from_tops, lattice_phase_origin, PERIODOGRAM_METHOD,
     estimate_grid, gap_geometry, classify_gaps, GridModel,
     CLASS_VACANT_SLOT, CLASS_ALLEY_GAP, CLASS_OPEN_PATCH, CLASS_UNCERTAIN,
     CLASS_LABEL_CN, METHOD_PRIOR_FALLBACK, summarize_classes,
@@ -152,7 +153,108 @@ DEFAULT_JOB_NAME = "wgr17-full"
 #    几何原样保留（含 4.2 m 外扩带）；新版只保留 core 内那部分、跨缝的打 `_seam` 标记。
 #    不换指纹，新代码会把旧缓存的"整块几何"当成"core 内碎块"去缝合 —— 重复计数照旧，
 #    而且不报错。
-STITCH_VERSION = "core-clip-union-v1"
+#
+# v3（2026-11-04）：反投影后自交的多边形先修复再裁剪、修复出的 MultiPolygon 不再整块丢弃
+#    （旧缓存里这些块已经丢了，必须失效重算）。
+STITCH_VERSION = "core-clip-union-v3"
+
+# 像素类参数（--min-canopy-blob / --min-gap-blob / --overlap）的**参考分辨率**（2026-11-04）。
+#
+# 这些阈值是在 WGR17（3.3 cm/px）上标定的，写死成像素数意味着换一张 5 cm 的影像，
+# "最小树冠斑块 2000 px"就从 2.2 m² 变成 5.0 m² —— 判据随分辨率漂移且不报错
+# （评审文档 10-29 缺陷 G）。现在它们一律按"在 3.3 cm 参考分辨率下的像素数"解释，
+# 运行时按实际分辨率换算成本影像的像素数。参考影像上换算前后一致（±1 px）。
+REF_PX_M = 0.033
+
+
+def px_area_at(px_ref: float, px_m: float) -> int:
+    """参考分辨率下的"面积像素数" → 本影像的像素数（按面积换算）。"""
+    return max(1, int(round(px_ref * (REF_PX_M / px_m) ** 2)))
+
+
+def px_len_at(px_ref: float, px_m: float) -> int:
+    """参考分辨率下的"长度像素数" → 本影像的像素数（按长度换算）。"""
+    return max(0, int(round(px_ref * (REF_PX_M / px_m))))
+
+
+class ExgThresholdField:
+    """纯 RGB 回退模式的 ExG 阈值场：定义在**世界坐标**上，与瓦片无关（2026-11-04）。
+
+    为什么需要
+    ----------
+    结构法的阈值是 ``clip(ExG 的 pct 分位, lo, hi)`` —— 分位自适应各航带曝光（跨航带 ExG 中位
+    37~116，差 3 倍，见 detect.canopy_structural）。但分位原来是**在每块瓦片的读取窗口上**统计的：
+    同一个像素落在不同瓦片里，阈值就不同。实测没有分割图时，两种瓦片切法的空地对称差高达
+    29.8%。另外，窗口里影像外的黑色无数据像素（ExG=0）也被算进了分位，边缘瓦片阈值偏低。
+
+    做法
+    ----
+    以影像左上角为原点，每 ``node_px``（全分辨率像素，默认 512 ≈ 17 m）设一个节点；节点阈值 =
+    节点周围 ``window_px``（默认 2304 ≈ 76 m，与原瓦片读取区相当，保留原标定的"局部"尺度）
+    窗口内**有效像素**平滑 ExG 的 pct 分位，再 clip 到 [lo, hi]。每个像素按位置双线性插值。
+
+    统计在 1/``factor`` 降采样（默认 8 → 0.26 m）的金字塔上做：8×8 平均约等于 σ≈2.3 px 的平滑，
+    再补一个高斯把尺度对齐到原来全分辨率上的 σ=sigma px，无需另行标定。
+    """
+
+    def __init__(self, ds, pct: float, lo: float, hi: float, sigma: float,
+                 node_px: int = 512, window_px: int = 2304, factor: int = 8):
+        from scipy import ndimage as _ndi
+
+        self.node_px = int(node_px)
+        h, w = ds.height // factor, ds.width // factor
+        data = ds.read(indexes=[1, 2, 3], out_shape=(3, h, w),
+                       resampling=Resampling.average).astype(np.float32)
+        valid = ~np.all(data == 0, axis=0)
+        exg = 2 * data[1] - data[0] - data[2]
+        box_sd = factor / np.sqrt(12.0)
+        extra = float(np.sqrt(max(sigma ** 2 - box_sd ** 2, 0.0))) / factor
+        if extra > 0:
+            exg = _ndi.gaussian_filter(exg, sigma=extra)
+        ny = int(np.ceil(ds.height / self.node_px)) + 1
+        nx = int(np.ceil(ds.width / self.node_px)) + 1
+        half = window_px / 2 / factor
+        field = np.full((ny, nx), np.nan, dtype=np.float32)
+        for j in range(ny):
+            r0, r1 = int(max(0, j * self.node_px / factor - half)), int(min(h, j * self.node_px / factor + half))
+            for i in range(nx):
+                c0, c1 = int(max(0, i * self.node_px / factor - half)), int(min(w, i * self.node_px / factor + half))
+                if r1 <= r0 or c1 <= c0:
+                    continue
+                v = valid[r0:r1, c0:c1]
+                if v.mean() < 0.05:
+                    continue
+                field[j, i] = np.clip(np.percentile(exg[r0:r1, c0:c1][v], pct), lo, hi)
+        # 有效像素太少的节点（影像外缘）用最近的有效节点补
+        if np.isnan(field).all():
+            field[:] = (lo + hi) / 2
+        elif np.isnan(field).any():
+            idx = _ndi.distance_transform_edt(np.isnan(field), return_distances=False,
+                                              return_indices=True)
+            field = field[tuple(idx)]
+        self.field = field
+
+    def window(self, win) -> np.ndarray:
+        """返回覆盖正射窗口 ``win`` 的逐像素阈值（双线性插值）。"""
+        from scipy import ndimage as _ndi
+
+        rows = (np.arange(int(win.height), dtype=np.float32) + win.row_off) / self.node_px
+        cols = (np.arange(int(win.width), dtype=np.float32) + win.col_off) / self.node_px
+        rr, cc = np.meshgrid(rows, cols, indexing="ij")
+        return _ndi.map_coordinates(self.field, [rr, cc], order=1, mode="nearest").astype(np.float32)
+
+
+def build_exg_field(ds, args, use_elevation_seg: bool):
+    """只有"纯 RGB 判据真的会生效"时才建阈值场：有分割图时光学证据由分割替代，阈值不参与结果。"""
+    if use_elevation_seg or getattr(args, "exg_threshold", None) is not None:
+        return None
+    return ExgThresholdField(ds, args.pct, args.exg_lo, args.exg_hi, args.sigma)
+
+
+# 共享边界简化（coverage_simplify，Visvalingam–Whyatt）的容差 = simplify_m × 本系数。
+# 实测三块真实瓦片：VW 0.25 与旧 DP 0.3 m 的顶点数相当（多 15%~80%），面积偏差从
+# −4.5% / −0.12% / −0.64% 降到 −1.35% / −0.05% / −0.40%（DP 拉直锯齿时会系统性削掉凹形小空地）。
+VW_PER_DP = 0.25 / 0.3
 
 
 # ============================================================================
@@ -626,6 +728,53 @@ def survey_grid(ds, tiles: list[Tile], px_m: float, sample_n: int = 7,
 # 判定"贴着 core 边"的容差（源坐标系单位；经纬度下 1e-8° ≈ 1.1 mm）
 _SEAM_EPS = 1e-8
 
+def _clean_simplified(g, original, simplify_m: float):
+    """清洗 coverage_simplify 的单个结果：丢掉被压扁的洞；外环退化或出任何异常时，
+    这一个多边形退回旧的单独 Douglas-Peucker 简化（宁可局部退回旧行为，也不能丢整块瓦片）。
+
+    ⚠️ 为什么必须有（2026-11-04 全幅实测）：Visvalingam–Whyatt 偶尔把很小的洞压成只剩
+       3 个坐标的退化环，下游重建多边形时 GEOS 抛 "Invalid number of points in LinearRing" ——
+       整块瓦片处理失败、结果直接缺一块（1536 配置下丢了约 3,300 m² 连片空地）。
+    """
+    import shapely as _shp
+    from shapely.geometry import Polygon as _Poly
+
+    try:
+        if g is None or g.is_empty or g.geom_type != "Polygon":
+            raise ValueError("非多边形")
+        ext = list(g.exterior.coords)
+        if len(ext) < 4:
+            raise ValueError("外环退化")
+        holes = [list(r.coords) for r in g.interiors if len(r.coords) >= 4]
+        out = _Poly(ext, holes)
+        if not out.is_valid:
+            out = _shp.make_valid(out)
+            if out.geom_type != "Polygon" or out.is_empty:
+                raise ValueError("清洗后不是单个多边形")
+        return out
+    except Exception:  # noqa: BLE001
+        return original.simplify(simplify_m, preserve_topology=True)
+
+
+def _coverage_simplify_safe(raw_polys: list[tuple[int, object]], simplify_m: float
+                            ) -> list[tuple[int, object]]:
+    """共享边界一起简化；整次调用失败时退回逐个 DP 简化（旧行为）。"""
+    import shapely as _shp
+
+    geoms = [g for _, g in raw_polys]
+    try:
+        simp = _shp.coverage_simplify(np.array(geoms, dtype=object),
+                                      tolerance=simplify_m * VW_PER_DP)
+    except Exception:  # noqa: BLE001
+        return [(v, g.simplify(simplify_m, preserve_topology=True)) for v, g in raw_polys]
+    return [(v, _clean_simplified(s, g, simplify_m)) for (v, g), s in zip(raw_polys, simp)]
+
+
+# 唯一标签栅格的编码（空地 / 三类不可种植地物；三类掩膜互斥，空地已按像素扣除）
+_LAB_GAP = 1
+_LAB_CODES = {"water": 2, "road": 3, "office": 4}
+_LAB_CLASS = {v: k for k, v in _LAB_CODES.items()}
+
 
 def _own_core(g_utm, core_box, fwd, bwd) -> list[tuple]:
     """唯一所有权：只保留落在本瓦片 core 内的几何（2026-11-04）。
@@ -645,22 +794,60 @@ def _own_core(g_utm, core_box, fwd, bwd) -> list[tuple]:
     import shapely
 
     g_src = shp_transform(bwd, g_utm)
-    if g_src.within(core_box) and g_src.distance(core_box.exterior) > _SEAM_EPS:
+    if g_src.is_valid and g_src.within(core_box) and g_src.distance(core_box.exterior) > _SEAM_EPS:
         return [(g_src, g_utm, False)]
+    # ⚠️ 反投影可能让 UTM 里有效的多边形自交（两个近乎相切的顶点在经纬度里交叉）。
+    #    **必须先修复再裁剪**：clip_by_rect 对无效输入的结果没有定义 —— 实测一个 738 m² 的
+    #    自交多边形被裁出 8,116 m²。修复后可能是多块，统一走碎块路径，由 stitch_seams 合并、
+    #    重新分类（输出仍保证每个要素是单个 Polygon）。
+    if not g_src.is_valid:
+        g_src = shapely.MultiPolygon(_polygon_parts(shapely.make_valid(g_src)))
+        if g_src.is_empty:
+            return []
     xmin, ymin, xmax, ymax = core_box.bounds
-    clipped = shapely.clip_by_rect(g_src, xmin, ymin, xmax, ymax)
+    # ⚠️ GEOS 的矩形裁剪对个别几何（简化后自相接触的环等）会在内部生成退化环并抛
+    #    "Invalid number of points in LinearRing" —— 不兜住的话整块瓦片处理失败、结果缺一块
+    #    （2026-11-04 全幅 1536 配置实测踩到）。先修复再裁，仍失败退回通用求交。
+    try:
+        clipped = shapely.clip_by_rect(g_src, xmin, ymin, xmax, ymax)
+    except Exception:  # noqa: BLE001
+        try:
+            clipped = shapely.clip_by_rect(shapely.make_valid(g_src), xmin, ymin, xmax, ymax)
+        except Exception:  # noqa: BLE001
+            clipped = shapely.make_valid(g_src).intersection(core_box)
     out: list[tuple] = []
-    for part in getattr(clipped, "geoms", [clipped]):
-        if part.is_empty or part.geom_type != "Polygon":
-            continue
-        if not part.is_valid:
-            part = part.buffer(0)
-            if part.is_empty or part.geom_type != "Polygon":
-                continue
+    for part in _polygon_parts(clipped):
         piece = shp_transform(fwd, part)
         if piece.area <= 0:
             continue
         out.append((part, piece, True))
+    return out
+
+
+def _polygon_parts(g) -> list:
+    """把任意几何拆成**有效的**单多边形列表；无效的先 make_valid 再拆，一块面积都不丢。
+
+    ⚠️ 为什么不能"修复后不是 Polygon 就跳过"（2026-11-04 全幅实测）：
+       UTM 里有效的多边形，反投影回经纬度后两个近乎相切的顶点可能交叉（Self-intersection）。
+       旧代码 ``part.buffer(0)`` 把它正确修成了 **两块的 MultiPolygon**（面积 1,838 m² 一分不少），
+       紧接着却因为 ``geom_type != "Polygon"`` 整块丢掉 —— 两种瓦片配置下丢的块不同，
+       是 2048 / 1536 两次结果总面积差 0.83% 的主因（最大两块 1,841 m²、576 m²）。
+    """
+    import shapely
+
+    out = []
+    for part in getattr(g, "geoms", [g]):
+        if part.is_empty:
+            continue
+        if part.geom_type in ("MultiPolygon", "GeometryCollection"):
+            out.extend(_polygon_parts(part))
+            continue
+        if part.geom_type != "Polygon":
+            continue                       # 裁剪留下的线 / 点：零面积，不是空地
+        if part.is_valid:
+            out.append(part)
+        else:
+            out.extend(p for p in _polygon_parts(shapely.make_valid(part)) if p.is_valid)
     return out
 
 
@@ -756,10 +943,14 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
 
     # --- 树冠掩膜 ---
     canopy = canopy_structural(rgb, sigma=args.sigma, pct=args.pct,
-                               min_blob_px=args.min_canopy_blob, quiet=True,
+                               min_blob_px=px_area_at(args.min_canopy_blob, px_m), quiet=True,
                                exg_threshold=args.exg_threshold,
                                use_saturation=args.use_saturation,
-                               exg_lo=args.exg_lo, exg_hi=args.exg_hi) & valid
+                               exg_lo=args.exg_lo, exg_hi=args.exg_hi,
+                               thr_map=(args.exg_field.window(win_buf)
+                                        if getattr(args, "exg_field", None) is not None
+                                        else None),
+                               px_m=px_m) & valid
 
     # --- 海拔证据融合（2026-10-15）-----------------------------------------
     # 为什么需要：草地与油棕在**纯 RGB** 上被实测证明不可分 —— ExG 区间完全重叠
@@ -805,7 +996,8 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
         gap_units = gap
     else:
         gap_units = separate_gap_units(gap, args.min_gap_width_m, px_m,
-                                       min_blob_px=args.min_gap_blob, quiet=True)
+                                       min_blob_px=px_area_at(args.min_gap_blob, px_m),
+                                       quiet=True)
 
     # --- 矢量化（在投影系下算面积 + 简化）---
     aff_buf = win_transform(win_buf, ds.transform)
@@ -850,45 +1042,45 @@ def process_tile(ds, tile: Tile, px_m: float, grid: GridModel,
         masks = detect_unplantable(rgb, valid, px_m, lc_params, seg=seg_w)
         union = masks["road"] | masks["water"] | masks["office"]
         gap_units = gap_units & ~union        # ← 关键：按像素扣除，不整块改判
-        for cls in ("water", "road", "office"):
-            mk = masks[cls]
-            if not mk.any():
+    else:
+        masks = {}
+
+    # --- 唯一标签栅格 → 一次矢量化 → 共享边界一起简化（2026-11-04）---------
+    # 以前空地与道路/水体/办公区各自矢量化、各自 simplify(0.3)：相邻两类在同一条边界上
+    # 各拉各的直线，互相压出亚米级细丝（全幅跨类重叠 288 m²，评审文档 10.9 节 P1）。
+    # 现在把四类写进一张标签栅格（三类掩膜互斥、空地已按像素扣除，天然不重叠），
+    # 只矢量化一次 —— 相邻地物的边界来自同一次描边；再用 coverage_simplify 让共享边
+    # 只简化一次、两侧一起动。附带好处：Visvalingam–Whyatt 比 Douglas-Peucker 更保面积。
+    label = np.zeros(gap_units.shape, dtype=np.uint8)
+    label[gap_units] = _LAB_GAP
+    for cls, code in _LAB_CODES.items():
+        if cls in masks:
+            label[masks[cls]] = code
+    raw_polys: list[tuple[int, object]] = []
+    for geom, val in rio_shapes(label, mask=label > 0, transform=aff_buf):
+        g = shape(geom)
+        if not g.is_empty:
+            raw_polys.append((int(val), shp_transform(fwd, g)))
+    if raw_polys and args.simplify_m > 0:
+        raw_polys = _coverage_simplify_safe(raw_polys, args.simplify_m)
+
+    for code, g_utm in raw_polys:
+        if code == _LAB_GAP or g_utm.is_empty:
+            continue
+        cls = _LAB_CLASS[code]
+        # 唯一所有权：只输出 core 内那部分（理由见 _own_core / stitch_seams）
+        for g_src, piece, seam in _own_core(g_utm, core_box, fwd, bwd):
+            a = float(piece.area)
+            if not seam and a < args.min_area:
                 continue
-            # ⚠️ 试过「先在栅格层面按 min_area 粗筛连通域再矢量化」，实测是**负优化**：
-            #    掩膜连通域绝大多数本来就 > min_area（30 m²），粗筛几乎筛不掉东西，
-            #    反而多付了 ndi.label + bincount + 全图布尔索引的开销
-            #    （整幅从 1336 s 涨到 2400+ s）。故不采用。
-            for geom, val in rio_shapes(mk.astype(np.uint8), mask=mk,
-                                        transform=aff_buf):
-                if int(val) != 1:
-                    continue
-                g = shape(geom)
-                if g.is_empty:
-                    continue
-                g_utm = shp_transform(fwd, g)
-                if args.simplify_m > 0:
-                    g_utm = g_utm.simplify(args.simplify_m, preserve_topology=True)
-                # 唯一所有权：只输出 core 内那部分（理由见 _own_core / stitch_seams）
-                for g_src, piece, seam in _own_core(g_utm, core_box, fwd, bwd):
-                    a = float(piece.area)
-                    if not seam and a < args.min_area:
-                        continue
-                    gid = f"{tile.tile_id}-U{len(unplantable_polys)+1:04d}"
-                    unplantable_polys.append((gid, piece, a, cls, g_src, seam))
-                    unplantable_stats[cls] = unplantable_stats.get(cls, 0.0) + a
+            gid = f"{tile.tile_id}-U{len(unplantable_polys)+1:04d}"
+            unplantable_polys.append((gid, piece, a, cls, g_src, seam))
+            unplantable_stats[cls] = unplantable_stats.get(cls, 0.0) + a
 
     polys_utm: list[tuple[str, object, float]] = []
-    n_dim = int(min(gap_units.sum(), 1e12))
-    for gi, (geom, val) in enumerate(rio_shapes(gap_units.astype(np.uint8),
-                                                mask=gap_units, transform=aff_buf)):
-        if int(val) != 1:
+    for code, g_utm in raw_polys:
+        if code != _LAB_GAP or g_utm.is_empty:
             continue
-        g = shape(geom)
-        if g.is_empty:
-            continue
-        g_utm = shp_transform(fwd, g)
-        if args.simplify_m > 0:
-            g_utm = g_utm.simplify(args.simplify_m, preserve_topology=True)
         # --- 归属判定：唯一所有权（2026-11-04 改）---
         # 旧做法"质心落在本瓦片 core 才输出、几何原样保留"会把 4.2 m 外扩带一起带出去：
         # 比外扩带宽的空地，两块瓦片各输出一次（质心各在各的 core 里），
@@ -1102,7 +1294,8 @@ def build_argparser() -> argparse.ArgumentParser:
     # --- 分块参数 ---
     ap.add_argument("--tile-size", type=int, default=2048, help="瓦片边长（像素），默认 2048")
     ap.add_argument("--overlap", type=int, default=128,
-                    help="瓦片外扩（像素），避免边界切断空地。默认 128 px ≈ 4.2 m")
+                    help="瓦片外扩（按 3.3 cm 参考分辨率计的像素，运行时按实际分辨率换算），"
+                         "避免边界切断空地。默认 128 px ≈ 4.2 m")
     ap.add_argument("--limit", type=int, default=None, help="只处理前 N 个瓦片（试跑用）")
     ap.add_argument("--force", action="store_true", help="忽略已有瓦片缓存，全部重算")
     ap.add_argument("--merge-only", action="store_true", help="只合并已有瓦片，不处理")
@@ -1132,9 +1325,9 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--no-saturation", action="store_true",
                     help="关闭饱和度辅助（默认开启）")
     ap.add_argument("--min-canopy-blob", type=int, default=2000,
-                    help="树冠掩膜最小连通块（像素）")
+                    help="树冠掩膜最小连通块（按 3.3 cm 参考分辨率计的像素，自动换算；默认 ≈2.2 m²）")
     ap.add_argument("--min-gap-blob", type=int, default=200,
-                    help="空地分离后最小连通块（像素）")
+                    help="空地分离后最小连通块（按 3.3 cm 参考分辨率计的像素，自动换算；默认 ≈0.22 m²）")
     ap.add_argument("--min-gap-width-m", type=float, default=1.6)
     ap.add_argument("--no-separate", action="store_true", help="关闭空地分离")
 
@@ -1290,7 +1483,8 @@ def main() -> int:
     log(f"地面分辨率 {px_m*100:.2f} cm/像素   覆盖 {area_ha:.1f} 公顷")
 
     # --- 瓦片规划 ---
-    all_tiles = plan_tiles(ds.width, ds.height, args.tile_size, args.overlap)
+    # overlap 按参考分辨率换算（见 REF_PX_M）
+    all_tiles = plan_tiles(ds.width, ds.height, args.tile_size, px_len_at(args.overlap, px_m))
     total_all = len(all_tiles)
 
     # 有数据的瓦片排前面（园区是不规则多边形，先剔除大片 NoData）
@@ -1363,6 +1557,8 @@ def main() -> int:
             f"方位 {grid.row_azimuth_deg:.4f}° / 质量 {grid.quality:.3f}")
         report = {"source": "grid-from", "path": str(args.grid_from),
                   "requested": 0, "probed": 0, "used": 0, "samples": []}
+    elif (_chm_grid := grid_from_chm(args)) is not None:
+        grid, report = _chm_grid
     else:
         grid, report = survey_grid(ds, survey_tiles, px_m, sample_n=args.survey_samples,
                                    prior_pitch_m=args.prior_pitch_m,
@@ -1409,6 +1605,12 @@ def main() -> int:
                     f"否决阈值 {elev_params.veto_chm:g} m")
                 if elevation.available and not args.no_grass_recheck:
                     log("  （已启用海拔证据 → 自动跳过草地回检）")
+
+    # --- 纯 RGB 回退时的 ExG 阈值场（世界坐标，与瓦片无关）---
+    args.exg_field = build_exg_field(
+        ds, args, use_elevation_seg=bool(elevation is not None and elevation.has_segment()))
+    if args.exg_field is not None:
+        log("无语义分割 → 结构法阈值改用世界坐标阈值场（与瓦片怎么切无关）")
 
     # --- 逐瓦片处理 ---
     done = skipped = failed = 0
@@ -1807,8 +2009,7 @@ def stitch_seams(features: list[dict], grid: GridModel, args, src_crs
         pieces = [shape(f["geometry"]) for f in fs]
         tree = STRtree(pieces)
         merged = unary_union(pieces)
-        parts = [g for g in getattr(merged, "geoms", [merged])
-                 if g.geom_type == "Polygon" and not g.is_empty]
+        parts = _polygon_parts(merged)     # 同 _own_core：修复后不丢 MultiPolygon 里的任何一块
         new_items: list[tuple[str, object, object, float, int]] = []
         for m in parts:
             m_utm = shp_transform(fwd, m)
@@ -1851,6 +2052,127 @@ def stitch_seams(features: list[dict], grid: GridModel, args, src_crs
     return kept + stitched, info
 
 
+# 周期图对比度下限：随机点约 8，真实三角形种植园实测 ~1,000；低于此值说明不是规整种植，退回旧勘察
+LATTICE_MIN_CONTRAST = 50.0
+# 局部相位：空地周围多大范围内的树冠顶点参与定相位、至少要多少个、相干度下限
+LATTICE_RADIUS_M = 40.0
+LATTICE_MIN_TOPS = 12
+LATTICE_MIN_COHERENCE = 0.2
+
+
+def grid_from_chm(args, say=None) -> tuple[GridModel, dict] | None:
+    """用 CHM 树冠顶点的二维周期图估全局格网参数（2026-11-04；CLI 与 sidecar 共用）。
+
+    旧勘察（RGB 抽 7 块瓦片拟合树心）与真实树位完全不相关（见 grid_prior 里
+    "CHM 树冠顶点 → 周期图格网" 一节的实测）。有 CHM 时用本函数；没有 CHM、或周期性不够强
+    （不是规整种植园）时返回 None，调用方退回旧勘察。
+
+    全局原点只作兜底与前端锚点：园区分块种植、各块相位不同，真正用于分类与放样的是
+    ``finalize_features`` 里每块空地自己的局部相位。顶点数组挂在 ``args._lattice_tops`` 上复用。
+    """
+    say = say or log
+    chm = getattr(args, "chm", None)
+    if getattr(args, "no_elevation", False) or not chm or not Path(chm).exists():
+        return None
+    tops = chm_tree_tops(chm, TARGET_CRS)
+    lat = lattice_from_tops(tops)
+    if lat is None or lat["contrast"] < LATTICE_MIN_CONTRAST:
+        say(f"CHM 周期图对比度不足（{(lat or {}).get('contrast', 0):.0f} < {LATTICE_MIN_CONTRAST:g}），"
+            "退回 RGB 网格勘察")
+        return None
+    pitch, row, skew, az = lat["pitch"], lat["row"], lat["skew"], lat["azimuth_deg"]
+    ref = np.median(tops, axis=0)
+    origin, _coh = lattice_phase_origin(tops, pitch, row, skew, az, ref=ref)
+    # 质量 = 局部相干度的中位数（每 160 m 抽一个 80 m 窗口）：全局相干度会被分块相位拉低，不代表格网本身好坏
+    from scipy.spatial import cKDTree
+    kd = cKDTree(tops)
+    cohs = []
+    lo, hi = tops.min(axis=0), tops.max(axis=0)
+    for x in np.arange(lo[0], hi[0], 160.0):
+        for y in np.arange(lo[1], hi[1], 160.0):
+            idx = kd.query_ball_point((x, y), 40.0)
+            if len(idx) >= LATTICE_MIN_TOPS:
+                cohs.append(lattice_phase_origin(tops[idx], pitch, row, skew, az, ref=(x, y))[1])
+    q = float(np.median(cohs)) if cohs else 0.3
+    grid = GridModel(
+        plant_pitch_m=pitch, row_pitch_m=row, skew_offset_m=skew,
+        origin_x_m=float(origin[0]), origin_y_m=float(origin[1]), row_azimuth_deg=az,
+        quality=q, method=PERIODOGRAM_METHOD, density_per_ha=1e4 / (pitch * row),
+        node_count=int(len(tops)), regularity=q,
+        notes=(f"CHM 树冠顶点 {len(tops)} 个的二维周期图（对比度 {lat['contrast']:.0f}）；"
+               f"相位按每块空地周围 {LATTICE_RADIUS_M:g} m 内的顶点单独求（局部相干度中位 {q:.2f}）"),
+    )
+    args._lattice_tops = tops
+    say(f"格网（CHM 周期图）：株距 {pitch:.3f} m / 行距 {row:.3f} m / 方位 {az:.3f}° / "
+        f"对比度 {lat['contrast']:.0f} / 局部相干度中位 {q:.2f}（{len(tops):,} 个树冠顶点）")
+    report = {"source": PERIODOGRAM_METHOD, "tops": int(len(tops)),
+              "contrast": round(lat["contrast"], 1), "local_coherence_median": round(q, 3),
+              "requested": 0, "probed": 0, "used": int(len(tops)), "samples": []}
+    return grid, report
+
+
+def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_crs,
+                               say=None) -> list[dict]:
+    """每块空地用**它周围**的树冠顶点单独定格网相位，再按这张局部格网重新分类（2026-11-04）。
+
+    写入 ``lattice_origin_utm`` / ``lattice_origin_lonlat`` / ``lattice_coherence`` /
+    ``lattice_support``；周围顶点太少或相干度太低的，``lattice_phase = "global"``（用全局原点）。
+    分类判据不变（``classify_gaps``），变的只是"格点在哪"—— 株位空缺的判定与放样点从此对准真实树位。
+    """
+    import dataclasses as _dc
+
+    import shapely as _shp
+    from scipy.spatial import cKDTree
+
+    say = say or log
+    tops = getattr(args, "_lattice_tops", None)
+    if tops is None or len(tops) == 0 or grid.method != PERIODOGRAM_METHOD:
+        return features
+    kd = cKDTree(tops)
+    to_utm = Transformer.from_crs(src_crs, TARGET_CRS, always_xy=True)
+    to_ll = Transformer.from_crs(TARGET_CRS, src_crs, always_xy=True)
+    pitch, row, skew, az = (grid.plant_pitch_m, grid.row_pitch_m,
+                            grid.skew_offset_m, grid.row_azimuth_deg)
+    n_local = n_global = 0
+    out = []
+    for f in features:
+        pr = f["properties"]
+        if pr["class"] not in PLANTABLE_GAP_CLASSES:
+            out.append(f)
+            continue
+        g_utm = shp_transform(lambda x, y, z=None: to_utm.transform(x, y), shape(f["geometry"]))
+        c = np.array(g_utm.centroid.coords[0])
+        ring = np.asarray(g_utm.exterior.coords) if g_utm.geom_type == "Polygon" else c[None]
+        rad = float(np.max(np.hypot(*(ring - c).T)))
+        idx = kd.query_ball_point(c, rad + LATTICE_RADIUS_M)
+        res = (lattice_phase_origin(tops[idx], pitch, row, skew, az, ref=c)
+               if len(idx) >= LATTICE_MIN_TOPS else None)
+        if res is not None and res[1] >= LATTICE_MIN_COHERENCE:
+            o, coh = res
+            g_loc = _dc.replace(grid, origin_x_m=float(o[0]), origin_y_m=float(o[1]))
+            lon, lat = to_ll.transform(float(o[0]), float(o[1]))
+            extra = {"lattice_phase": "local",
+                     "lattice_origin_utm": [round(float(o[0]), 3), round(float(o[1]), 3)],
+                     "lattice_origin_lonlat": [round(float(lon), 9), round(float(lat), 9)],
+                     "lattice_coherence": round(float(coh), 3),
+                     "lattice_support": int(len(idx))}
+            n_local += 1
+        else:
+            g_loc = grid
+            extra = {"lattice_phase": "global", "lattice_support": int(len(idx))}
+            n_global += 1
+        area = float(pr.get("area_sqm") or g_utm.area)
+        lab = classify_gaps([gap_geometry(g_utm, pr["gap_id"], area)], g_loc,
+                            **classify_kwargs(args))[0]
+        keep = {k: pr[k] for k in ("seam_pieces", "mask_split") if k in pr}
+        feat = _gap_feature(pr["gap_id"], g_utm, area, lab, _shp.geometry.shape(f["geometry"]))
+        feat["properties"].update(keep)
+        feat["properties"].update(extra)
+        out.append(feat)
+    say(f"局部格网相位：{n_local} 块空地用周围树冠顶点定相位，{n_global} 块周围树太少退回全局相位")
+    return out
+
+
 def finalize_features(features: list[dict], grid: GridModel, args, src_crs,
                       say=None) -> tuple[list[dict], dict, float]:
     """瓦片结果 → 交付要素的**唯一**后处理入口（CLI 与桌面端 sidecar 共用）。
@@ -1872,6 +2194,8 @@ def finalize_features(features: list[dict], grid: GridModel, args, src_crs,
         features, _a, n_msk, a_msk = _apply_forest_mask(
             features, args.forest_mask, 0.0, say=say, grid=grid, args=args,
             src_crs=src_crs)
+    # 最后一步：每块空地按自己周围的树定格网相位并重新分类（没有 CHM 格网时原样返回）
+    features = relabel_with_local_lattice(features, grid, args, src_crs, say=say)
     class_totals = {c: 0 for c in CLASS_LABEL_CN}
     for f in features:
         k = f["properties"]["class"]

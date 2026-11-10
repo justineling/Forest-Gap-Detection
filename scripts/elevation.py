@@ -123,8 +123,16 @@ class ElevationEvidence:
         return win_bounds(win, self.ortho_transform)
 
     def _read_aligned(self, ds, win: Window, shape: tuple[int, int],
-                      resampling: Resampling) -> np.ndarray | None:
-        """在指定数据集上读取与正射窗口对应的区域，重采样到 shape。"""
+                      resampling: Resampling, fill: float) -> np.ndarray | None:
+        """把数据集重采样到"正射窗口的像素网格"上（逐像素按地理位置对齐）。
+
+        ⚠️ 2026-11-04 改为 ``reproject``：旧实现先把源窗口**取整到整像素**（floor / ceil）
+           再整体拉伸到目标形状 —— CHM / 分割的像素约 25 cm，于是证据相对影像错位最多约
+           半个源像素（≈13 cm），且错位量取决于这块瓦片的边界落在源像素的哪个位置。
+           换一种瓦片切法，所有空地边界都跟着抖：实测两种切法的空地并集总量只差 0.009%，
+           对称差却有 12,682 m²、散成 5,375 片，且**不集中在瓦片缝附近**。
+           现在每个目标像素按它的**中心坐标**去源栅格取值，结果只取决于地面位置，与窗口无关。
+        """
         if ds is None:
             return None
         b = self._to_geo_bounds(win)
@@ -132,19 +140,31 @@ class ElevationEvidence:
             w = from_bounds(*b, transform=ds.transform)
         except Exception:
             return None
-        # 裁到数据集范围内
-        c0 = max(0, int(np.floor(w.col_off)))
-        r0 = max(0, int(np.floor(w.row_off)))
-        c1 = min(ds.width, int(np.ceil(w.col_off + w.width)))
-        r1 = min(ds.height, int(np.ceil(w.row_off + w.height)))
+        # 源窗口多取 2 个像素的边，保证双线性插值在边缘也有邻居；再裁到数据集范围内
+        c0 = max(0, int(np.floor(w.col_off)) - 2)
+        r0 = max(0, int(np.floor(w.row_off)) - 2)
+        c1 = min(ds.width, int(np.ceil(w.col_off + w.width)) + 2)
+        r1 = min(ds.height, int(np.ceil(w.row_off + w.height)) + 2)
         if c1 <= c0 or r1 <= r0:
             return None
         src = Window(c0, r0, c1 - c0, r1 - r0)
         try:
-            arr = ds.read(1, window=src, out_shape=shape, resampling=resampling)
+            from rasterio.warp import reproject
+            from rasterio.windows import transform as _win_tr
+
+            arr_src = ds.read(1, window=src)
+            out = np.full(shape, fill, dtype=np.float32 if np.isnan(fill) else arr_src.dtype)
+            crs = ds.crs or self.segment_crs
+            src_nodata = ds.nodata if ds.nodata is not None else (
+                np.nan if np.issubdtype(arr_src.dtype, np.floating) else None)
+            reproject(arr_src, out,
+                      src_transform=ds.window_transform(src), src_crs=crs,
+                      dst_transform=_win_tr(win, self.ortho_transform), dst_crs=crs,
+                      resampling=resampling, src_nodata=src_nodata,
+                      dst_nodata=fill)
         except Exception:
             return None
-        return arr
+        return out
 
     # ------------------------------------------------------------------
     def read(self, win: Window, shape: tuple[int, int]):
@@ -156,14 +176,14 @@ class ElevationEvidence:
         chm_out = None
         seg_out = None
 
-        a = self._read_aligned(self.chm, win, shape, Resampling.bilinear)
+        a = self._read_aligned(self.chm, win, shape, Resampling.bilinear, np.nan)
         if a is not None:
             chm_out = a.astype(np.float32)
             # DSM 的 nodata 是 -9999；同时把非有限值置 NaN
             chm_out[chm_out <= -9000] = np.nan
             chm_out[~np.isfinite(chm_out)] = np.nan
 
-        b = self._read_aligned(self.seg, win, shape, Resampling.nearest)
+        b = self._read_aligned(self.seg, win, shape, Resampling.nearest, SEG_NODATA)
         if b is not None:
             seg_out = b.astype(np.uint8)
 
@@ -230,9 +250,13 @@ def fuse_canopy(base_canopy: np.ndarray,
     else:
         canopy = optical
 
-    # 无有效高度处不可判为树冠（避免边缘假阳性）
+    # 无有效高度处 = **缺证据**，不是"非树"（2026-11-04 改，评审文档 10-29 缺陷 D）。
+    # 旧做法 `canopy &= isfinite(chm)` 是单边先验：DSM 空洞、去尖刺留下的 NaN、阴影处
+    # 一律被推成"非树" → 变成空地候选。现在 NaN 处既不救援也不否决，交给光学证据
+    # （有分割用分割，否则用 RGB）。水面不受影响：build_chm 把水面置 NaN，而分割在那里
+    # 本来就不是"树"，水体另由 detect_water（含 seg==water）按像素扣除。
     if has_chm:
-        canopy = canopy & np.isfinite(chm)
+        stats["chm_missing_px"] = int((~np.isfinite(chm)).sum())
 
     stats["enabled"] = True
     stats["canopy_before"] = int(base_canopy.sum())

@@ -261,6 +261,14 @@ def main() -> int:
     )
     rec("stitch", ok, dt)
 
+    # ---- 12c. 周期图格网 + 局部相位（2026-11-04）----
+    # 守的是"格网与真实树位不相关"（旧网格对齐率 = 随机撒点）：株距 / 方位能从分块相位不同的
+    # 点集里恢复，局部相位能对准各自的种植块。纯合成点集，秒级，进 --fast。
+    print("\n[12c] 周期图格网 + 局部相位（株距 / 方位 / 分块相位）")
+    ok, dt = run([str(PY), "scripts/test_lattice.py"], ROOT,
+                 "test_lattice（周期图 / 局部相位 / 随机对照 / 基矢约定）")
+    rec("lattice", ok, dt)
+
     # ---- 13. 契约测试 ----
     if not args.fast:
         print("\n[13] 契约测试")

@@ -530,7 +530,8 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
 
         # --- 瓦片规划 ---
         stage = "plan_tiles"
-        all_tiles = PI.plan_tiles(ds.width, ds.height, args.tile_size, args.overlap)
+        all_tiles = PI.plan_tiles(ds.width, ds.height, args.tile_size,
+                                  PI.px_len_at(args.overlap, px_m))
         good, blank = PI.order_tiles_by_validity(ds, all_tiles)
         tiles = good + blank
         # ⚠️ `limit` **不能**在这里截断：它与 `roi` 组合时，先截前 N 块再按 ROI 过滤，
@@ -588,12 +589,18 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                  message=f"ROI 内仅 {len(tiles)} 块瓦片，网格勘察回退到全图 "
                          f"{len(good)} 块采样（保证网格拟合稳定；空地检测仍限 ROI 内）")
 
-        grid, report = PI.survey_grid(
-            ds, survey_tiles, px_m, sample_n=args.survey_samples,
-            prior_pitch_m=args.prior_pitch_m, pct=args.pct, sigma=args.sigma,
-            exg_threshold=args.exg_threshold, use_saturation=args.use_saturation,
-            exg_lo=args.exg_lo, exg_hi=args.exg_hi,
-            n_valid_hint=len(good), verbose=False)
+        # 有 CHM 先用树冠顶点周期图（与 CLI 同一个函数），否则退回 RGB 勘察
+        _chm_grid = PI.grid_from_chm(
+            args, say=lambda m: emit("log", level="info", stage="grid_survey", message=m))
+        if _chm_grid is not None:
+            grid, report = _chm_grid
+        else:
+            grid, report = PI.survey_grid(
+                ds, survey_tiles, px_m, sample_n=args.survey_samples,
+                prior_pitch_m=args.prior_pitch_m, pct=args.pct, sigma=args.sigma,
+                exg_threshold=args.exg_threshold, use_saturation=args.use_saturation,
+                exg_lo=args.exg_lo, exg_hi=args.exg_hi,
+                n_valid_hint=len(good), verbose=False)
 
         PI.atomic_write_json(job_dir / "grid-survey.json", {
             "fingerprint": fp, "generated_at": _now(), **report,
@@ -659,6 +666,10 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
                                  f"语义分割={'有' if elevation.has_segment() else '无'}  "
                                  f"救援阈值 {elev_params.core_chm:g} m / "
                                  f"否决阈值 {elev_params.veto_chm:g} m")
+
+        # --- 纯 RGB 回退时的 ExG 阈值场（与 CLI 同一个函数）---
+        args.exg_field = PI.build_exg_field(
+            ds, args, use_elevation_seg=bool(elevation is not None and elevation.has_segment()))
 
         # --- 逐瓦片处理 ---
         stage = "tile_processing"
@@ -965,6 +976,19 @@ def read_params(argv: list[str]) -> dict:
 def main(argv: list[str] | None = None) -> int:
     # Windows / PyInstaller：多进程（--workers>1）必须调用，否则子进程会递归启动自己
     mp.freeze_support()
+    # stdout 只属于 emit()（NDJSON 数据通道，_STDOUT 在 import 时已取好）。
+    # process_image / detect 的 log() 是 print() 到 stdout 的 —— sidecar 调到的任何一处 log()
+    # 都会往数据通道里插一行非 JSON。2026-11-04 契约测试实测踩到：网格勘察剔除对偶轴离群块时的
+    # 那行日志（只在离群块出现时才打印，所以此前一直没暴露）。运行期间把 sys.stdout 指向 stderr，
+    # 一次性堵住所有现在和以后的 print()，而不是逐处给 log() 加开关。
+    real_stdout, sys.stdout = sys.stdout, sys.stderr
+    try:
+        return _main(argv)
+    finally:
+        sys.stdout = real_stdout
+
+
+def _main(argv: list[str] | None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     raw = read_params(argv)
 

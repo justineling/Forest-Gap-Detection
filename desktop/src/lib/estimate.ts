@@ -180,6 +180,34 @@ function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, num
   return out
 }
 
+/** 离 p 最近的格点（经纬度）。格网：株距 / 行距 / 错行 / 方位来自 grid，原点 origin。 */
+function nearestNode(p: [number, number], grid: GridSpec, origin: [number, number]): [number, number] {
+  const pitch = grid.plant_pitch_m
+  const row = grid.row_pitch_m
+  const skew = grid.skew_m ?? pitch / 2
+  const th = (grid.azimuth_deg * Math.PI) / 180
+  const [lon0, lat0] = origin
+  const { x: mx, y: my } = metersPerDeg(lat0)
+  const x = (p[0] - lon0) * mx
+  const y = (p[1] - lat0) * my
+  const dv = -x * Math.sin(th) + y * Math.cos(th)
+  let best: [number, number] = p
+  let bestD = Infinity
+  for (const j of [Math.floor(dv / row), Math.ceil(dv / row)]) {
+    const du = x * Math.cos(th) + y * Math.sin(th) - j * skew
+    const i = Math.round(du / pitch)
+    const along = i * pitch + j * skew
+    const nx = along * Math.cos(th) - j * row * Math.sin(th)
+    const ny = along * Math.sin(th) + j * row * Math.cos(th)
+    const d = Math.hypot(nx - x, ny - y)
+    if (d < bestD) {
+      bestD = d
+      best = [lon0 + nx / mx, lat0 + ny / my]
+    }
+  }
+  return best
+}
+
 export interface EstimateOptions extends GridSpec {
   /** 只估算这些 gap_id；不传则用全部可种植要素 */
   onlyIds?: Set<string>
@@ -257,8 +285,14 @@ export function estimate(
     const byArea = isSlot ? 1 : estimateByArea(area)
 
     let pts: PlantingPoint[]
+    // 这块空地自己的格网相位（有就用，否则用全局原点）—— 与 Python planting_points 同一规则
+    const lo = f.properties.lattice_origin_lonlat
+    const fOrigin: [number, number] = lo ? [lo[0], lo[1]] : origin
     if (isSlot) {
-      const c = insidePoint(f.geometry)
+      // 有局部格网时，株位点取"离面内点最近、且落在空地里的格点"：那正是缺的那棵树原来的位置
+      const c0 = insidePoint(f.geometry)
+      const node = lo ? nearestNode(c0, grid, fOrigin) : null
+      const c = node && pointInGeometry(node, f.geometry) ? node : c0
       pts = [
         {
           lon: c[0],
@@ -268,7 +302,7 @@ export function estimate(
         },
       ]
     } else {
-      pts = gridPointsInFeature(f, grid, origin)
+      pts = gridPointsInFeature(f, grid, fOrigin)
     }
 
     // 跨多边形去重（重叠区域不应重复计数）

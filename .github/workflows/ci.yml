@@ -158,3 +158,7 @@ jobs:
       # （评审文档 2026-10-29 缺陷 A/A′）。纯合成几何，秒级。
       - name: 跨瓦片缝合
         run: python scripts/test_stitch.py
+
+      # 周期图格网 + 每块空地局部相位（旧网格与真实树位不相关）。纯合成点集，秒级。
+      - name: 周期图格网
+        run: python scripts/test_lattice.py

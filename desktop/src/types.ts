@@ -45,6 +45,15 @@ export interface GapProps {
    * 用于事后核对"这次重放是不是猜错了"（见 `lib/mergeEdits.ts`）。
    */
   replayed_from?: string
+  /**
+   * 这块空地自己的格网相位（2026-11-04，Python finalize 按周围树冠顶点定的）。
+   * 园区分块种植、各块起点相位不同，全局只用一个原点会与真实树位完全对不上；
+   * 有它时前端排坑 / 株位点用它，与 Python 放样点逐株一致。
+   */
+  lattice_phase?: 'local' | 'global'
+  lattice_origin_lonlat?: [number, number]
+  lattice_coherence?: number
+  lattice_support?: number
 }
 
 /** 最小 GeoJSON 类型（不引 @types/geojson，避免多余依赖） */

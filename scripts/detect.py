@@ -165,7 +165,9 @@ def canopy_structural(rgb: np.ndarray, sigma: float = 5.0, pct: float = DEFAULT_
                       use_saturation: bool = DEFAULT_USE_SATURATION,
                       sat_level: float = DEFAULT_SAT_LEVEL,
                       exg_lo: float = DEFAULT_EXG_LO,
-                      exg_hi: float = DEFAULT_EXG_HI):
+                      exg_hi: float = DEFAULT_EXG_HI,
+                      thr_map: np.ndarray | None = None,
+                      px_m: float = 0.033, max_hole_m2: float = 4.0):
     """基于冠层结构的分割（无需训练数据）：
        平滑 ExG（把同一株的羽叶连成一片）→ 阈值 → 形态学闭/开 → 填洞 → 去小碎块。
        适配油棕「冠层连片、株距规则、裸土与冠层色差明显」的特点。
@@ -207,7 +209,12 @@ def canopy_structural(rgb: np.ndarray, sigma: float = 5.0, pct: float = DEFAULT_
     exg = 2 * g - r - b
     sm = ndi.gaussian_filter(exg, sigma=sigma)
 
-    if exg_threshold is not None:
+    if thr_map is not None:
+        # 世界坐标阈值场（process_image.ExgThresholdField）：阈值只取决于像素在地面上的位置，
+        # 与瓦片怎么切无关（2026-11-04）。仍是 clip(局部 pct 分位, lo, hi) 的同一判据。
+        thr = thr_map
+        mode = "阈值场 clip(局部分位, lo, hi)"
+    elif exg_threshold is not None:
         thr = float(exg_threshold)
         mode = f"绝对 ExG>{thr:.0f}"
     else:
@@ -230,13 +237,23 @@ def canopy_structural(rgb: np.ndarray, sigma: float = 5.0, pct: float = DEFAULT_
 
     m = ndi.binary_closing(m, iterations=3)
     m = ndi.binary_opening(m, iterations=2)
-    m = ndi.binary_fill_holes(m)
+    # 只填**小孔**（叶片间的透光孔），不填被树冠围住的大空地（2026-11-04 改）。
+    # ⚠️ 旧写法 `binary_fill_holes(m)` 不分大小：一圈树冠围住的缺株（≈60 m²）会被整块填成
+    #    树冠、永远检测不到；而"围没围住"取决于窗口边界落在哪 —— 没有分割图时两种瓦片切法
+    #    的空地对称差有一半来自这里。上限 4 m²：叶隙远小于此，单株缺株远大于此。
+    holes = ndi.binary_fill_holes(m) & ~m
+    if holes.any():
+        hl, hn = ndi.label(holes)
+        hs = ndi.sum(holes, hl, range(1, hn + 1))
+        max_hole_px = max(1, int(round(max_hole_m2 / (px_m * px_m))))
+        m = m | np.isin(hl, np.where(hs <= max_hole_px)[0] + 1)
     lab, n = ndi.label(m)
     if n:
         sizes = ndi.sum(m, lab, range(1, n + 1))
         m = np.isin(lab, np.where(sizes >= min_blob_px)[0] + 1)
     if not quiet:
-        log(f"结构法分割：sigma={sigma} {mode} 阈值={thr:.1f} "
+        thr_txt = f"{float(np.mean(thr)):.1f}" if isinstance(thr, np.ndarray) else f"{thr:.1f}"
+        log(f"结构法分割：sigma={sigma} {mode} 阈值={thr_txt} "
             f"→ 冠层覆盖率 {m.mean()*100:.1f}%（成熟油棕园参考值 60~80%）")
     return m
 
