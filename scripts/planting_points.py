@@ -46,6 +46,55 @@ PLANTABLE_CLASSES = ("open_patch", "vacant_slot", "manual_add")
 MAX_CANDIDATES = 200_000
 
 
+def feature_priority(pr: dict) -> int:
+    """R3：重叠空地的放样点保留给谁（数字小者优先）。
+
+    第四轮之前全园只有一个格网原点，重叠处的格点坐标**完全相同**，
+    "坐标取整到 cm"就能自然去重。改成每块空地各用各的局部相位后，
+    检测空地与手画空地在重叠区会留下两套相距 2~4 m 的点 —— 交付 CSV / KML
+    里出现不可能的株位（实测 34 → 50 点）。
+
+    按执行单 R3 的优先级：
+      0 有局部相位的检测空地（最可信：相位来自周围真实树冠顶点）
+      1 全局相位的检测空地
+      2 手画 / 编辑过的空地（`source=manual` / `class=manual_add` / `edited`）
+    同级靠稳定排序保持输入顺序。
+    """
+    if pr.get("lattice_origin_utm") or pr.get("lattice_origin_lonlat"):
+        return 0
+    if (pr.get("source") == "manual" or pr.get("class") == "manual_add"
+            or pr.get("edited") is True):
+        return 2
+    return 1
+
+
+class _PointDedup:
+    """按**空间邻近**去重：已输出点 `0.5 × 株距` 内的新点丢弃（R3）。
+
+    用边长 = 阈值的网格哈希，只查 3×3 邻格；比 O(n²) 省得多（全幅 3,425 点）。
+    桶边长等于阈值时，3×3 邻格足以覆盖所有可能落在阈值内的点。
+    """
+
+    def __init__(self, min_dist: float):
+        self.min_dist = max(float(min_dist), 1e-6)
+        self.d2 = self.min_dist * self.min_dist
+        self.buckets: dict[tuple[int, int], list[tuple[float, float]]] = {}
+
+    def too_close(self, x: float, y: float) -> bool:
+        cx = int(math.floor(x / self.min_dist))
+        cy = int(math.floor(y / self.min_dist))
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for px, py in self.buckets.get((cx + dx, cy + dy), ()):
+                    if (x - px) ** 2 + (y - py) ** 2 < self.d2:
+                        return True
+        return False
+
+    def add(self, x: float, y: float) -> None:
+        cell = (int(math.floor(x / self.min_dist)), int(math.floor(y / self.min_dist)))
+        self.buckets.setdefault(cell, []).append((x, y))
+
+
 def _to_utm(geom_wgs):
     tr = Transformer.from_crs(WGS84, TARGET_CRS, always_xy=True)
     return shp_transform(tr.transform, geom_wgs)
@@ -228,10 +277,17 @@ def generate_planting_points(
     by_class: dict[str, int] = {}
     by_source = {"grid": 0, "slot": 0}
     skipped_narrow: list[str] = []
-    seen: set[tuple[int, int]] = set()      # 去重：UTM 坐标取整到 cm
+    # R3：去重不再是"坐标取整到 cm"，而是 0.5 × 株距 的空间邻近判定；
+    #     要素先按可信度排序，重叠区优先保留局部相位那套点。
+    dedup = _PointDedup(0.5 * float(grid.plant_pitch_m))
+    ordered = sorted(
+        (f for f in features
+         if (f.get("properties") or {}).get("class") in PLANTABLE_CLASSES),
+        key=lambda f: feature_priority(f.get("properties") or {}),
+    )
     seq = 0
 
-    for f in features:
+    for f in ordered:
         pr = f.get("properties") or {}
         cls = pr.get("class")
         if cls not in PLANTABLE_CLASSES:
@@ -279,10 +335,9 @@ def generate_planting_points(
 
         n_here = 0
         for x, y in cand:
-            key = (int(round(x * 100)), int(round(y * 100)))
-            if key in seen:
+            if dedup.too_close(x, y):
                 continue
-            seen.add(key)
+            dedup.add(x, y)
             lon, lat = tr_to_wgs.transform(x, y)
             seq += 1
             points.append({
@@ -467,6 +522,44 @@ def _selftest() -> None:
           "properties": {"gap_id": "D2", "class": "open_patch"}}
     rd = generate_planting_points([f1, f2], g, clearance_m=0.5)
     chk(rd["total"] == r["total"], f"重叠多边形去重（{rd['total']} == {r['total']}）")
+
+    # ---- R3：两套**不同相位**的重叠空地，必须按空间邻近去重 ----
+    # 第四轮之前全园一个原点，坐标取整到 cm 就能去重；现在检测空地有局部相位、
+    # 手画空地用全局原点，重叠区会留下两套相距 2~4 m 的点（实测 34 → 50 点）。
+    ov = _box(500300, 100300, 500330, 100330)
+    ov_wgs = shp_transform(tr_back.transform, ov)
+    shifted = [500002.5, 100001.7]        # 与全局格网错开约 3 m（不是整格平移）
+    f_local = {"type": "Feature", "geometry": ov_wgs.__geo_interface__,
+               "properties": {"gap_id": "OV-local", "class": "open_patch",
+                              "lattice_origin_utm": shifted, "lattice_phase": "local"}}
+    f_manual = {"type": "Feature", "geometry": ov_wgs.__geo_interface__,
+                "properties": {"gap_id": "OV-manual", "class": "manual_add",
+                               "source": "manual", "edited": True}}
+    r_local = generate_planting_points([f_local], g, clearance_m=0.5)
+    r_manual = generate_planting_points([f_manual], g, clearance_m=0.5)
+    # 故意把低优先级（手画）放前面：验证优先级排序，而不是靠调用方给对顺序
+    r_both = generate_planting_points([f_manual, f_local], g, clearance_m=0.5)
+    chk(r_local["total"] > 0 and r_manual["total"] > 0,
+        f"两套相位各自都有点（局部 {r_local['total']} / 全局 {r_manual['total']}）")
+    chk(r_both["total"] < r_local["total"] + r_manual["total"],
+        f"重叠区两套点被合并（{r_both['total']} < {r_local['total'] + r_manual['total']}）")
+    # 独立参考实现：按优先级串起点，逐个保留"离已保留点 >= 0.5 株距"的点
+    thr = 0.5 * g.plant_pitch_m
+    kept: list[tuple[float, float]] = []
+    for src in (r_local, r_manual):
+        for p in src["points"]:
+            x, y = p["utm_x"], p["utm_y"]
+            if all(math.hypot(x - kx, y - ky) >= thr - 0.01 for kx, ky in kept):
+                kept.append((x, y))
+    chk(r_both["total"] == len(kept),
+        f"点数 = 并集点数（{r_both['total']} == {len(kept)}）")
+    chk(all(p["gap_id"] == "OV-local" for p in r_both["points"][:r_local["total"]]),
+        "优先级：局部相位的检测空地排在手画空地前面")
+    both_xy = [(p["utm_x"], p["utm_y"]) for p in r_both["points"]]
+    min_d = min((math.hypot(a[0] - b[0], a[1] - b[1])
+                 for i, a in enumerate(both_xy) for b in both_xy[i + 1:]), default=999.0)
+    chk(min_d >= thr - 0.01,
+        f"任意两点间距 >= 0.5 × 株距（实测最小 {min_d:.3f} m / 门槛 {thr:.3f} m）")
 
     # CSV 行
     rows = points_to_csv_rows(r["points"][:2])

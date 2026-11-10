@@ -155,6 +155,46 @@ def build_features() -> list[dict]:
     return feats
 
 
+def build_overlap_case() -> tuple[list[dict], list[dict]]:
+    """R3：一套局部相位 + 一套全局相位（手画）叠在同一块地上，两端必须给同一批点。
+
+    手画要素刻意放在列表**最前面**，验证两端都按"可信度"排序而不是靠调用方给对顺序。
+    局部相位原点由 `phase_base` 偏移 2.5 / 1.7 m（不是整格平移），
+    这样两套格点相距 2~4 m —— 旧版按坐标字符串去重会**两套都留下**。
+    """
+    ov = box(ORIGIN_X - 18, ORIGIN_Y - 18, ORIGIN_X + 6, ORIGIN_Y + 6)
+    geom_wgs = shp_transform(TR_TO_WGS.transform, ov)
+    geo = mapping(geom_wgs)
+
+    local = nearby_node((ORIGIN_X - 6, ORIGIN_Y - 6),
+                        base=(ORIGIN_X + 2.5, ORIGIN_Y + 1.7))
+    f_local = {
+        "type": "Feature", "geometry": geo,
+        "properties": {
+            "gap_id": "OV-local", "class": "open_patch",
+            "area_sqm": round(float(ov.area), 3),
+            "lattice_phase": "local",
+            "lattice_origin_utm": [round(local[0], 6), round(local[1], 6)],
+            "lattice_origin_lonlat": [round(v, 10) for v in to_lonlat(*local)],
+        },
+    }
+    # 同一几何给两个要素（共享 geometry 对象在 JSON 里会各写一份，没问题）
+    f_manual = {
+        "type": "Feature", "geometry": mapping(geom_wgs),
+        "properties": {
+            "gap_id": "OV-manual", "class": "manual_add",
+            "area_sqm": round(float(ov.area), 3),
+            "source": "manual", "edited": True,
+        },
+    }
+    feats = [f_manual, f_local]        # 低优先级在前
+    g = grid_model()
+    r = generate_planting_points(feats, g, clearance_m=CLEARANCE_M)
+    pts = [{"gap_id": p["gap_id"], "lon": float(p["lon"]), "lat": float(p["lat"]),
+            "utm_x": float(p["utm_x"]), "utm_y": float(p["utm_y"])} for p in r["points"]]
+    return feats, pts
+
+
 def python_points(feats: list[dict]) -> list[dict]:
     g = grid_model()
     out: list[dict] = []
@@ -176,6 +216,7 @@ def python_points(feats: list[dict]) -> list[dict]:
 def build_fixture() -> dict:
     feats = build_features()
     pts = python_points(feats)
+    ov_feats, ov_pts = build_overlap_case()
     anchor = to_lonlat(ORIGIN_X, ORIGIN_Y)
     return {
         "schema": "fgd-points-fixture/1",
@@ -193,6 +234,8 @@ def build_fixture() -> dict:
         "clearance_m": CLEARANCE_M,
         "features": feats,
         "python_points": pts,
+        # R3：重叠 + 两套相位的一组（整组一起跑，才会走跨要素去重）
+        "overlap": {"features": ov_feats, "python_points": ov_pts},
     }
 
 
@@ -228,6 +271,35 @@ def verify(data: dict) -> int:
         chk(by_gap.get(gid, 0) >= 1, f"{gid} 有点位", f"{by_gap.get(gid, 0)} 个")
     chk(by_gap.get("S4-open-with-hole", 0) > 5, "带洞多边形排坑数合理",
         f"{by_gap.get('S4-open-with-hole', 0)} 个")
+
+    # ---- R3 重叠用例：整组跑出来的点必须与夹具一致 ----
+    ov = data.get("overlap")
+    if not ov:
+        chk(False, "夹具有 R3 重叠用例")
+    else:
+        # 用夹具里的 features 重算（不能用硬编码的 build_overlap_case，
+        # 否则改了夹具要素却仍与旧答案自比，校验就形同虚设）
+        r_ov = generate_planting_points(ov["features"], grid_model(),
+                                        clearance_m=CLEARANCE_M)
+        expected_ov = [
+            {"gap_id": p["gap_id"], "lon": float(p["lon"]), "lat": float(p["lat"]),
+             "utm_x": float(p["utm_x"]), "utm_y": float(p["utm_y"])}
+            for p in r_ov["points"]
+        ]
+        got_ov = ov["python_points"]
+        chk(len(expected_ov) == len(got_ov), "R3 重叠组点数一致",
+            f"Python {len(expected_ov)} / 夹具 {len(got_ov)}")
+        if len(expected_ov) == len(got_ov):
+            worst_ov = max(
+                (math.hypot(a["utm_x"] - b["utm_x"], a["utm_y"] - b["utm_y"])
+                 for a, b in zip(expected_ov, got_ov)), default=0.0)
+            chk(worst_ov < 0.01, "R3 重叠组逐点一致", f"最大 {worst_ov:.4f} m")
+        # 任意两点间距 >= 0.5 × 株距（R3 验收线）
+        xy = [(p["utm_x"], p["utm_y"]) for p in got_ov]
+        min_d = min((math.hypot(a[0] - b[0], a[1] - b[1])
+                     for i, a in enumerate(xy) for b in xy[i + 1:]), default=999.0)
+        chk(min_d >= 0.5 * PITCH - 0.01, "R3 任意两点间距 >= 0.5 × 株距",
+            f"最小 {min_d:.3f} m / 门槛 {0.5 * PITCH:.3f} m")
 
     print(f"\n{'✅ 全部通过' if failures == 0 else f'❌ {failures} 项失败'}")
     return 0 if failures == 0 else 1

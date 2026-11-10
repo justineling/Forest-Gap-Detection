@@ -208,6 +208,55 @@ function nearestNode(p: [number, number], grid: GridSpec, origin: [number, numbe
   return best
 }
 
+/**
+ * R3：重叠空地的放样点保留给谁（数字小者优先）。
+ *
+ * 第四轮之前全园一个原点，重叠处格点坐标完全相同，`toFixed(7)` 就能去重；
+ * 改成每块空地各用各的局部相位后，检测空地与手画空地会留下两套相距 2~4 m
+ * 的点（实测 34 → 50 点），交付的放样点里出现不可能的株位。
+ * 与 Python `planting_points.feature_priority` 必须逐条对应。
+ */
+function featurePriority(f: GapFeature): number {
+  const p = f.properties
+  if (p.lattice_origin_lonlat) return 0                 // 局部相位：来自周围真实树冠顶点
+  if (p.source === 'manual' || p.class === 'manual_add' || p.edited === true) return 2
+  return 1                                             // 全局相位的检测空地
+}
+
+/** R3：按空间邻近去重（0.5 × 株距）。与 Python `_PointDedup` 同一规则。 */
+function makePointDedup(minDist: number, origin: [number, number]) {
+  const { x: mx, y: my } = metersPerDeg(origin[1])
+  const d2 = minDist * minDist
+  const buckets = new Map<string, Array<[number, number]>>()
+  const cellOf = (p: PlantingPoint): [number, number, number, number] => {
+    const x = (p.lon - origin[0]) * mx
+    const y = (p.lat - origin[1]) * my
+    return [Math.floor(x / minDist), Math.floor(y / minDist), x, y]
+  }
+  return {
+    tooClose(p: PlantingPoint): boolean {
+      const [cx, cy, x, y] = cellOf(p)
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const b = buckets.get(`${cx + dx},${cy + dy}`)
+          if (!b) continue
+          for (const [px, py] of b) {
+            if ((x - px) ** 2 + (y - py) ** 2 < d2) return true
+          }
+        }
+      }
+      return false
+    },
+    add(p: PlantingPoint): void {
+      const [cx, cy, x, y] = cellOf(p)
+      const k = `${cx},${cy}`
+      const b = buckets.get(k)
+      if (b) b.push([x, y])
+      else buckets.set(k, [[x, y]])
+    },
+  }
+}
+
 export interface EstimateOptions extends GridSpec {
   /** 只估算这些 gap_id；不传则用全部可种植要素 */
   onlyIds?: Set<string>
@@ -238,9 +287,13 @@ export function estimate(
     skew_m: opts.skew_m ?? pg?.skew_offset_m,
   }
 
-  const target = features.filter(
-    (f) => isPlantable(f.properties.class) && (!opts.onlyIds || opts.onlyIds.has(f.properties.gap_id)),
-  )
+  const target = features
+    .filter(
+      (f) => isPlantable(f.properties.class) && (!opts.onlyIds || opts.onlyIds.has(f.properties.gap_id)),
+    )
+    // R3：重叠区优先保留可信度高的那套点；Array.sort 在现代 JS 是稳定排序，
+    // 同级保持输入顺序（与 Python `sorted(...)` 一致）
+    .sort((a, b) => featurePriority(a) - featurePriority(b))
 
   // 网格原点：优先用算法锚点，其次显式指定，最后退回几何原点（相位任意）
   let origin: [number, number]
@@ -265,7 +318,9 @@ export function estimate(
 
   // 网格相位：以原点为基准对齐到最近的格点（避免原点偏移半个格子）
   const points: PlantingPoint[] = []
-  const seen = new Set<string>()
+  // R3：不再用 `toFixed(7)` 判重 —— 两套相位下的点差 2~4 m，坐标不同但
+  // 物理上是同一个株位。改成 0.5 × 株距 的空间邻近判定（与 Python 同规则）。
+  const dedup = makePointDedup(0.5 * grid.plant_pitch_m, origin)
   const per_gap: EstimateResult['per_gap'] = []
 
   for (const f of target) {
@@ -308,9 +363,8 @@ export function estimate(
     // 跨多边形去重（重叠区域不应重复计数）
     let n = 0
     for (const p of pts) {
-      const key = `${p.lon.toFixed(7)},${p.lat.toFixed(7)}`
-      if (seen.has(key)) continue
-      seen.add(key)
+      if (dedup.tooClose(p)) continue
+      dedup.add(p)
       points.push(p)
       n++
     }
