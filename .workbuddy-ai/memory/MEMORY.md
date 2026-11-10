@@ -31,6 +31,7 @@
 旧算法自己的并集只有 262,164 m²）。交付文件 `output/wgr17-final-gaps.geojson` 仍是旧算法产物，**待重跑 + 重抽验证集**。
 做法：瓦片只留 core 内几何（经纬度下 `clip_by_rect`，缝两侧顶点完全相等）→ `stitch_seams` 全局缝合 → 完整几何重分类；
 林地掩膜**沿掩膜切开**（不再单点）；CLI 与 sidecar 共用 `finalize_features`（sidecar 以前**漏了林地掩膜**）。
+⚠️ **2026-11-05 第四轮**（不钉网格）：确定需补种 **597 块 / 268,820 m²**；两种瓦片切法空地对称差 4.17% → 0.40%；网格改 CHM 树冠顶点周期图 + 每块空地 40 m 局部相位，放样点到真实树行 P50 3.32 → 1.16 m（随机 3.17）；株位空缺真缺树 52% → 72%。详见 `2026-11-05.md`、评审文档第四轮、交接 §23。
 证据：评审文档_20261029001.md 第三轮（重叠 62,317→0、换瓦片配置面积差 0.009%、树心密度持平）。
 算法封版（Stage 14），缺陷台账 `docs/03-算法教学/算法缺陷与桌面端协同看板.html`。对外红线：React18+TS（非 Vue3）、Terra Draw（非 Leaflet-Geoman）、stdio NDJSON（非 FastAPI，只有瓦片走 HTTP）、掩膜影响上界 26%、CHM 异常区块 14.08~29.99 m。
 
@@ -110,10 +111,15 @@ CSS 分两层 —— `styles.css` 管布局、`ark.css` 管语法（**必须后 
 - 契约测试 `scripts/test_sidecar_contract.py` 期望 95/95；PowerShell 5.1 读 `.ps1` 必须有 UTF-8 BOM；别手删安装目录（NSIS 弹 "Unable to install"）。
 - **CI（2026-10-20 修复）**：Python 依赖唯一清单是根目录 `requirements.txt`（CI 与本地共用，别再手写 pip 清单——漏过 Pillow 导致 CI 从未绿）；`desktop/runtime/desktop_entry/.gitkeep` 必须保留（tauri-build 对 bundle.resources 做存在性硬检查，目录没了 `cargo test` 编译期就挂）；frontend 钉 `ubuntu-24.04`（latest 已迁 Ubuntu 26）；`cargo test`(debug) 不需要 `dist`（codegen 仅在非 dev 且无 devUrl 时 panic）。
 - **"装了包但服务起不来"的排查顺序**（2026-10-21 实战）：① `py-runtime\desktop_entry\desktop_entry.exe --self-test`（证明 exe 可跑，`ok:true` 即排除 DLL/依赖/杀软）；② 手动 `--run-tile-server --source <tif> --port 8799` 看 `/meta` 与 stderr；③ 完全按外壳方式起（cwd=`%LOCALAPPDATA%\fgd\data`、8765、三个 PYTHON* 变量）；④ 以上全绿才怀疑外壳（旧版无 stderr 转存/退出码，管道 64 KB 填满会让服务阻塞）。⚠️ 别用开发机的 `desktop/runtime` 判断包是否完整——那里没打包就只有 `.gitkeep`。
-- `check_all.py` **12 层**静态检查（tsc/npm test/ruff/CLI --help/cargo test/仓库卫生/契约/金字塔冒烟/多区块选结果等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。验收基线 **921 / 81 / 60 / 95 / 42 / 12 层**；⚠️ 看退出码，不要只看 grep 输出。
+- `check_all.py` **12 层**静态检查（tsc/npm test/ruff/CLI --help/cargo test/仓库卫生/契约/金字塔冒烟/多区块选结果等）；ruff 抓不到 possibly-unbound，靠 CLI `--help` 补。验收基线 **924 / 81 / 60 / 95 / 42 / 12 层 + 12b + 12c**；⚠️ 看退出码，不要只看 grep 输出。
 
 ## 9. 待办
+- 🔴 **11-05 起分工**：Claude 只做决策与审查（出文档、不改代码），代码由执行方 AI 改。执行方入口：
+  `docs/03-算法教学/第四轮审查意见与执行单_20261105.md`（R1~R17，6 项 P1：R1 R2 R4 R11 R13 R14；R1/R3/R4/R11/R14 修完才能出正式交付）。
+  ⚠️ "放样点 P50 1.16 m"是混合值：局部相位的空地 0.50 m / 1 m 内 81%，25 块退回全局相位的大连片空地（面积 55%、放样点 54%）
+  2.54 m / 10%（≈随机）。R13 = 按世界坐标 80 m 单元分别求相位。
 - ⏳ **按新算法重跑正式交付 + 重抽验证集**（11-04 缝合后 ID 全变）→ 再做 150 块真值打标（用户亲自做）。
-- ⏳ ExG 分位阈值按瓦片统计 → 残余 0.28% 瓦片配置依赖（P1）；`simplify` 只做一次（P1）。
+- ✅ 11-05 第四轮已做：ExG 阈值场、simplify 只做一次、证据配准、CHM 缺失、像素口径、周期图格网。
+- ⏳ 幼树/矮树判据（4.1% 放样点 2 m 内有大疆树心）；不可种植地物连通块判据仍依赖窗口（剩余对称差 57%）。
 - ⏳ 安装包签名；`active_learning.py` 仍未跑过。
 - ⏳ Tauri 真机验 §21.5 四项（草稿关窗落盘只在浏览器验过）。
