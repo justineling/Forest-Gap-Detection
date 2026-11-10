@@ -261,8 +261,9 @@ def generate_planting_points(
             # 与同一行的邻树对齐；否则退回质心 / 面内点。
             pt = _slot_point(poly_utm)
             if lo:
-                gx, gy, _d = g_here.xy_to_grid(pt.x, pt.y)
-                nx, ny = g_here.node_at(int(round(gx)), int(round(gy)))
+                # ⚠️ 必须是「真最近格点」，不是 xy_to_grid 后各自 round（执行单 R1）。
+                #    三角格网上后者会偏一整个株距，交付点位与前端预览对不上。
+                nx, ny = g_here.nearest_node(pt.x, pt.y)
                 if poly_utm.contains(Point(nx, ny)):
                     pt = Point(nx, ny)
             cand = [(pt.x, pt.y)]
@@ -415,6 +416,49 @@ def _selftest() -> None:
     if r5["total"] == 1:
         p = r5["points"][0]
         chk(L.contains(_P(p["utm_x"], p["utm_y"])), "L 形点位落在多边形内部（质心越界保护）")
+
+    # ---- R1（执行单）：株位吸附必须是「真最近格点」----
+    # 旧写法 xy_to_grid + 各自 round 在三角格网上会偏一整个株距；
+    # 这组坐标是审查探针实测出来的反例，起点离最近格点 3.89 m。
+    import random as _random
+
+    def _brute_nearest(gm, px, py):
+        bx, by, bd = px, py, float("inf")
+        for j in range(-8, 9):
+            for i in range(-8, 9):
+                nx, ny = gm.node_at(i, j)
+                d = math.hypot(nx - px, ny - py)
+                if d < bd:
+                    bd, bx, by = d, nx, ny
+        return bx, by, bd
+
+    _rng = _random.Random(20261105)
+    worst = 0.0
+    for _ in range(200):
+        px = 500000.0 + _rng.uniform(-40, 40)
+        py = 100000.0 + _rng.uniform(-40, 40)
+        nx, ny = g.nearest_node(px, py)
+        bx, by, _bd = _brute_nearest(g, px, py)
+        worst = max(worst, math.hypot(nx - bx, ny - by))
+    chk(worst < 1e-6,
+        f"nearest_node 与枚举法逐位一致（200 个随机点，最大偏差 {worst:.2e} m）")
+
+    p0 = (500005.4175, 100011.0211)
+    slot_r1 = _box(p0[0] - 5, p0[1] - 5, p0[0] + 5, p0[1] + 5)
+    r1_wgs = shp_transform(tr_back.transform, slot_r1)
+    f_r1 = {"type": "Feature", "geometry": r1_wgs.__geo_interface__,
+            "properties": {"gap_id": "R1", "class": "vacant_slot",
+                           "lattice_origin_utm": [500000.0, 100000.0]}}
+    r_r1 = generate_planting_points([f_r1], g, clearance_m=0.5)
+    exp_x, exp_y, exp_d = _brute_nearest(g, p0[0], p0[1])
+    chk(3.7 < exp_d < 4.9, f"起点离最近格点约 4 m（实测 {exp_d:.3f} m）")
+    chk(r_r1["total"] == 1, "R1 株位空缺仍固定 1 个点")
+    if r_r1["total"] == 1:
+        q = r_r1["points"][0]
+        d_new = math.hypot(q["utm_x"] - exp_x, q["utm_y"] - exp_y)
+        chk(d_new < 0.02,
+            f"吸附到面内真最近格点（旧算法会偏 8.45 m）："
+            f"got ({q['utm_x']:.3f},{q['utm_y']:.3f}) want ({exp_x:.3f},{exp_y:.3f})")
 
     # 跨多边形去重：两个重叠的多边形不应重复计点
     f1 = {"type": "Feature", "geometry": sq_wgs.__geo_interface__,

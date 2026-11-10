@@ -269,6 +269,18 @@ def main() -> int:
                  "test_lattice（周期图 / 局部相位 / 随机对照 / 基矢约定）")
     rec("lattice", ok, dt)
 
+    # ---- 12d. R1 株位吸附：Python 自测 + 共用夹具 ----
+    # 守的是"交付导出（Python/UTM）与地图预览（TS/局部等距）株位对不上"：
+    # Python 曾把连续格坐标各自 round，三角格网上会偏一整个株距。
+    # 夹具入库、两端读同一份 JSON，逐点距离必须 < 1 cm。
+    print("\n[12d] R1 株位吸附（Python 自测 + 共用夹具校验）")
+    t0 = time.time()
+    ok1, _ = run([str(PY), "scripts/planting_points.py", "--selftest"], ROOT,
+                 "planting_points --selftest（含 R1 最近格点反例）")
+    ok2, _ = run([str(PY), "scripts/test_shared_points.py", "--verify"], ROOT,
+                 "test_shared_points --verify（夹具与 Python 一致）")
+    rec("r1-snap", ok1 and ok2, time.time() - t0)
+
     # ---- 13. 契约测试 ----
     if not args.fast:
         print("\n[13] 契约测试")

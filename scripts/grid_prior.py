@@ -95,6 +95,7 @@ skew_angle=0 表示正方形（对齐）种植，skew_angle≈60° 表示三角�
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from dataclasses import dataclass, field, asdict
 from typing import Any, Iterable, Sequence
@@ -337,6 +338,52 @@ class GridModel:
         along_v = iy * self.row_pitch_m
         return (float(self.origin_x_m + along_u * ux + along_v * vx),
                 float(self.origin_y_m + along_u * uy + along_v * vy))
+
+    def nearest_node(self, x: float, y: float) -> tuple[float, float]:
+        """离 (x, y) **真最近**的格点的 UTM 坐标（R1）。
+
+        ── 为什么不能用 xy_to_grid + 各自 round ──────────────────────────
+        `xy_to_grid` 先算连续行号 gy = dv/row，再用**连续 gy** 扣掉错行偏移
+        `gy·skew` 得到 gx；可 `node_at(round(gx), round(gy))` 用的是**取整后**
+        的行号。三角格网上这两者不一致，而且只考察一行 —— 起点离格点 > 3.70 m
+        时约 16.6% 会选错（差半个到一个株距）。前端 `estimate.ts:nearestNode`
+        一直是对的（试 floor/ceil 两行取近者），Python 侧没同步，于是
+        交付 CSV/KML 的株位与地图预览对不上（执行单 R1）。
+
+        ── 与 TS 逐行对应的算法 ─────────────────────────────────────────
+          dv = -dx·sinθ + dy·cosθ
+          for j ∈ {floor(dv/row), ceil(dv/row)}:
+              i = round((dx·cosθ + dy·sinθ − j·skew) / pitch)
+              由 (i, j) 正变换回 UTM，取距离最小者
+
+        ⚠️ Python 的 `round` 是银行家舍入（.5 取偶），JS `Math.round` 是
+           floor(v+0.5) —— 端点情形会差一格。这里显式用 `floor(v+0.5)`
+           保持两端逐位一致，共用夹具才能卡到 < 1 cm。
+        """
+        a = np.radians(self.row_azimuth_deg)
+        ux, uy = float(np.cos(a)), float(np.sin(a))
+        vx, vy = -uy, ux
+        dx, dy = float(x) - self.origin_x_m, float(y) - self.origin_y_m
+        row = max(self.row_pitch_m, 1e-6)
+        pitch = max(self.plant_pitch_m, 1e-6)
+        skew = self.skew_offset_m
+
+        dv = dx * vx + dy * vy
+        du_all = dx * ux + dy * uy
+        best = (float(x), float(y))
+        best_d = float("inf")
+        # 正好落在行线上时 floor == ceil，用集合去重即可（顺序不影响结果）
+        for j in {math.floor(dv / row), math.ceil(dv / row)}:
+            i = math.floor((du_all - j * skew) / pitch + 0.5)
+            along_u = i * pitch + j * skew
+            along_v = j * row
+            nx = self.origin_x_m + along_u * ux + along_v * vx
+            ny = self.origin_y_m + along_u * uy + along_v * vy
+            d = math.hypot(nx - x, ny - y)
+            if d < best_d:
+                best_d = d
+                best = (float(nx), float(ny))
+        return best
 
     def xy_to_grid(self, x: float, y: float) -> tuple[float, float, float]:
         """UTM → 连续格坐标 (gx, gy) 及到最近格点的距离（米）。
