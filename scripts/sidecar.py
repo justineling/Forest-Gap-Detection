@@ -695,34 +695,43 @@ def run_pipeline(args: SimpleNamespace, t_start: float) -> dict:
             tf = tiles_dir / f"{tile.tile_id}.json"
 
             # 缓存命中：直接累计（**merge_only 也走这里**）。
-            # 与 process_image.main() 的差别：原版在 merge_only 下直接 continue、
-            # 靠最后的 _reload_from_disk 一次性补齐。那样进度事件里 gaps_found
-            # 会一直是 0，宿主无法在进度条旁实时显示"已发现 X 块空地"。
-            # 这里改成逐块累计，_reload_from_disk 退化为兜底（正常情况下不再触发）。
-            if not args.force:
-                cached = PI.load_tile_result(tf, fp)
-                if cached is not None:
-                    skipped += 1
-                    if cached.get("status") == "done":
-                        all_features.extend(cached.get("gaps", []))
-                        area_total += cached.get("stats", {}).get("area_sqm", 0.0)
-                        for k, v in cached.get("stats", {}).get("by_class", {}).items():
-                            if k in class_totals:
-                                class_totals[k] += v
-                    # 进度事件（首尾必发）
-                    _t_now = time.time()
-                    if i == 1 or i == total or (_t_now - last_progress_at) >= PROGRESS_INTERVAL_S:
-                        last_progress_at = _t_now
-                        el = time.time() - t_proc
-                        emit("progress", stage="tile_processing",
-                             done=i, total=total, ratio=round(i / total, 4),
-                             elapsed_s=round(el, 1), eta_s=0.0,
-                             tiles_new=done, tiles_cached=skipped,
-                             tiles_failed=failed,
-                             gaps_found=len(all_features),
-                             gap_area_sqm=round(area_total, 1),
-                             message=f"进度 {i}/{total}（{i/total*100:.1f}%）· 命中缓存")
-                    continue
+            # CLI 的 merge_only 是"直接 continue、靠 _reload_from_disk 一次性补齐"，
+            # 那样进度事件的 gaps_found 会一直是 0，宿主没法实时显示"已发现 X 块"。
+            # 这里逐块累计，_reload_from_disk 只作兜底（正常情况下不触发）。
+            # 命中判定与 CLI 走**同一个** `PI.load_cache_hit`（R11）。
+            # 以前这里只判"读到了缓存"，状态为 failed 的瓦片也 skipped += 1
+            # 后 continue，桌面端从此每次都静默少这一块（任务名固定、从不传 force）。
+            hit, cached = PI.load_cache_hit(tf, fp, force=args.force)
+
+            # merge_only 下不重算瓦片，但失败缓存必须**如实计入 failed**，
+            # 循环后的 W3002 才会响；否则宿主永远看不到"这一块没结果"。
+            if args.merge_only and cached is not None and not hit:
+                failed += 1
+                diag(f"  ⚠ {tile.tile_id} 缓存状态为 {cached.get('status')}，"
+                     f"只合并模式下无法重算")
+
+            if hit:
+                skipped += 1
+                if cached.get("status") == "done":
+                    all_features.extend(cached.get("gaps", []))
+                    area_total += cached.get("stats", {}).get("area_sqm", 0.0)
+                    for k, v in cached.get("stats", {}).get("by_class", {}).items():
+                        if k in class_totals:
+                            class_totals[k] += v
+                # 进度事件（首尾必发）
+                _t_now = time.time()
+                if i == 1 or i == total or (_t_now - last_progress_at) >= PROGRESS_INTERVAL_S:
+                    last_progress_at = _t_now
+                    el = time.time() - t_proc
+                    emit("progress", stage="tile_processing",
+                         done=i, total=total, ratio=round(i / total, 4),
+                         elapsed_s=round(el, 1), eta_s=0.0,
+                         tiles_new=done, tiles_cached=skipped,
+                         tiles_failed=failed,
+                         gaps_found=len(all_features),
+                         gap_area_sqm=round(area_total, 1),
+                         message=f"进度 {i}/{total}（{i/total*100:.1f}%）· 命中缓存")
+                continue
 
             if not args.merge_only:
                 try:

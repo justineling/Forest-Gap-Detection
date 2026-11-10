@@ -399,6 +399,110 @@ def test_resume(tmpdir: Path) -> None:
           f"改参数后全部重算（实际 processed={r3['tiles']['processed']}）")
 
 
+def test_failed_cache(tmpdir: Path) -> None:
+    """R11：状态为 failed 的瓦片不能被当缓存命中。
+
+    审查探针 `p_failed_cache.py` 的做法：把一块已完成的瓦片结果改写成
+    ``status: "failed"``（指纹保持不变），再重跑。旧 sidecar 会把它算进
+    ``skipped`` 并 continue —— rc=0、tiles.cached=1、total_gap_count=0、
+    没有任何警告；桌面端任务名固定、从不传 force，于是这一块永远缺失。
+    """
+    print("\n[6b] 失败瓦片缓存：必须重算 / 只合并时告警（R11）")
+    tif = tmpdir / "failed-cache.tif"
+    make_synthetic(tif, w=2048, h=2048)
+    job = {
+        "input": str(tif), "job": "contract-failed-cache",
+        "work_dir": str(tmpdir / "jobs"),
+        "out_json": str(tmpdir / "failed-cache-gaps.geojson"),
+        "min_area": 10.0, "min_canopy_blob": 200,
+        "tile_size": 1024, "overlap": 128,       # 2048² → 4 块瓦片
+    }
+    e1, rc1, _ = run_sidecar(job, expect_exit=0)
+    r1 = [e for e in e1 if e["event"] == "result"][0]
+    tiles_dir = tmpdir / "jobs" / "contract-failed-cache" / "tiles"
+    files = sorted(tiles_dir.glob("*.json"))
+    check(len(files) == r1["tiles"]["total"] and len(files) >= 2,
+          "首轮产出多块瓦片缓存",
+          f"{len(files)} 个文件 / total={r1['tiles']['total']}")
+
+    target = files[0]
+
+    def _mark_failed() -> None:
+        obj = json.loads(target.read_text(encoding="utf-8"))
+        obj["status"] = "failed"
+        obj["gaps"] = []
+        obj["stats"] = {}
+        obj["error"] = "probe: simulated failure"
+        # 故意**保留 fingerprint**：这正是旧代码误判命中的前提
+        target.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+
+    # ---- ① 常规重跑：failed 必须落到重算 ----
+    _mark_failed()
+    e2, rc2, _ = run_sidecar(job, expect_exit=0)
+    r2 = [e for e in e2 if e["event"] == "result"][0]
+    check(rc2 == 0, "重跑成功（rc=0）", str(rc2))
+    check(r2["tiles"]["cached"] == r2["tiles"]["total"] - 1,
+          "failed 瓦片没被算作命中",
+          f"cached={r2['tiles']['cached']} / total={r2['tiles']['total']}")
+    check(r2["tiles"]["processed"] == 1, "只有那一块被重算",
+          f"processed={r2['tiles']['processed']}")
+    check(r2["tiles"]["failed"] == 0, "重算成功，不应记失败")
+    check(r2["summary"]["total_gap_count"] == r1["summary"]["total_gap_count"],
+          "结果与首轮一致（那一块没丢）",
+          f"{r2['summary']['total_gap_count']} vs {r1['summary']['total_gap_count']}")
+    check(json.loads(target.read_text(encoding="utf-8"))["status"] == "done",
+          "磁盘上的 failed 已被重算结果覆盖")
+    check(not any(e.get("code") == "W3002" for e in e2),
+          "重算成功后不应发 W3002")
+
+    # ---- ② merge_only：不能重算，但必须如实计入 failed 并发 W3002 ----
+    _mark_failed()
+    e3, rc3, _ = run_sidecar(dict(job, merge_only=True), expect_exit=0)
+    warns = [e for e in e3 if e.get("event") == "warn" and e.get("code") == "W3002"]
+    check(rc3 == 0, "merge_only 成功（rc=0）", str(rc3))
+    check(len(warns) == 1, "merge_only 下发出 W3002",
+          f"实际 {len(warns)} 条")
+    r3 = [e for e in e3 if e["event"] == "result"][0]
+    check(r3["tiles"]["failed"] >= 1, "结果里如实记 failed",
+          f"failed={r3['tiles']['failed']}")
+    check(r3["tiles"]["processed"] == 0, "merge_only 不重算瓦片",
+          f"processed={r3['tiles']['processed']}")
+
+
+def test_cache_hit_helper(tmpdir: Path) -> None:
+    """R11：CLI 与 sidecar 共用的 `load_cache_hit` 六个分支逐条断言。"""
+    print("\n[6c] 共用判定 load_cache_hit：只有 done / skipped 算命中")
+    sys.path.insert(0, str(_SCRIPT_DIR))
+    import process_image as PI  # noqa: E402
+
+    p = tmpdir / "cache-hit.json"
+    fp = "fp-A"
+
+    def write(status: str, fingerprint: str = fp) -> None:
+        p.write_text(json.dumps({"status": status, "fingerprint": fingerprint,
+                                 "gaps": [], "stats": {}}), encoding="utf-8")
+
+    write("done")
+    hit, obj = PI.load_cache_hit(p, fp)
+    check(hit and obj is not None, "done + 指纹匹配 → 命中")
+    write("skipped")
+    hit, obj = PI.load_cache_hit(p, fp)
+    check(hit and obj is not None, "skipped + 指纹匹配 → 命中（执行单明确要求）")
+    write("failed")
+    hit, obj = PI.load_cache_hit(p, fp)
+    check(not hit and obj is not None and obj["status"] == "failed",
+          "failed → 不命中，但缓存对象仍返回（merge_only 要据此告警）")
+    write("done", fingerprint="fp-B")
+    hit, obj = PI.load_cache_hit(p, fp)
+    check(not hit and obj is None, "指纹不符 → 不命中")
+    p.write_text("{not json", encoding="utf-8")
+    hit, obj = PI.load_cache_hit(p, fp)
+    check(not hit and obj is None, "文件损坏 → 不命中")
+    write("done")
+    hit, obj = PI.load_cache_hit(p, fp, force=True)
+    check(not hit and obj is None, "--force → 强制不命中")
+
+
 def test_no_crs(tmpdir: Path) -> None:
     print("\n[7] 缺失坐标信息 → E1005")
     from rasterio.transform import Affine
@@ -475,6 +579,8 @@ def main() -> int:
         test_warnings(tmpdir)
         test_success_path(tmpdir)
         test_resume(tmpdir)
+        test_failed_cache(tmpdir)
+        test_cache_hit_helper(tmpdir)
         test_no_crs(tmpdir)
         test_undefined_behavior(tmpdir)
 

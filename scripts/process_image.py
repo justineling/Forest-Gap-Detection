@@ -1181,6 +1181,38 @@ def load_tile_result(path: Path, expect_fp: str) -> dict | None:
     return obj
 
 
+# 能当"缓存命中"复用的瓦片状态。R11：failed 必须排除 —— 上一轮失败的瓦片
+# 也带着有效指纹躺在磁盘上，只按指纹命中会把它永远跳过。
+CACHE_HIT_STATUSES = ("done", "skipped")
+
+
+def load_cache_hit(
+    path: Path, expect_fp: str, *, force: bool = False,
+) -> tuple[bool, dict | None]:
+    """读瓦片缓存并判定是否可复用 —— **CLI 与 sidecar 唯一共用入口**（R11）。
+
+    为什么要有这个函数：坑 70「两条路径各写一份」已经第三次复发了。
+    CLI 早就只认 ``status == "done"``（注释里记着曾因此丢过 6 块边缘瓦片），
+    sidecar 却写成"指纹对得上就算命中"，``failed`` 瓦片也 ``skipped += 1``
+    后 continue —— 桌面端任务名固定、从不传 ``--force``，于是第一次失败的那块
+    此后每次都静默缺失，``failed`` 不增加、不发 W3002，没有任何警告。
+
+    返回 ``(是否命中, 缓存对象)``：缓存对象只要文件存在且指纹匹配就返回，
+    便于调用方在 ``merge_only`` 下识别 ``failed`` 状态并如实告警。
+
+    - 命中：``status in CACHE_HIT_STATUSES``（执行单 R11 明确要求含 skipped）
+    - 未命中：文件不存在 / 损坏 / 指纹不符 / ``--force`` / 其它状态（含 failed）
+      调用方必须**重算**；``merge_only`` 下不能重算时计入 failed 并发 W3002。
+    """
+    if force:
+        return False, None
+    cached = load_tile_result(path, expect_fp)
+    if cached is None:
+        return False, None
+    hit = cached.get("status") in CACHE_HIT_STATUSES
+    return hit, cached
+
+
 # ============================================================================
 # 多进程跑批（2026-10-17，--workers）
 # ============================================================================
@@ -1628,12 +1660,12 @@ def main() -> int:
     for i, tile in enumerate(tiles, 1):
         tf = tiles_dir / f"{tile.tile_id}.json"
 
-        if not args.force and not args.merge_only:
-            cached = load_tile_result(tf, fp)
-            # ⚠️ 必须同时校验 status == "done"：上一轮失败的瓦片也带着有效指纹躺在
-            # 磁盘上，只按指纹命中会把它当缓存跳过，导致那几块永远补不回来
-            # （本轮 6 块边缘瓦片因此丢失，实测踩过）。
-            if cached is not None and cached.get("status") == "done":
+        # R11：命中判定走共用函数（CLI 与 sidecar 同一份，坑 70 第三次复发）。
+        # 以前这里自己写 "指纹对 + status == done"，sidecar 那份漏了 status，
+        # 两边各写一份的结果就是失败瓦片在桌面端永久静默缺失。
+        if not args.merge_only:
+            hit, cached = load_cache_hit(tf, fp, force=args.force)
+            if hit:
                 skipped += 1
                 all_features.extend(cached.get("gaps", []))
                 area_total += cached.get("stats", {}).get("area_sqm", 0.0)
@@ -1808,8 +1840,8 @@ def _reload_from_disk(tiles_dir: Path, tiles: list[Tile], fp: str
     counts = {c: 0 for c in CLASS_LABEL_CN}   # 含新增三类，避免被 `if k in counts` 过滤
     area = 0.0
     for t in tiles:
-        obj = load_tile_result(tiles_dir / f"{t.tile_id}.json", fp)
-        if obj is None or obj.get("status") != "done":
+        hit, obj = load_cache_hit(tiles_dir / f"{t.tile_id}.json", fp)
+        if not hit:
             continue
         feats.extend(obj.get("gaps", []))
         area += obj.get("stats", {}).get("area_sqm", 0.0)
