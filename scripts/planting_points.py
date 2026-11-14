@@ -32,9 +32,10 @@ import math
 from typing import Any, Iterable
 
 from pyproj import Transformer
-from shapely.geometry import Point, shape
+from shapely.geometry import Point, box as shp_box, shape
 from shapely.ops import transform as shp_transform
 from shapely.prepared import prep
+from grid_prior import LATTICE_CELL_M
 
 TARGET_CRS = "EPSG:32649"      # UTM 49N（与 grid_prior.TARGET_CRS 一致）
 WGS84 = "EPSG:4326"
@@ -60,7 +61,8 @@ def feature_priority(pr: dict) -> int:
       2 手画 / 编辑过的空地（`source=manual` / `class=manual_add` / `edited`）
     同级靠稳定排序保持输入顺序。
     """
-    if pr.get("lattice_origin_utm") or pr.get("lattice_origin_lonlat"):
+    if (pr.get("lattice_origin_utm") or pr.get("lattice_origin_lonlat")
+            or pr.get("lattice_cells")):
         return 0
     if (pr.get("source") == "manual" or pr.get("class") == "manual_add"
             or pr.get("edited") is True):
@@ -231,10 +233,19 @@ def _slot_point(poly_utm) -> Point:
     return poly_utm.representative_point()
 
 
-def _grid_points_in(poly_utm, grid, clearance_m: float) -> list[tuple[float, float]]:
-    """在一个多边形内枚举落在「退让后区域」里的格点，返回 UTM 坐标列表。"""
+def _grid_points_in(poly_utm, grid, clearance_m: float, clip_box=None,
+                    point_filter=None) -> list[tuple[float, float]]:
+    """在一个多边形内枚举落在「退让后区域」里的格点，返回 UTM 坐标列表。
+
+    R13：`clip_box` 把**枚举范围**限制到某个 80 m 单元（省掉 N 个单元各扫全图），
+    但点包含判断仍用完整多边形 `inner` —— 否则单元交界会凭空多出一条"退让带"，
+    每个单元都在边界砍掉一圈点。交界处两套相位的点都生成，交给 R3a 邻近去重。
+    """
     inner = poly_utm.buffer(-clearance_m) if clearance_m > 0 else poly_utm
     if inner.is_empty or inner.area <= 0:
+        return []
+    sub = inner if clip_box is None else inner.intersection(clip_box)
+    if sub.is_empty or sub.area <= 0:
         return []
 
     # 预取网格基矢（避免每次 node_at 重算三角函数）
@@ -246,8 +257,8 @@ def _grid_points_in(poly_utm, grid, clearance_m: float) -> list[tuple[float, flo
     row = float(grid.row_pitch_m)
     skew = float(grid.skew_offset_m)
 
-    # inner 的四个角点 → (du, dv) 范围
-    minx, miny, maxx, maxy = inner.bounds
+    # inner 的四个角点 → (du, dv) 范围（有单元裁剪时用裁剪后范围）
+    minx, miny, maxx, maxy = sub.bounds
     dus, dvs = [], []
     for px, py in ((minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)):
         dx, dy = px - ox, py - oy
@@ -276,6 +287,10 @@ def _grid_points_in(poly_utm, grid, clearance_m: float) -> list[tuple[float, flo
             along_u = ix * pitch + shift
             x = ox + along_u * ux + along_v * vx
             y = oy + along_u * uy + along_v * vy
+            if clip_box is not None and not clip_box.covers(Point(x, y)):
+                continue
+            if point_filter is not None and not point_filter(x, y):
+                continue
             if prepared.contains(Point(x, y)):
                 out.append((x, y))
     return out
@@ -307,6 +322,8 @@ def generate_planting_points(
       "grid": {...},                     # 本次使用的网格参数（便于复现）
     }
     """
+    import dataclasses as _dc
+
     tr_to_utm = Transformer.from_crs(WGS84, TARGET_CRS, always_xy=True)
     tr_to_wgs = Transformer.from_crs(TARGET_CRS, WGS84, always_xy=True)
 
@@ -344,33 +361,77 @@ def generate_planting_points(
         g_here = grid
         lo = pr.get("lattice_origin_utm")
         if lo and hasattr(grid, "origin_x_m"):
-            import dataclasses as _dc
             try:
                 g_here = _dc.replace(grid, origin_x_m=float(lo[0]), origin_y_m=float(lo[1]))
             except TypeError:
                 g_here = grid
+
+        # R13：单圆失败的大空地有 lattice_cells —— 每个 80 m 单元一个相位原点。
+        # 单元的 UTM 方框由 cell 索引（80 m 整数倍）直接算出，与 process_image
+        # 求相位时用的是同一套世界坐标；前端则用同一单元投影出的 rect_lonlat。
+        cell_grids: list[tuple] = []
+        for c in (pr.get("lattice_cells") or []):
+            o, ci, rect = (c.get("origin_utm"), c.get("cell"), c.get("rect_lonlat"))
+            if not o or not ci:
+                continue
+            try:
+                g_cell = _dc.replace(grid, origin_x_m=float(o[0]), origin_y_m=float(o[1]))
+            except TypeError:
+                continue
+            if rect:
+                # ⚠️ 单元边界在世界坐标（UTM 80 m 整数倍）上，但属性里给前端的是
+                # 四角投影回经纬度的**外接矩形**（会略大于 UTM 方框）。两端必须
+                # 用同一份 rect 判点，否则单元交界处 TS 会多收 1 个点（实测）。
+                corners = [tr_to_utm.transform(px, py) for px, py in
+                           ((rect[0], rect[1]), (rect[2], rect[1]),
+                            (rect[2], rect[3]), (rect[0], rect[3]))]
+                cb = shp_box(min(p[0] for p in corners), min(p[1] for p in corners),
+                             max(p[0] for p in corners), max(p[1] for p in corners))
+                def cell_filter(x, y, _r=tuple(rect)):
+                    lon, lat = tr_to_wgs.transform(x, y)
+                    return _r[0] <= lon <= _r[2] and _r[1] <= lat <= _r[3]
+            else:
+                cb = shp_box(ci[0] * LATTICE_CELL_M, ci[1] * LATTICE_CELL_M,
+                             (ci[0] + 1) * LATTICE_CELL_M, (ci[1] + 1) * LATTICE_CELL_M)
+                cell_filter = None
+            cell_grids.append((cb, g_cell, cell_filter))
 
         if cls == "vacant_slot":
             # 一个种植单元缺 1 棵树 → 固定 1 个点。
             # 有局部格网时取"离质心最近、且落在空地里的格点"—— 那正是缺的那棵树原来的位置，
             # 与同一行的邻树对齐；否则退回质心 / 面内点。
             pt = _slot_point(poly_utm)
-            if lo:
+            snap_grid = g_here
+            if cell_grids:
+                for cb, g_cell, filt in cell_grids:
+                    inside = filt(pt.x, pt.y) if filt else cb.covers(pt)
+                    if inside:
+                        snap_grid = g_cell
+                        break
+            if lo or cell_grids:
                 # ⚠️ 必须是「真最近格点」，不是 xy_to_grid 后各自 round（执行单 R1）。
                 #    三角格网上后者会偏一整个株距，交付点位与前端预览对不上。
-                nx, ny = g_here.nearest_node(pt.x, pt.y)
+                nx, ny = snap_grid.nearest_node(pt.x, pt.y)
                 if poly_utm.contains(Point(nx, ny)):
                     pt = Point(nx, ny)
             cand = [(pt.x, pt.y)]
             source = "slot"
+        elif cell_grids:
+            # 逐单元排坑：每个单元用自己的相位、只枚举落在本单元的格点。
+            # 单元交界处两套相位的点都会生成，交给下面统一的空间邻近去重（R3a）。
+            cand = []
+            for cb, g_cell, filt in cell_grids:
+                cand.extend(_grid_points_in(poly_utm, g_cell, clearance_m,
+                                            clip_box=cb, point_filter=filt))
+            source = "grid"
         else:
             cand = _grid_points_in(poly_utm, g_here, clearance_m)
             source = "grid"
-            if not cand:
-                # 负缓冲后为空，或枚举后无点 → 记为"窄条排不下"
-                if poly_utm.buffer(-clearance_m).is_empty if clearance_m > 0 else False:
-                    skipped_narrow.append(gap_id)
-                continue
+        if not cand:
+            # 负缓冲后为空，或枚举后无点 → 记为"窄条排不下"
+            if poly_utm.buffer(-clearance_m).is_empty if clearance_m > 0 else False:
+                skipped_narrow.append(gap_id)
+            continue
 
         n_here = 0
         for x, y in cand:

@@ -112,7 +112,7 @@ from grid_prior import (  # noqa: E402
     check_density_consistency, DEFAULT_TARGET_DENSITY_PER_HA,
     summarize_unplantable, UNPLANTABLE_CLASSES, CLASS_SEMANTICS,
     CLASS_UNDEVELOPED,
-    DEFAULT_PRIOR_PITCH_M,
+    DEFAULT_PRIOR_PITCH_M, LATTICE_CELL_M,
     summarize_priority, PRIORITY_LABEL_CN, PRIORITY_GROUPS,
 )
 from landcover import (detect_unplantable, detect_grass,  # noqa: E402
@@ -2096,6 +2096,73 @@ LATTICE_MIN_COHERENCE = 0.2
 # R14：落在影像范围内的树冠顶点少于这个数，就认为 CHM 属于别的地块
 CHM_GRID_MIN_TOPS = 200
 
+# ---- R13：单圆失败的大空地改用「世界坐标锚定的 80 m 单元」分别定相位 ----
+# 尺寸的唯一真值在 grid_prior（见该处注释），这里只算邻域半径。
+LATTICE_CELL_RADIUS_M = 40.0 * np.sqrt(2.0) + 40.0
+LATTICE_COHERENCE_ALPHA = 0.01
+
+
+def lattice_coherence_threshold(n: int) -> float:
+    """局部门槛随支撑点数缩放（R2 第 3 条 / R13 第 1 条指定复用）。
+
+    纯随机点通过固定 0.2 门槛的概率：N=12 时 40%、N=20 时 20%。
+    用 Rayleigh 分布的分位数 ``sqrt(ln(1/α)/(2N))``（α=1%）把假阳性压到 1%：
+    N=12 → 0.438、N=31 → 0.273、N=65 → 0.188（此时取下限 0.2）。
+    """
+    return max(LATTICE_MIN_COHERENCE,
+               float(np.sqrt(np.log(1.0 / LATTICE_COHERENCE_ALPHA)
+                             / (2.0 * max(int(n), 1)))))
+
+
+def _lattice_cells_for_gap(g_utm, kd, tops, pitch: float, row: float,
+                           skew: float, az: float, to_ll) -> list[dict]:
+    """R13：把一块空地按 UTM 80 m 整数倍网格切单元，逐单元求相位。
+
+    单元边界取**世界坐标**（不是瓦片、也不是多边形形状），所以同一块地
+    无论瓦片怎么切，单元划分与相位都完全一致（验收 3）。
+    返回每单元的 dict，含 ``cell`` / ``ctr`` / ``rect_utm`` / ``rect_lonlat`` /
+    ``origin_utm`` / ``origin_lonlat`` / ``coherence`` / ``support`` / ``source``。
+    ``rect_lonlat`` 是单元四角严格投影回经纬度后的外接矩形，供前端
+    （只有局部等距近似、没有 UTM 变换）按单元裁剪排坑。
+    """
+    minx, miny, maxx, maxy = g_utm.bounds
+    cells: list[dict] = []
+    i0, i1 = int(np.floor(minx / LATTICE_CELL_M)), int(np.floor(maxx / LATTICE_CELL_M))
+    j0, j1 = int(np.floor(miny / LATTICE_CELL_M)), int(np.floor(maxy / LATTICE_CELL_M))
+    for i in range(i0, i1 + 1):
+        for j in range(j0, j1 + 1):
+            x0, y0 = i * LATTICE_CELL_M, j * LATTICE_CELL_M
+            x1, y1 = x0 + LATTICE_CELL_M, y0 + LATTICE_CELL_M
+            rect_utm = shp_box(x0, y0, x1, y1)
+            if not g_utm.intersects(rect_utm):
+                continue
+            ctr = np.array([x0 + LATTICE_CELL_M / 2, y0 + LATTICE_CELL_M / 2])
+            idx = kd.query_ball_point(ctr, LATTICE_CELL_RADIUS_M)
+            n = len(idx)
+            res = (lattice_phase_origin(tops[idx], pitch, row, skew, az, ref=ctr)
+                   if n >= LATTICE_MIN_TOPS else None)
+            coh = float(res[1]) if res else 0.0
+            ok = res is not None and coh >= lattice_coherence_threshold(n)
+            origin = np.asarray(res[0]) if ok else None
+            corners = [to_ll.transform(px, py) for px, py in
+                       ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+            cells.append({
+                "cell": [i, j],
+                "ctr": ctr,
+                "rect_utm": rect_utm,
+                "rect_lonlat": [min(float(c[0]) for c in corners),
+                                min(float(c[1]) for c in corners),
+                                max(float(c[0]) for c in corners),
+                                max(float(c[1]) for c in corners)],
+                "origin_utm": origin,
+                "origin_lonlat": (to_ll.transform(float(origin[0]), float(origin[1]))
+                                  if origin is not None else None),
+                "coherence": coh,
+                "support": n,
+                "source": "own" if ok else None,
+            })
+    return cells
+
 
 def image_bounds_utm(ds) -> tuple[float, float, float, float] | None:
     """影像四角 → UTM 49N 外接矩形（R14，CLI 与 sidecar 共用）。
@@ -2247,13 +2314,43 @@ def grid_from_chm(args, say=None, image_bounds_utm=None) -> tuple[GridModel, dic
     return grid, report
 
 
+def fill_cell_nearests(cells: list[dict], pool: list[tuple], to_ll) -> list[dict]:
+    """R13 第 2 条：没有可信相位的单元**沿用最近的可信单元原点**。
+
+    先在同一块空地内找（``cells`` 里 source="own" 的），再向外找
+    （``pool`` = 其它空地算出的可信单元）。株距 / 方位全园一致，相位可以
+    外推（参数误差 0.2% × 100 m = 0.2 m，可接受）。
+    ``pool`` 由调用方在**所有**空地算完 own 之后汇总，避免要素顺序依赖
+    —— 否则两种瓦片切法（要素顺序不同）会给出不同结果。
+    """
+    trusted = [cc for cc in cells if cc["origin_utm"] is not None]
+    for cc in cells:
+        if cc["origin_utm"] is not None:
+            cc["source"] = "own"
+            continue
+        near = (min(trusted, key=lambda t: np.linalg.norm(t["ctr"] - cc["ctr"]))
+                if trusted else None)
+        if near is not None:
+            cc["origin_utm"] = np.asarray(near["origin_utm"])
+            cc["origin_lonlat"] = near["origin_lonlat"]
+        elif pool:
+            _pc, po = min(pool, key=lambda t: np.linalg.norm(t[0] - cc["ctr"]))
+            cc["origin_utm"] = np.asarray(po)
+            cc["origin_lonlat"] = to_ll.transform(float(po[0]), float(po[1]))
+        cc["source"] = "nearest" if cc["origin_utm"] is not None else None
+    return [cc for cc in cells if cc["origin_utm"] is not None]
+
+
 def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_crs,
                                say=None) -> list[dict]:
-    """每块空地用**它周围**的树冠顶点单独定格网相位，再按这张局部格网重新分类（2026-11-04）。
+    """每块空地用**它周围**的树冠顶点单独定格网相位，再按这张局部格网重新分类。
 
-    写入 ``lattice_origin_utm`` / ``lattice_origin_lonlat`` / ``lattice_coherence`` /
-    ``lattice_support``；周围顶点太少或相干度太低的，``lattice_phase = "global"``（用全局原点）。
-    分类判据不变（``classify_gaps``），变的只是"格点在哪"—— 株位空缺的判定与放样点从此对准真实树位。
+    2026-11-04：单圆（质心为心、半径 = 最远顶点 + 40 m）成功 → ``lattice_phase="local"``。
+    2026-11-10 R13：单圆失败的大块 / 狭长空地（半径 200~520 m，圆里混了几个相位不同的
+    种植块 → 相干度被拉低）改用**世界坐标锚定的 80 m 单元**分别定相位，
+    ``lattice_phase="cells"`` + ``lattice_cells``；腹地无可信相位的单元沿用最近
+    可信单元的原点。已是 local 的空地行为**完全不变**（执行单 R13 第 4 条）。
+    分类判据不变（``classify_gaps``），变的只是"格点在哪"。
     """
     import dataclasses as _dc
 
@@ -2269,12 +2366,24 @@ def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_
     to_ll = Transformer.from_crs(TARGET_CRS, src_crs, always_xy=True)
     pitch, row, skew, az = (grid.plant_pitch_m, grid.row_pitch_m,
                             grid.skew_offset_m, grid.row_azimuth_deg)
-    n_local = n_global = 0
-    out = []
-    for f in features:
+    n_local = n_cells = n_global = n_few = 0
+    out: list = [None] * len(features)
+    pending: list[tuple] = []
+
+    def _emit(k, f, pr, g_utm, area, g_loc, extra):
+        lab = classify_gaps([gap_geometry(g_utm, pr["gap_id"], area)], g_loc,
+                            **classify_kwargs(args))[0]
+        keep = {kk: pr[kk] for kk in ("seam_pieces", "mask_split") if kk in pr}
+        feat = _gap_feature(pr["gap_id"], g_utm, area, lab, _shp.geometry.shape(f["geometry"]))
+        feat["properties"].update(keep)
+        feat["properties"].update(extra)
+        out[k] = feat
+
+    # ---- 阶段 1：单圆；成功的直接出 local，失败的记录下来走分单元 ----
+    for k, f in enumerate(features):
         pr = f["properties"]
         if pr["class"] not in PLANTABLE_GAP_CLASSES:
-            out.append(f)
+            out[k] = f
             continue
         g_utm = shp_transform(lambda x, y, z=None: to_utm.transform(x, y), shape(f["geometry"]))
         c = np.array(g_utm.centroid.coords[0])
@@ -2283,29 +2392,64 @@ def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_
         idx = kd.query_ball_point(c, rad + LATTICE_RADIUS_M)
         res = (lattice_phase_origin(tops[idx], pitch, row, skew, az, ref=c)
                if len(idx) >= LATTICE_MIN_TOPS else None)
+        area = float(pr.get("area_sqm") or g_utm.area)
         if res is not None and res[1] >= LATTICE_MIN_COHERENCE:
             o, coh = res
             g_loc = _dc.replace(grid, origin_x_m=float(o[0]), origin_y_m=float(o[1]))
             lon, lat = to_ll.transform(float(o[0]), float(o[1]))
-            extra = {"lattice_phase": "local",
-                     "lattice_origin_utm": [round(float(o[0]), 3), round(float(o[1]), 3)],
-                     "lattice_origin_lonlat": [round(float(lon), 9), round(float(lat), 9)],
-                     "lattice_coherence": round(float(coh), 3),
-                     "lattice_support": int(len(idx))}
+            _emit(k, f, pr, g_utm, area, g_loc, {
+                "lattice_phase": "local",
+                "lattice_origin_utm": [round(float(o[0]), 3), round(float(o[1]), 3)],
+                "lattice_origin_lonlat": [round(float(lon), 9), round(float(lat), 9)],
+                "lattice_coherence": round(float(coh), 3),
+                "lattice_support": int(len(idx)),
+            })
             n_local += 1
         else:
-            g_loc = grid
-            extra = {"lattice_phase": "global", "lattice_support": int(len(idx))}
-            n_global += 1
-        area = float(pr.get("area_sqm") or g_utm.area)
-        lab = classify_gaps([gap_geometry(g_utm, pr["gap_id"], area)], g_loc,
-                            **classify_kwargs(args))[0]
-        keep = {k: pr[k] for k in ("seam_pieces", "mask_split") if k in pr}
-        feat = _gap_feature(pr["gap_id"], g_utm, area, lab, _shp.geometry.shape(f["geometry"]))
-        feat["properties"].update(keep)
-        feat["properties"].update(extra)
-        out.append(feat)
-    say(f"局部格网相位：{n_local} 块空地用周围树冠顶点定相位，{n_global} 块周围树太少退回全局相位")
+            cells = _lattice_cells_for_gap(g_utm, kd, tops, pitch, row, skew, az, to_ll)
+            pending.append((k, f, pr, g_utm, area, c, cells, int(len(idx))))
+
+    # ---- 阶段 2：全局可信池（跨空地），再统一补 nearest ----
+    # 两阶段是为了**消除要素顺序依赖**：若一边算一边补，前面的空地看不到后面
+    # 空地的可信单元，两种瓦片切法（要素顺序不同）就会给出不同结果。
+    pool = [(cc["ctr"], cc["origin_utm"]) for _k, _f, _pr, _g, _a, _c, cells, _n in pending
+            for cc in cells if cc["origin_utm"] is not None]
+
+    for k, f, pr, g_utm, area, c, cells, n_support in pending:
+        usable = fill_cell_nearests(cells, pool, to_ll)
+        if not usable:
+            _emit(k, f, pr, g_utm, area, grid,
+                  {"lattice_phase": "global", "lattice_support": n_support})
+            if n_support < LATTICE_MIN_TOPS:
+                n_few += 1
+            else:
+                n_global += 1
+            continue
+        # 分类仍用**一个**网格：离质心最近的可信单元原点。
+        # 分类判据不变，只是相位比全局原点准；放样点则由 planting_points /
+        # estimate 按点所在单元分别选原点（R13 第 3 条）。
+        ref = min(usable, key=lambda cc: np.linalg.norm(cc["ctr"] - c))
+        o = ref["origin_utm"]
+        g_loc = _dc.replace(grid, origin_x_m=float(o[0]), origin_y_m=float(o[1]))
+        cell_props = [{
+            "cell": cc["cell"],
+            "origin_utm": [round(float(cc["origin_utm"][0]), 3),
+                           round(float(cc["origin_utm"][1]), 3)],
+            "origin_lonlat": [round(float(cc["origin_lonlat"][0]), 9),
+                              round(float(cc["origin_lonlat"][1]), 9)],
+            "rect_lonlat": [round(float(v), 9) for v in cc["rect_lonlat"]],
+            "coherence": round(float(cc["coherence"]), 3),
+            "support": int(cc["support"]),
+            "source": cc["source"],
+        } for cc in usable]
+        _emit(k, f, pr, g_utm, area, g_loc,
+              {"lattice_phase": "cells", "lattice_cells": cell_props,
+               "lattice_support": n_support})
+        n_cells += 1
+
+    say(f"局部格网相位：{n_local} 块单圆定相位；{n_cells} 块跨多个种植块、"
+        f"改用 {LATTICE_CELL_M:g} m 分单元相位；"
+        f"{n_global} 块退回全局相位；{n_few} 块周围树太少")
     return out
 
 

@@ -183,6 +183,12 @@ METHOD_PRIOR_FALLBACK = "prior_fallback"    # 先验回落（兜底）
 # 实测先验（WGR17.tif，跨 8 区中位值）
 DEFAULT_PRIOR_PITCH_M = 8.45        # 种植间距（三角形边长 / 正方形边长）
 
+# R13：局部相位按世界坐标锚定的网格单元分别求（米）。
+# 单元边界取 UTM 坐标的 80 m 整数倍，与瓦片怎么切、多边形什么形状无关。
+# ⚠️ Python 侧（process_image 求相位 / planting_points 排坑）与前端
+#    （estimate.ts 按 rect_lonlat 裁剪）必须用同一个尺寸，所以常量放这里。
+LATTICE_CELL_M = 80.0
+
 
 # 用户给定的**设计密度**（株/公顷）。油棕园常规设计：1 ha 至多 150 株。
 # 该值由用户在桌面端（Tauri）配置，用途：

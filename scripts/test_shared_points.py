@@ -110,6 +110,47 @@ def feature(gap_id: str, cls: str, geom, local_origin: tuple[float, float] | Non
     return {"type": "Feature", "geometry": mapping(geom_wgs), "properties": props}
 
 
+def build_cells_feature() -> dict:
+    """R13：一块横跨两个 80 m 单元的大空地，两端必须逐点一致。
+
+    两个单元给**不同的相位**（右边那个整体偏移 2.5 / 1.7 m），每半边各自
+    对准本侧格点。Python 用 `cell` 索引算 UTM 方框，TS 用同一单元投影出的
+    `rect_lonlat` 裁剪 —— 这个用例就是在卡这两种表示是否等价。
+    """
+    cell = GP.LATTICE_CELL_M
+    i0 = int(math.floor(ORIGIN_X / cell))
+    j0 = int(math.floor(ORIGIN_Y / cell))
+    x0, y0 = i0 * cell, j0 * cell
+    big = box(x0 + 20, y0 + 10, x0 + 140, y0 + 70)       # 横跨 x0+cell 的单元边界
+    cells = []
+    for k, ci in enumerate((i0, i0 + 1)):
+        cx0, cy0 = ci * cell, j0 * cell
+        base = (ORIGIN_X + (2.5 if k else 0.0), ORIGIN_Y + (1.7 if k else 0.0))
+        o = nearby_node((cx0 + cell / 2, cy0 + cell / 2), base=base)
+        corners = [to_lonlat(px, py) for px, py in
+                   ((cx0, cy0), (cx0 + cell, cy0),
+                    (cx0 + cell, cy0 + cell), (cx0, cy0 + cell))]
+        cells.append({
+            "cell": [ci, j0],
+            "origin_utm": [round(o[0], 6), round(o[1], 6)],
+            "origin_lonlat": [round(v, 10) for v in to_lonlat(*o)],
+            "rect_lonlat": [round(min(float(c[0]) for c in corners), 10),
+                            round(min(float(c[1]) for c in corners), 10),
+                            round(max(float(c[0]) for c in corners), 10),
+                            round(max(float(c[1]) for c in corners), 10)],
+            "coherence": 0.6, "support": 53, "source": "own",
+        })
+    geom_wgs = shp_transform(TR_TO_WGS.transform, big)
+    return {
+        "type": "Feature", "geometry": mapping(geom_wgs),
+        "properties": {
+            "gap_id": "S6-cells-two-units", "class": "open_patch",
+            "area_sqm": round(float(big.area), 3),
+            "lattice_phase": "cells", "lattice_cells": cells,
+        },
+    }
+
+
 def build_features() -> list[dict]:
     feats: list[dict] = []
 
@@ -151,6 +192,9 @@ def build_features() -> list[dict]:
     #    随离原点距离线性增长（实测 566 m → 25 cm），放远了会淹没 1 cm 对账线。
     feats.append(feature("S5-open-global", "open_patch",
                          box(522707.0, 131507.0, 522717.0, 131517.0), None))
+
+    # ⑥ R13：跨两个 80 m 单元的大空地，每个单元一个相位
+    feats.append(build_cells_feature())
 
     return feats
 

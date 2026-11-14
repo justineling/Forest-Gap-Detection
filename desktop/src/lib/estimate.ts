@@ -94,7 +94,10 @@ export function estimateByArea(areaSqm: number): number {
 }
 
 /** 单个多边形的网格排坑（返回经纬度点位） */
-function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, number]): PlantingPoint[] {
+function gridPointsInFeature(
+  f: GapFeature, grid: GridSpec, origin: [number, number],
+  cellRect?: [number, number, number, number],
+): PlantingPoint[] {
   const { plant_pitch_m: pitch, row_pitch_m: row, clearance_m: clr } = grid
   // 三角形错行：偶数行偏移半个株距（实测 planting_grid.skew_offset_m = pitch/2）
   const skew = grid.skew_m ?? pitch / 2
@@ -116,10 +119,21 @@ function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, num
   const locals = outers.flat().map(toLocal)
   const xs = locals.map((p) => p[0])
   const ys = locals.map((p) => p[1])
-  const bx0 = Math.min(...xs)
-  const bx1 = Math.max(...xs)
-  const by0 = Math.min(...ys)
-  const by1 = Math.max(...ys)
+  let bx0 = Math.min(...xs)
+  let bx1 = Math.max(...xs)
+  let by0 = Math.min(...ys)
+  let by1 = Math.max(...ys)
+  if (cellRect) {
+    // R13：把枚举范围限制到这个 80 m 单元。点包含判断仍用完整多边形
+    // （pointInGeometry / distToBoundaryM），所以单元交界不会凭空砍掉一圈点。
+    const [rx0, ry0] = toLocal([cellRect[0], cellRect[1]])
+    const [rx1, ry1] = toLocal([cellRect[2], cellRect[3]])
+    bx0 = Math.max(bx0, Math.min(rx0, rx1))
+    bx1 = Math.min(bx1, Math.max(rx0, rx1))
+    by0 = Math.max(by0, Math.min(ry0, ry1))
+    by1 = Math.min(by1, Math.max(ry0, ry1))
+    if (bx1 < bx0 || by1 < by0) return []
+  }
 
   // 局部坐标 → 网格索引范围（对 bbox 四角投影到 u / v 轴上取极值）
   const corners: Array<[number, number]> = [
@@ -166,6 +180,10 @@ function gridPointsInFeature(f: GapFeature, grid: GridSpec, origin: [number, num
       const y = alongU * uy + j * row * vy
       if (x < bx0 - pitch || x > bx1 + pitch || y < by0 - pitch || y > by1 + pitch) continue
       const ll = toLonLat(x, y)
+      // R13：枚举范围带了 pitch 余量，最终仍要严格判断点是否落在本单元，
+      // 否则单元交界会多收点（与 Python 的 cell_filter 必须逐点一致）。
+      if (cellRect && (ll[0] < cellRect[0] || ll[0] > cellRect[2]
+                       || ll[1] < cellRect[1] || ll[1] > cellRect[3])) continue
       if (!pointInGeometry(ll, f.geometry)) continue
       const d = distToBoundaryM(ll, f.geometry)
       if (d < clr) continue
@@ -218,7 +236,7 @@ function nearestNode(p: [number, number], grid: GridSpec, origin: [number, numbe
  */
 function featurePriority(f: GapFeature): number {
   const p = f.properties
-  if (p.lattice_origin_lonlat) return 0                 // 局部相位：来自周围真实树冠顶点
+  if (p.lattice_origin_lonlat || p.lattice_cells?.length) return 0  // 局部 / 分单元相位
   if (p.source === 'manual' || p.class === 'manual_add' || p.edited === true) return 2
   return 1                                             // 全局相位的检测空地
 }
@@ -372,11 +390,20 @@ export function estimate(
     let pts: PlantingPoint[]
     // 这块空地自己的格网相位（有就用，否则用全局原点）—— 与 Python planting_points 同一规则
     const lo = f.properties.lattice_origin_lonlat
+    const cells = f.properties.lattice_cells
     const fOrigin: [number, number] = lo ? [lo[0], lo[1]] : origin
     if (isSlot) {
       // 有局部格网时，株位点取"离面内点最近、且落在空地里的格点"：那正是缺的那棵树原来的位置
       const c0 = insidePoint(f.geometry)
-      const node = lo ? nearestNode(c0, grid, fOrigin) : null
+      // R13：分单元相位的空地，按面内点落在哪个单元就用那个单元的原点吸附
+      let snapOrigin = fOrigin
+      if (cells?.length) {
+        const hit = cells.find((c) => c.rect_lonlat
+          && c0[0] >= c.rect_lonlat[0] && c0[0] <= c.rect_lonlat[2]
+          && c0[1] >= c.rect_lonlat[1] && c0[1] <= c.rect_lonlat[3])
+        if (hit) snapOrigin = hit.origin_lonlat
+      }
+      const node = (lo || cells?.length) ? nearestNode(c0, grid, snapOrigin) : null
       const c = node && pointInGeometry(node, f.geometry) ? node : c0
       pts = [
         {
@@ -386,6 +413,9 @@ export function estimate(
           edge_dist_m: Math.round(distToBoundaryM(c, f.geometry) * 100) / 100,
         },
       ]
+    } else if (cells?.length) {
+      // R13：逐单元排坑，每个单元用自己的相位；交界处的重复点交给下面的 R3a 去重
+      pts = cells.flatMap((c) => gridPointsInFeature(f, grid, c.origin_lonlat, c.rect_lonlat))
     } else {
       pts = gridPointsInFeature(f, grid, fOrigin)
     }

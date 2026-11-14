@@ -281,6 +281,14 @@ def main() -> int:
                  "test_shared_points --verify（夹具与 Python 一致）")
     rec("r1-snap", ok1 and ok2, time.time() - t0)
 
+    # ---- 12e. R13 分单元相位 ----
+    # 守的是"大空地腹地仍用全局相位、一半以上放样点没对上树行"：
+    # 合成两块相位不同的种植区 + 横跨两者的大空地，要求每半边各自对准本侧格点。
+    print("\n[12e] R13 分单元相位（两相位种植块 / 横跨大空地 / 每半边对准本侧）")
+    ok, dt = run([str(PY), "scripts/test_cells.py"], ROOT,
+                 "test_cells（分单元相位 / 合成对照）")
+    rec("cells", ok, dt)
+
     # ---- 13. 契约测试 ----
     if not args.fast:
         print("\n[13] 契约测试")

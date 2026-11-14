@@ -50,10 +50,27 @@ export interface GapProps {
    * 园区分块种植、各块起点相位不同，全局只用一个原点会与真实树位完全对不上；
    * 有它时前端排坑 / 株位点用它，与 Python 放样点逐株一致。
    */
-  lattice_phase?: 'local' | 'global'
+  lattice_phase?: 'local' | 'global' | 'cells'
   lattice_origin_lonlat?: [number, number]
   lattice_coherence?: number
   lattice_support?: number
+  /**
+   * R13：单圆求相位失败的大空地，按世界坐标 80 m 单元分别定相位。
+   * 每个单元一个原点；`rect_lonlat` 是该单元四角投影回经纬度后的外接矩形，
+   * 前端（没有 UTM 变换）据此判断放样点属于哪个单元。
+   */
+  lattice_cells?: LatticeCell[]
+}
+
+/** R13 分单元相位的单元记录（与 Python `_lattice_cells_for_gap` 对应） */
+export interface LatticeCell {
+  cell: [number, number]
+  origin_utm: [number, number]
+  origin_lonlat: [number, number]
+  rect_lonlat: [number, number, number, number]
+  coherence: number
+  support: number
+  source: 'own' | 'nearest'
 }
 
 /** 最小 GeoJSON 类型（不引 @types/geojson，避免多余依赖） */
