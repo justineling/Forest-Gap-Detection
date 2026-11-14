@@ -223,7 +223,31 @@ function featurePriority(f: GapFeature): number {
   return 1                                             // 全局相位的检测空地
 }
 
-/** R3：按空间邻近去重（0.5 × 株距）。与 Python `_PointDedup` 同一规则。 */
+/**
+ * R3a：去重阈值 = 1.05 × 格网覆盖半径（与 Python `dedup_radius` 逐行对应）。
+ *
+ * 格点三角形三边 a=pitch、b=|(skew,row)|、c=|(pitch−skew,row)|，
+ * 面积 K=pitch·row/2，外接圆半径 R=abc/(4K)=abc/(2·pitch·row)。
+ * 等边三角 0.577×株距、正方形 0.707×株距。R3 的 0.5×株距 小于覆盖半径，
+ * 另一套相位落在三角形中心的点会全部漏网（探针 56 → 112 点）。
+ * 上限 0.95×min(a,b,c) 防止同一套格网的相邻格点互相吃掉。
+ */
+export function dedupRadius(pitch: number, row: number, skew: number): number {
+  const a = Math.max(pitch, 1e-6)
+  const rr = Math.max(row, 1e-6)
+  const b = Math.hypot(skew, rr)
+  const c = Math.hypot(a - skew, rr)
+  const den = 2 * a * rr
+  const cover = den > 1e-9 ? (a * b * c) / den : a / 2
+  return Math.min(1.05 * cover, 0.95 * Math.min(a, b, c))
+}
+
+/** R3a：同一优先级内株位空缺优先（株位点 = 原来那棵树的位置）。 */
+function featureSortKey(f: GapFeature): [number, number] {
+  return [featurePriority(f), f.properties.class === 'vacant_slot' ? 0 : 1]
+}
+
+/** R3/R3a：按空间邻近去重，阈值由 `dedupRadius` 按格网算出。 */
 function makePointDedup(minDist: number, origin: [number, number]) {
   const { x: mx, y: my } = metersPerDeg(origin[1])
   const d2 = minDist * minDist
@@ -291,9 +315,11 @@ export function estimate(
     .filter(
       (f) => isPlantable(f.properties.class) && (!opts.onlyIds || opts.onlyIds.has(f.properties.gap_id)),
     )
-    // R3：重叠区优先保留可信度高的那套点；Array.sort 在现代 JS 是稳定排序，
-    // 同级保持输入顺序（与 Python `sorted(...)` 一致）
-    .sort((a, b) => featurePriority(a) - featurePriority(b))
+    // R3a：排序键 = (相位可信度, 株位优先)；Array.sort 稳定，同级保持输入顺序
+    .sort((a, b) => {
+      const ka = featureSortKey(a), kb = featureSortKey(b)
+      return ka[0] - kb[0] || ka[1] - kb[1]
+    })
 
   // 网格原点：优先用算法锚点，其次显式指定，最后退回几何原点（相位任意）
   let origin: [number, number]
@@ -318,9 +344,13 @@ export function estimate(
 
   // 网格相位：以原点为基准对齐到最近的格点（避免原点偏移半个格子）
   const points: PlantingPoint[] = []
-  // R3：不再用 `toFixed(7)` 判重 —— 两套相位下的点差 2~4 m，坐标不同但
-  // 物理上是同一个株位。改成 0.5 × 株距 的空间邻近判定（与 Python 同规则）。
-  const dedup = makePointDedup(0.5 * grid.plant_pitch_m, origin)
+  // R3a：阈值按格网覆盖半径算（1.05 × R，上限 0.95 × 最短边），
+  // 不再写死 0.5 × 株距 —— 后者挡不住落在三角形中心的另一套相位点。
+  const dedup = makePointDedup(
+    dedupRadius(grid.plant_pitch_m, grid.row_pitch_m,
+                grid.skew_m ?? grid.plant_pitch_m / 2),
+    origin,
+  )
   const per_gap: EstimateResult['per_gap'] = []
 
   for (const f of target) {

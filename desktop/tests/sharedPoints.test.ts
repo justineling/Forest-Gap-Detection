@@ -13,7 +13,7 @@
  * 跑法：npm test（见 package.json）
  */
 import { existsSync, readFileSync } from 'node:fs'
-import { estimate } from '../src/lib/estimate'
+import { estimate, dedupRadius } from '../src/lib/estimate'
 import { metersPerDeg } from '../src/lib/geometry'
 import type { GapFeature } from '../src/types'
 
@@ -105,7 +105,8 @@ if (!FIXTURE_FILE) {
   check(group.points.length < separate, 'R3 重叠区确实发生了去重',
     `整组 ${group.points.length} < 各自相加 ${separate}`)
 
-  const thr = 0.5 * fx.grid.plant_pitch_m
+  const thr = dedupRadius(fx.grid.plant_pitch_m, fx.grid.row_pitch_m,
+                          fx.grid.skew_offset_m ?? fx.grid.plant_pitch_m / 2)
   let minD = Infinity
   for (let i = 0; i < group.points.length; i++) {
     for (let j = i + 1; j < group.points.length; j++) {
@@ -113,7 +114,7 @@ if (!FIXTURE_FILE) {
       minD = Math.min(minD, Math.hypot((a.lon - b.lon) * mx, (a.lat - b.lat) * my))
     }
   }
-  check(minD >= thr - 0.01, 'R3 任意两点间距 >= 0.5 × 株距',
+  check(minD >= thr - 0.01, 'R3a 任意两点间距 >= 1.05 × 覆盖半径',
     `最小 ${minD.toFixed(3)} m / 门槛 ${thr.toFixed(3)} m`)
   check(group.points.every((p) => ovFeatures.some((f) => f.properties.gap_id === p.gap_id)),
     'R3 保留下来的点仍归属夹具里的要素')

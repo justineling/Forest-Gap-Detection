@@ -13,7 +13,7 @@
  * 数据：默认读 output/wgr17-final-gaps.geojson（真实结果）。
  * 该文件不入库（output/ 走 Google Drive），缺失时自动跳过并说明。
  */import { existsSync, readFileSync } from 'node:fs'
-import { estimate, SINGLE_TREE_AREA_M2, DEFAULT_GRID } from '../src/lib/estimate'
+import { estimate, dedupRadius, SINGLE_TREE_AREA_M2, DEFAULT_GRID } from '../src/lib/estimate'
 import { pointInGeometry, polygonAreaM2, metersPerDeg } from '../src/lib/geometry'
 import type { GapFeature, PlantingGrid } from '../src/types'
 
@@ -136,14 +136,15 @@ check(tooClose === 0, '网格点位满足退让距离', `不足 ${tooClose}`)
 check(slotOutside === 0, '★ 株位标记全部落在自己的多边形内', `落在外面 ${slotOutside} / ${slotPts}`)
 console.log(`        （其中株位标记 ${slotPts} 个，不适用退让）`)
 
-// R3：跨要素按「0.5 × 株距」邻近去重后，任意两个放样点的间距不得小于该阈值。
+// R3a：跨要素按「1.05 × 格网覆盖半径」邻近去重后，任意两点间距不得小于该阈值。
 // 这是 R3 的空间不变量，直接量一次，不只是靠"点数变少了"间接推断。
 {
   // `origin` 在类型上是可选的（旧调用方可能不传），实测 estimate() 总会给；
   // 这里退到第一个点的纬度，保证类型安全又不改变尺度。
   const lat0 = res.origin?.[1] ?? res.points[0]?.lat ?? 0
   const { x: mx, y: my } = metersPerDeg(lat0)
-  const thr = 0.5 * res.grid.plant_pitch_m
+  const thr = dedupRadius(res.grid.plant_pitch_m, res.grid.row_pitch_m,
+                          res.grid.skew_m ?? res.grid.plant_pitch_m / 2)
   let minGap = Infinity
   const ps = res.points
   for (let i = 0; i < ps.length; i++) {
@@ -152,7 +153,7 @@ console.log(`        （其中株位标记 ${slotPts} 个，不适用退让）`)
       if (d < minGap) minGap = d
     }
   }
-  check(minGap >= thr - 0.01, 'R3 任意两点间距 >= 0.5 × 株距',
+  check(minGap >= thr - 0.01, 'R3a 任意两点间距 >= 1.05 × 覆盖半径',
     `最小 ${minGap.toFixed(3)} m / 门槛 ${thr.toFixed(3)} m / ${ps.length} 点`)
 }
 
@@ -193,7 +194,7 @@ for (const [cls, v] of byCls) {
 const slot = byCls.get('vacant_slot')
 if (slot) {
   // R3 之前：每块 vacant_slot 固定 1 株，两个口径都等于块数。
-  // R3 起：跨要素按 0.5 × 株距 邻近去重 —— 两块相距不足半个株距的株位
+  // R3a 起：跨要素按 1.05 × 覆盖半径 邻近去重 —— 两块相距不足该阈值的株位
   // 在物理上就是同一个位置，只保留一个。**面积口径（语义 = 缺株块数）不变**，
   // 排坑口径允许少几株；C 节已直接量过"任意两点间距 >= 半个株距"。
   check(

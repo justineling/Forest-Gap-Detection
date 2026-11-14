@@ -43,7 +43,7 @@ from shapely.geometry import Point, Polygon, box, mapping  # noqa: E402
 from shapely.ops import transform as shp_transform  # noqa: E402
 
 import grid_prior as GP  # noqa: E402
-from planting_points import generate_planting_points  # noqa: E402
+from planting_points import dedup_radius, generate_planting_points  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -156,18 +156,26 @@ def build_features() -> list[dict]:
 
 
 def build_overlap_case() -> tuple[list[dict], list[dict]]:
-    """R3：一套局部相位 + 一套全局相位（手画）叠在同一块地上，两端必须给同一批点。
+    """R3a：一套局部相位 + 一套全局相位（手画）叠在同一块地上，两端必须给同一批点。
 
     手画要素刻意放在列表**最前面**，验证两端都按"可信度"排序而不是靠调用方给对顺序。
-    局部相位原点由 `phase_base` 偏移 2.5 / 1.7 m（不是整格平移），
-    这样两套格点相距 2~4 m —— 旧版按坐标字符串去重会**两套都留下**。
+    局部相位相对全局格网偏移到**格点三角形的外心**（(u+v)/3，距离 0.577×株距），
+    这是 R3a 审查探针里最坏的一种偏移：旧阈值 0.5×株距 时两套点会全部留下
+    （56 → 112 点）。`nearby_node` 平移整数个基矢不改变相位差，只把原点挪到
+    要素附近，好让 TS 的局部等距近似与 UTM 的偏差不淹没 1 cm 对账线。
     """
     ov = box(ORIGIN_X - 18, ORIGIN_Y - 18, ORIGIN_X + 6, ORIGIN_Y + 6)
     geom_wgs = shp_transform(TR_TO_WGS.transform, ov)
     geo = mapping(geom_wgs)
 
+    # 30° 格网的两个基矢 → 三角形外心（等边时即重心）
+    _a = math.radians(AZ)
+    ux, uy = PITCH * math.cos(_a), PITCH * math.sin(_a)
+    vx = SKEW * math.cos(_a) - ROW * math.sin(_a)
+    vy = SKEW * math.sin(_a) + ROW * math.cos(_a)
+    worst = ((ux + vx) / 3.0, (uy + vy) / 3.0)
     local = nearby_node((ORIGIN_X - 6, ORIGIN_Y - 6),
-                        base=(ORIGIN_X + 2.5, ORIGIN_Y + 1.7))
+                        base=(ORIGIN_X + worst[0], ORIGIN_Y + worst[1]))
     f_local = {
         "type": "Feature", "geometry": geo,
         "properties": {
@@ -294,12 +302,13 @@ def verify(data: dict) -> int:
                 (math.hypot(a["utm_x"] - b["utm_x"], a["utm_y"] - b["utm_y"])
                  for a, b in zip(expected_ov, got_ov)), default=0.0)
             chk(worst_ov < 0.01, "R3 重叠组逐点一致", f"最大 {worst_ov:.4f} m")
-        # 任意两点间距 >= 0.5 × 株距（R3 验收线）
+        # 任意两点间距 >= 1.05 × 覆盖半径（R3a 验收线）
         xy = [(p["utm_x"], p["utm_y"]) for p in got_ov]
         min_d = min((math.hypot(a[0] - b[0], a[1] - b[1])
                      for i, a in enumerate(xy) for b in xy[i + 1:]), default=999.0)
-        chk(min_d >= 0.5 * PITCH - 0.01, "R3 任意两点间距 >= 0.5 × 株距",
-            f"最小 {min_d:.3f} m / 门槛 {0.5 * PITCH:.3f} m")
+        thr = dedup_radius(PITCH, ROW, SKEW)
+        chk(min_d >= thr - 0.01, "R3a 任意两点间距 >= 1.05 × 覆盖半径",
+            f"最小 {min_d:.3f} m / 门槛 {thr:.3f} m")
 
     print(f"\n{'✅ 全部通过' if failures == 0 else f'❌ {failures} 项失败'}")
     return 0 if failures == 0 else 1
