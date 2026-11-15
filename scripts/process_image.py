@@ -2114,6 +2114,28 @@ def lattice_coherence_threshold(n: int) -> float:
                              / (2.0 * max(int(n), 1)))))
 
 
+def downgrade_borrowed_slot(lab: dict, slot_trusted: bool) -> dict:
+    """R18：借来的相位不足以支撑「株位空缺」判定 → 改判「不确定」。
+
+    执行单 8.3 第 1 项：`vacant_slot` 意味着"这个格点上缺了一棵树"，只有在
+    本块周围能求出**规整的局部格网**时才成立。单圆相位成功（``local``）、
+    或分类所用单元自己求出相位且相干度过门槛（``cells`` / ``own``）才算可信；
+    腹地单元的相位是从邻近可信单元**借**来的（``nearest``），或干脆退回
+    全局原点（``global``），此时"质心贴近格点"只是外推出来的巧合。
+
+    只改类别相关字段：面积、几何、证据分、格号一律不动（决策要求面积不变）。
+    """
+    if slot_trusted or lab.get("class") != CLASS_VACANT_SLOT:
+        return lab
+    out = dict(lab)
+    out["class"] = CLASS_UNCERTAIN
+    out["class_label"] = CLASS_LABEL_CN[CLASS_UNCERTAIN]
+    out["class_semantics"] = CLASS_SEMANTICS[CLASS_UNCERTAIN]
+    out["class_confidence"] = 0.0
+    out["class_reason"] = "周围种植不规整，无法确认缺株位置（本块只有借来的格网相位）"
+    return out
+
+
 def _lattice_cells_for_gap(g_utm, kd, tops, pitch: float, row: float,
                            skew: float, az: float, to_ll) -> list[dict]:
     """R13：把一块空地按 UTM 80 m 整数倍网格切单元，逐单元求相位。
@@ -2366,13 +2388,18 @@ def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_
     to_ll = Transformer.from_crs(TARGET_CRS, src_crs, always_xy=True)
     pitch, row, skew, az = (grid.plant_pitch_m, grid.row_pitch_m,
                             grid.skew_offset_m, grid.row_azimuth_deg)
-    n_local = n_cells = n_global = n_few = 0
+    n_local = n_cells = n_global = n_few = n_demoted = 0
     out: list = [None] * len(features)
     pending: list[tuple] = []
 
-    def _emit(k, f, pr, g_utm, area, g_loc, extra):
-        lab = classify_gaps([gap_geometry(g_utm, pr["gap_id"], area)], g_loc,
-                            **classify_kwargs(args))[0]
+    def _emit(k, f, pr, g_utm, area, g_loc, extra, slot_trusted: bool = True):
+        nonlocal n_demoted
+        lab0 = classify_gaps([gap_geometry(g_utm, pr["gap_id"], area)], g_loc,
+                             **classify_kwargs(args))[0]
+        # R18：只有 local 或「自己所在单元 own 且过门槛」的相位，才允许判株位空缺
+        lab = downgrade_borrowed_slot(lab0, slot_trusted)
+        if lab is not lab0:
+            n_demoted += 1
         keep = {kk: pr[kk] for kk in ("seam_pieces", "mask_split") if kk in pr}
         feat = _gap_feature(pr["gap_id"], g_utm, area, lab, _shp.geometry.shape(f["geometry"]))
         feat["properties"].update(keep)
@@ -2419,7 +2446,8 @@ def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_
         usable = fill_cell_nearests(cells, pool, to_ll)
         if not usable:
             _emit(k, f, pr, g_utm, area, grid,
-                  {"lattice_phase": "global", "lattice_support": n_support})
+                  {"lattice_phase": "global", "lattice_support": n_support},
+                  slot_trusted=False)
             if n_support < LATTICE_MIN_TOPS:
                 n_few += 1
             else:
@@ -2442,14 +2470,20 @@ def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_
             "support": int(cc["support"]),
             "source": cc["source"],
         } for cc in usable]
+        # R18：分类用的是 ref 这一个原点，就得由**它所在单元**的局部证据负责；
+        #      从邻近单元借来的原点（nearest）不足以证明"这个格点缺了一棵树"。
+        slot_trusted = (ref["source"] == "own" and
+                        ref["coherence"] >= lattice_coherence_threshold(ref["support"]))
         _emit(k, f, pr, g_utm, area, g_loc,
               {"lattice_phase": "cells", "lattice_cells": cell_props,
-               "lattice_support": n_support})
+               "lattice_support": n_support},
+              slot_trusted=slot_trusted)
         n_cells += 1
 
     say(f"局部格网相位：{n_local} 块单圆定相位；{n_cells} 块跨多个种植块、"
         f"改用 {LATTICE_CELL_M:g} m 分单元相位；"
         f"{n_global} 块退回全局相位；{n_few} 块周围树太少")
+    say(f"R18：{n_demoted} 块株位空缺因只借到邻近单元相位，改判为不确定（面积不变）")
     return out
 
 

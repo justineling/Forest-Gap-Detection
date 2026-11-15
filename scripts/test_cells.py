@@ -133,5 +133,44 @@ d_plain = p50_to(r_plain, B)
 check(d_plain > 1.0, "对照：全局单相位时右半边对不准 B 区",
       f"P50 {d_plain:.3f} m")
 
+print("\nB. R18：借来的相位不足以支撑株位空缺判定（执行单 8.3 第 1 项）")
+slot_lab = {
+    "gap_id": "R18-probe",
+    "class": GP.CLASS_VACANT_SLOT,
+    "class_label": GP.CLASS_LABEL_CN[GP.CLASS_VACANT_SLOT],
+    "class_semantics": GP.CLASS_SEMANTICS[GP.CLASS_VACANT_SLOT],
+    "class_confidence": 0.73,
+    "class_reason": "质心距最近格点 0.81 m → 判定为格点上缺株",
+    "evidence": {"slot_score": 0.81},
+    "grid": {"cell": [27, 46], "node_distance_m": 0.81},
+}
+import copy  # noqa: E402
+slot_before = copy.deepcopy(slot_lab)
+check(PI.downgrade_borrowed_slot(slot_lab, True) is slot_lab,
+      "local / own 相位：株位空缺原样保留")
+for cls in (GP.CLASS_OPEN_PATCH, GP.CLASS_ALLEY_GAP, GP.CLASS_UNCERTAIN):
+    other = dict(slot_lab, **{"class": cls})
+    check(PI.downgrade_borrowed_slot(other, False) is other,
+          f"借来相位但类别是 {cls}：不动")
+demoted = PI.downgrade_borrowed_slot(slot_lab, False)
+check(demoted["class"] == GP.CLASS_UNCERTAIN,
+      "★ 借来相位的株位空缺 → 不确定", demoted["class"])
+check(demoted["class_label"] == GP.CLASS_LABEL_CN[GP.CLASS_UNCERTAIN]
+      and demoted["class_semantics"] == GP.CLASS_SEMANTICS[GP.CLASS_UNCERTAIN],
+      "标签与语义同步改写")
+check("周围种植不规整，无法确认缺株位置" in demoted["class_reason"],
+      "class_reason 写明改判原因", demoted["class_reason"])
+check(demoted["class_confidence"] == 0.0, "置信度归零（不是模型算出来的结论）")
+check(demoted["evidence"] == slot_before["evidence"]
+      and demoted["grid"] == slot_before["grid"]
+      and demoted["gap_id"] == slot_before["gap_id"],
+      "面积 / 几何 / 证据分 / 格号一律不动")
+check(slot_lab == slot_before, "不改传入对象（无副作用）")
+# 门槛本身：支撑点数越多，允许的相干度越低；下限 0.2
+check(PI.lattice_coherence_threshold(12) > PI.lattice_coherence_threshold(65) >= 0.2,
+      "相干度门槛随支撑点数缩放且不低于 0.2",
+      f"N=12 {PI.lattice_coherence_threshold(12):.3f} / "
+      f"N=65 {PI.lattice_coherence_threshold(65):.3f}")
+
 print(f"\n{'✅ 全部通过' if failures == 0 else f'❌ {failures} 项失败'}")
 sys.exit(0 if failures == 0 else 1)
