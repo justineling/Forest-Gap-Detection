@@ -31,7 +31,8 @@ export interface GapProps {
   class_reason?: string
   area_sqm: number
   centroid_utm?: [number, number]
-  grid_cell?: string
+  /** R12：仅「用全局原点分类」的空地是绝对整数格号；局部相位（local / cells）为 null */
+  grid_cell?: [number, number] | null
   node_distance_m?: number | null
   coverage_ratio?: number
   elongation?: number

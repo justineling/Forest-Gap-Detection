@@ -548,6 +548,49 @@ def test_evidence_contract(tmpdir: Path) -> None:
           f"method={method}")
 
 
+def test_grid_cell_contract(tmpdir: Path) -> None:
+    """R12：局部相位空地的 grid_cell 必须是 null，不能写伪绝对格号。"""
+    print("\n[6e] R12 grid_cell 口径：局部相位 → null，其余才是绝对格号")
+    sys.path.insert(0, str(_SCRIPT_DIR))
+    import process_image as PI  # noqa: E402
+
+    lab = {"grid": {"cell": [27, 46]}}
+    check(PI.grid_cell_for_phase(lab, None) == [27, 46],
+          "无相位信息 → 保留绝对格号")
+    check(PI.grid_cell_for_phase(lab, "global") == [27, 46],
+          "global 相位 → 保留绝对格号")
+    for phase in PI.LOCAL_PHASE_VALUES:
+        check(PI.grid_cell_for_phase(lab, phase) is None,
+              f"{phase} 相位 → null（不是相对该原点的伪格号）")
+    check(PI.grid_cell_for_phase({}, None) is None, "缺 grid 字段 → null")
+    check(lab == {"grid": {"cell": [27, 46]}}, "不改传入对象")
+
+    # 进程边界：结果文件里 grid_cell 只能是 null 或二元整数格号
+    tif = tmpdir / "r12-ortho.tif"
+    make_synthetic(tif, w=1024, h=1024)
+    out = tmpdir / "r12-gaps.geojson"
+    events, rc, _ = run_sidecar({
+        "input": str(tif), "job": "contract-r12",
+        "work_dir": str(tmpdir / "jobs"), "out_json": str(out),
+        "min_area": 10.0, "min_canopy_blob": 200,
+    }, expect_exit=0)
+    check(rc == 0, "合成影像跑通", str(rc))
+    feats = []
+    if out.exists():
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        feats = [g for b in doc.get("blocks", []) for g in b.get("gaps", [])]
+    check(bool(feats), "结果文件有空地要素", f"{len(feats)} 块")
+    bad = [f for f in feats
+           if f["properties"].get("lattice_phase") in PI.LOCAL_PHASE_VALUES
+           and f["properties"].get("grid_cell") is not None]
+    check(not bad, "局部相位要素的 grid_cell 全为 null", f"{len(bad)} 块违规")
+    shape_bad = [f for f in feats
+                 if f["properties"].get("grid_cell") is not None
+                 and not (isinstance(f["properties"]["grid_cell"], list)
+                          and len(f["properties"]["grid_cell"]) == 2)]
+    check(not shape_bad, "非空的 grid_cell 均为二元格号", f"{len(shape_bad)} 块违规")
+
+
 def test_no_crs(tmpdir: Path) -> None:
     print("\n[7] 缺失坐标信息 → E1005")
     from rasterio.transform import Affine
@@ -627,6 +670,7 @@ def main() -> int:
         test_failed_cache(tmpdir)
         test_cache_hit_helper(tmpdir)
         test_evidence_contract(tmpdir)
+        test_grid_cell_contract(tmpdir)
         test_no_crs(tmpdir)
         test_undefined_behavior(tmpdir)
 

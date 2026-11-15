@@ -851,8 +851,30 @@ def _polygon_parts(g) -> list:
     return out
 
 
+# R12：用了局部原点的相位值。这些空地的格号不是文件声明的"全局整数格号"。
+# R13 新增的 "cells" 每单元一个原点，口径与 "local" 一样，故一并处理。
+LOCAL_PHASE_VALUES = ("local", "cells")
+
+
+def grid_cell_for_phase(lab: dict, lattice_phase: str | None) -> list | None:
+    """R12：局部相位空地的 ``grid_cell`` 写 ``null``。
+
+    ``planting_grid.grid_frame`` 声明 ``local-origin+absolute-index``（格点 =
+    全局原点 + 绝对整数格号）。但 ``relabel_with_local_lattice`` 会把原点换成
+    每块空地自己的局部格点，R13 的 ``cells`` 相位更换成每个 80 m 单元的原点；
+    此后 ``classify_gaps`` 算出的 ``[ix, iy]`` 是**相对那个原点**的，写进文件
+    就成了伪绝对格号（本园实测 994 块 ``local`` 全是 ``[0, 0]``）。
+
+    仓库内没有消费者（导出不含 ``grid_cell``），置 null 最诚实：局部相位空地
+    的格点直接看 ``lattice_origin_utm`` / ``lattice_cells[].origin_utm``。
+    """
+    if lattice_phase in LOCAL_PHASE_VALUES:
+        return None
+    return lab.get("grid", {}).get("cell")
+
+
 def _gap_feature(gid: str, p_utm, area: float, lab: dict, g_src,
-                 seam: bool = False) -> dict:
+                 seam: bool = False, lattice_phase: str | None = None) -> dict:
     """空地要素（瓦片阶段与缝合阶段共用同一套属性，避免两边字段漂移）。"""
     c_utm = p_utm.centroid
     props = {
@@ -865,7 +887,7 @@ def _gap_feature(gid: str, p_utm, area: float, lab: dict, g_src,
         "class_semantics": lab.get("class_semantics", ""),
         "area_sqm": round(area, 2),
         "centroid_utm": [round(c_utm.x, 2), round(c_utm.y, 2)],
-        "grid_cell": lab.get("grid", {}).get("cell"),
+        "grid_cell": grid_cell_for_phase(lab, lattice_phase),
         "node_distance_m": lab.get("grid", {}).get("node_distance_m"),
         "coverage_ratio": lab.get("grid", {}).get("coverage_ratio"),
         "elongation": lab.get("shape", {}).get("elongation"),
@@ -2401,7 +2423,9 @@ def relabel_with_local_lattice(features: list[dict], grid: GridModel, args, src_
         if lab is not lab0:
             n_demoted += 1
         keep = {kk: pr[kk] for kk in ("seam_pieces", "mask_split") if kk in pr}
-        feat = _gap_feature(pr["gap_id"], g_utm, area, lab, _shp.geometry.shape(f["geometry"]))
+        feat = _gap_feature(pr["gap_id"], g_utm, area, lab,
+                            _shp.geometry.shape(f["geometry"]),
+                            lattice_phase=extra.get("lattice_phase"))
         feat["properties"].update(keep)
         feat["properties"].update(extra)
         out[k] = feat

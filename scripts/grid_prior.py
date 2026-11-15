@@ -444,7 +444,12 @@ class GridModel:
         d["unit_cell_area_sqm"] = round(self.unit_cell_area_sqm, 8)
         d["skew_angle_deg"] = round(self.skew_angle_deg, 6)
         d["is_triangular"] = bool(self.is_triangular)
-        # 坐标框架声明：格点 = origin + (ix, iy) 按基矢展开，ix/iy 是**全局整数格号**
+        # 坐标框架声明：格点 = origin + (ix, iy) 按基矢展开，ix/iy 是**全局整数格号**。
+        # ⚠️ R12：这个口径只适用于「用全局原点分类」的空地。结果文件里带局部相位
+        #    （properties.lattice_phase = "local" / "cells"）的空地，其 grid_cell
+        #    一律为 null —— 它们的格点是 lattice_origin_utm /
+        #    lattice_cells[].origin_utm，不是由这里的 origin 展开出来的绝对格号。
+        #    "cells" 是 R13 新增的 80 m 分单元相位，原点逐单元不同，口径同 local。
         d["grid_frame"] = "local-origin+absolute-index"
         return d
 
