@@ -478,16 +478,28 @@ def generate_planting_points(
     }
 
 
+# 8.4 第 2 项：现场提示列的固定文案。审查方实测（8.2）CHM / 分割图在点层面
+# 识别"压在活树上"的精度只有 2%~5.5%，与 4.4% 的基础比例相同（等于随机标记），
+# 大疆 tree_info.json 又是目前唯一的独立裁判、**暂不用作产品输入**。
+# 因此这里不做逐点自动判定，只给每个点附一条统一的现场提醒，由人确认。
+FIELD_NOTE_HEADER = "field_note"
+FIELD_NOTE_HINT = "附近可能有小树，现场确认"
+
+
 def points_to_csv_rows(points: list[dict]) -> list[list[str]]:
-    """转成 CSV 行（含表头）。字段顺序为现场 GPS 导入常用顺序。"""
+    """转成 CSV 行（含表头）。字段顺序为现场 GPS 导入常用顺序。
+
+    末列 ``field_note`` 是 8.4 第 2 项的统一现场提示，不参与任何算法判定。
+    """
     rows = [["point_id", "gap_id", "class", "lon", "lat",
-             "utm_x", "utm_y", "clearance_m"]]
+             "utm_x", "utm_y", "clearance_m", FIELD_NOTE_HEADER]]
     for p in points:
         rows.append([
             p["point_id"], p["gap_id"], p["class"],
             f"{p['lon']:.8f}", f"{p['lat']:.8f}",
             f"{p['utm_x']:.2f}", f"{p['utm_y']:.2f}",
             f"{p['clearance_m']:g}",
+            FIELD_NOTE_HINT,
         ])
     return rows
 
@@ -684,6 +696,10 @@ def _selftest() -> None:
     # CSV 行
     rows = points_to_csv_rows(r["points"][:2])
     chk(len(rows) == 3 and rows[0][0] == "point_id", "CSV 表头正确")
+    chk(rows[0][-1] == FIELD_NOTE_HEADER
+        and all(row[-1] == FIELD_NOTE_HINT for row in rows[1:]),
+        "8.4 第 2 项：每行带统一现场提示，不做逐点自动判定")
+    chk(all(len(row) == len(rows[0]) for row in rows), "CSV 每行列数一致")
 
     print(f"\n自测结果：{ok} 通过 / {fail} 失败")
     if fail:
