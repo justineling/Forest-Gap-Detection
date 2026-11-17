@@ -32,25 +32,49 @@ const check = (cond: boolean, msg: string, got = '') => {
 
 console.log('\n类别键位（CLASS_KEY_ORDER）')
 {
+  check(ALL_CLASSES.length === 10, '全类别 = 10（含 manual_add 与 manual_exclude）', String(ALL_CLASSES.length))
+  check(ALL_CLASSES.includes('manual_exclude'), 'ALL_CLASSES 包含 manual_exclude')
   check(
-    CLASS_KEY_ORDER.length === ALL_CLASSES.length,
-    '键位覆盖全部类别（数量相等）',
-    `${CLASS_KEY_ORDER.length} / ${ALL_CLASSES.length}`,
+    CLASS_KEY_ORDER.length === 9,
+    '★ 专业模式键位只覆盖 9 个类别（manual_exclude 不占数字键）',
+    `${CLASS_KEY_ORDER.length}`,
   )
   check(
-    new Set(CLASS_KEY_ORDER).size === ALL_CLASSES.length,
+    !CLASS_KEY_ORDER.includes('manual_exclude'),
+    '★ manual_exclude 不占专业模式数字键',
+  )
+  check(
+    new Set(CLASS_KEY_ORDER).size === 9,
     '键位里没有重复类别',
     String(new Set(CLASS_KEY_ORDER).size),
   )
 
-  // 键位顺序 == 左面板的渲染顺序（按 GROUP_ORDER 分组）
+  // 键位顺序 == 左面板的渲染顺序（按 GROUP_ORDER 分组后排除 manual_exclude）
   const expected = GROUP_ORDER.flatMap((g) =>
-    ALL_CLASSES.filter((c) => CLASS_STYLES[c].group === g),
+    ALL_CLASSES.filter((c) => c !== 'manual_exclude' && CLASS_STYLES[c].group === g),
   )
   check(
     JSON.stringify(CLASS_KEY_ORDER) === JSON.stringify(expected),
     '★ 键位顺序 = 左面板渲染顺序（GROUP_ORDER 分组后）',
     CLASS_KEY_ORDER.map((c) => CLASS_STYLES[c].label).join(' / '),
+  )
+
+  // ★ 11.4 验收标准：专业模式数字键映射与改动前逐键相同（一条测试）
+  const original9 = [
+    'vacant_slot',
+    'open_patch',
+    'manual_add',
+    'uncertain',
+    'alley_gap',
+    'road',
+    'water',
+    'office',
+    'undeveloped',
+  ]
+  check(
+    JSON.stringify(CLASS_KEY_ORDER) === JSON.stringify(original9),
+    '★ 11.4 验收：专业模式数字键映射与改动前逐键完全相同（1–9）',
+    CLASS_KEY_ORDER.map((c, i) => `${i + 1}:${c}`).join(' '),
   )
 
   // ★ 回归：这两个位置以前是错的（用了 ALL_CLASSES 的声明序）

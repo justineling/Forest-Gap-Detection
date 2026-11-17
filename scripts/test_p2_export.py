@@ -65,7 +65,8 @@ def main() -> int:
     #   · 第 1 块改判为非种植区（模拟用户把误报标成不可种植）
     #   · 第 2 块标 edited（模拟改边界）
     #   · 第 3 块改成 source=manual（模拟人工补画）
-    # 注意别动第 4 块 —— 留一块干净的可补种块，保证放样点位一定非空。
+    #   · 第 4 块只标 reviewed=True（U4 规则 1：只标记已复核，不改类别，不标 edited）
+    #   · 第 5 块改为 manual_exclude（U4 规则 3：简化模式标记不可种）
     feats = [dict(f) for f in picked]
     for i, f in enumerate(feats):
         f["properties"] = dict(f.get("properties") or {})
@@ -79,6 +80,14 @@ def main() -> int:
     feats[1]["properties"]["edited"] = True
     feats[2]["properties"].update({"class": "manual_add", "class_label": "人工新增",
                                    "source": "manual", "edited": True})
+    feats[3]["properties"]["reviewed"] = True
+    feats[4]["properties"].update({
+        "class": "manual_exclude",
+        "class_label": "人工排除",
+        "edited": True,
+        "reviewed": True,
+        "area_sqm": 250.0,
+    })
 
     payload = {
         "gaps": {"type": "FeatureCollection", "features": feats},
@@ -119,6 +128,11 @@ def main() -> int:
             "★ 人工改判出的 undeveloped 类有自己的分包",
             ",".join(p.name for p in by_class)[:90],
         )
+        check(
+            any("manual_exclude" in p.name for p in by_class),
+            "★ U4 验收：manual_exclude 类有自己的分包",
+            ",".join(p.name for p in by_class)[:90],
+        )
 
         print("\nC. 补种点位")
         for name in (
@@ -132,6 +146,13 @@ def main() -> int:
             check((outdir / name).exists(), f"{name} 已生成")
         check((res.get("counts") or {}).get("planting_points", 0) > 0,
               "放样点位数 > 0", str((res.get("counts") or {}).get("planting_points")))
+
+        pts_gj = json.loads((outdir / "planting-points-wgs84.geojson").read_text(encoding="utf-8"))
+        pts_gids = {p["properties"]["gap_id"] for p in pts_gj.get("features", [])}
+        mex_id = feats[4]["properties"]["gap_id"]
+        check(mex_id not in pts_gids, "★ U4 验收：manual_exclude 不生成放样点", f"excluded_id={mex_id}")
+        rev_id = feats[3]["properties"]["gap_id"]
+        check(rev_id in pts_gids, "★ U4 验收：只标了 reviewed（未改类别）的空地正常生成放样点", f"reviewed_id={rev_id}")
 
         print("\nD. ★ 人工编辑真的进了交付物")
         gj = json.loads((outdir / "gaps-all-wgs84.geojson").read_text(encoding="utf-8"))
@@ -157,6 +178,7 @@ def main() -> int:
             for kw in ("确定需补种", "待复核", "不可种植", "网格排坑法",
                        "人工复核留痕", "重点连片空地"):
                 check(kw in h, f"含章节「{kw}」")
+            check("人工排除 1 块 / 250.0 m²" in h, "★ U4 验收：汇总报告单列「人工排除 n 块 / x m²」")
             check("非种植区" in h or "不可种植" in h, "改判结果体现在口径表里")
             check("CHM 高度阈值" in h, "报告含 CHM 阈值卡片")
             # 基准结果的 params 是 5.2 / 1.2（成熟林）→ 不该标"非默认"

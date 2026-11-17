@@ -54,7 +54,9 @@ console.log('\nB. 每个类别的解释都非空')
   }
   const manual = items.find((i) => i.term === CLASS_STYLES.manual_add.label)
   check(!!manual && manual.desc.trim().length > 0, 'manual_add（人工新增）不漏', manual?.term ?? '缺失')
-  check(items.length === 9, '8 类 + 人工新增 = 9 条', String(items.length))
+  const manualEx = items.find((i) => i.term === CLASS_STYLES.manual_exclude.label)
+  check(!!manualEx && manualEx.desc.trim().length > 0, 'manual_exclude（人工排除）不漏', manualEx?.term ?? '缺失')
+  check(items.length === 10, '8 类 + 人工新增 + 人工排除 = 10 条', String(items.length))
 }
 
 // ---------- C. 分组名逐字一致 ----------

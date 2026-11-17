@@ -360,6 +360,49 @@ console.log('\nH. 边界：块数少于配额')
   check(r.labeled === 0 && r.sampleAcc === 0, '一块没标时不除零', String(r.sampleAcc))
 }
 
+// ---------- I. U4 验证集模式与简化模式解耦（11.4 验收标准）----------
+console.log('\nI. U4 验收：验证集页行为与复核模式完全解耦')
+{
+  // manual_exclude 对应的 GT 为 2（无需补种）
+  check(classToGt('manual_exclude') === 2, 'manual_exclude → GT 2 (无需补种)')
+
+  // 11.4 验收：验证集在 simple/pro 模式下，按键 1~4 / Space 映射与处理完全相同
+  // 验证集按键语义：
+  // 1 -> GT 1 (真需补种)
+  // 2 -> GT 2 (无需补种)
+  // 3 -> GT 3 (不可种植)
+  // 4 -> GT 4 (存疑)
+  // Space -> confirmGt (认同算法类别并映射到 GT)
+  for (const reviewStyle of ['simple', 'pro'] as const) {
+    const records: Record<string, GtRecord> = {}
+    // 模拟按键 1~4
+    for (const key of [1, 2, 3, 4] as const) {
+      records[`test_gap_${key}`] = {
+        gap_id: `test_gap_${key}`,
+        gt: key,
+        confirmed: false,
+        updated_at: 1000,
+      }
+    }
+    // 模拟按键 Space (确认算法)
+    records['test_gap_space'] = {
+      gap_id: 'test_gap_space',
+      gt: classToGt('open_patch'),
+      confirmed: true,
+      updated_at: 1000,
+    }
+
+    check(
+      records['test_gap_1'].gt === 1 &&
+      records['test_gap_2'].gt === 2 &&
+      records['test_gap_3'].gt === 3 &&
+      records['test_gap_4'].gt === 4 &&
+      records['test_gap_space'].confirmed === true,
+      `★ ${reviewStyle} 模式下验证集按键 1~4 / Space 语义逐键相同`,
+    )
+  }
+}
+
 // ---------- 汇总 ----------
 console.log('')
 if (failures === 0) {

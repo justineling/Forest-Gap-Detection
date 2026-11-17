@@ -1,5 +1,6 @@
 import type { GapClass, GapFeature, Position } from '../types'
 import { centroid, metersPerDeg } from './geometry'
+import { CLASS_STYLES } from './classes'
 
 /**
  * 框选与复核筛选的**纯几何逻辑**。
@@ -142,9 +143,94 @@ export function distanceM(p1: Position, p2: Position): number {
   return Math.hypot(dx, dy)
 }
 
-/** 要素是否未复核：未改过类别或边界、且不是手工补画 */
+/** 要素是否未复核（U4）：未改过类别或边界、未被复核确认、且不是手工补画 */
 export function isUnreviewed(f: GapFeature): boolean {
-  return !f.properties.edited && f.properties.source !== 'manual'
+  return !f.properties.edited && !f.properties.reviewed && f.properties.source !== 'manual'
+}
+
+export type SimplifiedAction = 1 | 2 | 3
+
+export interface SimplifiedReviewResult {
+  nextClass: GapClass
+  edited: boolean
+  reviewed: boolean
+  classReason?: string
+}
+
+/**
+ * U4 复核简化模式：三键判定逻辑（纯函数，规则 1~4）。
+ *
+ * 键 1 (可种)   -> 确需补种 (vacant_slot, open_patch, manual_add)
+ * 键 2 (不可种) -> 不计入 (alley_gap, manual_exclude) + 不可种植 (road, water, office, undeveloped)
+ * 键 3 (不确定) -> 待复核 (uncertain)
+ *
+ * 规则 1：当前类别已经在所选组里 -> 类别不动，只记 reviewed: true，不改动 edited
+ * 规则 2：选"可种"、但当前不在可种组 -> slot_score >= patch_score 设为 vacant_slot，否则 open_patch；缺失默认 open_patch。edited: true, reviewed: true
+ * 规则 3：选"不可种"、但当前在可种组或待复核组 -> 设为 manual_exclude（人工排除）。edited: true, reviewed: true
+ * 规则 4：选"不确定" -> 设为 uncertain，reviewed: true。若原本就是 uncertain 则保持 edited 不变；若不是则 edited: true
+ */
+export function applySimplifiedReview(
+  feature: GapFeature,
+  action: SimplifiedAction,
+): SimplifiedReviewResult {
+  const p = feature.properties
+  const currentClass = p.class
+  const currentGroup = CLASS_STYLES[currentClass]?.group
+
+  // 1: 可种
+  if (action === 1) {
+    if (currentGroup === 'definite_plant') {
+      return {
+        nextClass: currentClass,
+        edited: p.edited ?? false,
+        reviewed: true,
+      }
+    }
+    const slotScore = p.slot_score
+    const patchScore = p.patch_score
+    let nextClass: GapClass = 'open_patch'
+    if (slotScore != null && patchScore != null && slotScore >= patchScore) {
+      nextClass = 'vacant_slot'
+    }
+    return {
+      nextClass,
+      edited: true,
+      reviewed: true,
+      classReason: '用户简化复核：可种',
+    }
+  }
+
+  // 2: 不可种
+  if (action === 2) {
+    if (currentGroup === 'not_needed' || currentGroup === 'unplantable') {
+      return {
+        nextClass: currentClass,
+        edited: p.edited ?? false,
+        reviewed: true,
+      }
+    }
+    return {
+      nextClass: 'manual_exclude',
+      edited: true,
+      reviewed: true,
+      classReason: '用户简化复核：不可种（人工排除）',
+    }
+  }
+
+  // 3: 不确定
+  if (currentClass === 'uncertain') {
+    return {
+      nextClass: 'uncertain',
+      edited: p.edited ?? false,
+      reviewed: true,
+    }
+  }
+  return {
+    nextClass: 'uncertain',
+    edited: true,
+    reviewed: true,
+    classReason: '用户简化复核：存疑待核',
+  }
 }
 
 /**

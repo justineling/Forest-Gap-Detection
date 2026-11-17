@@ -25,6 +25,7 @@ export const CLASS_STYLES: Record<GapClass, ClassStyle> = {
   office: { label: '办公生活区', color: '#c9a06a', group: 'unplantable', defaultVisible: false },
   undeveloped: { label: '非种植区', color: '#9b59b6', group: 'unplantable', defaultVisible: false },
   manual_add: { label: '人工新增', color: '#00b894', group: 'definite_plant', defaultVisible: true },
+  manual_exclude: { label: '人工排除', color: '#636e72', group: 'not_needed', defaultVisible: false },
 }
 
 export const ALL_CLASSES = Object.keys(CLASS_STYLES) as GapClass[]
@@ -56,9 +57,12 @@ export const GROUP_ORDER: PriorityGroup[] = ['definite_plant', 'review', 'not_ne
  *
  *    于是按 3（期望"人工新增"）会改成"林间空隙"，按 5（期望"林间空隙"）会改成"道路" ——
  *    复核 1,726 块时这是**静默改错数据**。键盘与面板必须共用这一份顺序。
+ *
+ * ⚠️ U4：`manual_exclude`（人工排除）不占专业模式数字键（执行单 11.3 第 2 项），
+ *    严格保持专业模式 1–9 键位与改动前完全一致。
  */
 export const CLASS_KEY_ORDER: GapClass[] = GROUP_ORDER.flatMap((g) =>
-  ALL_CLASSES.filter((c) => CLASS_STYLES[c].group === g),
+  ALL_CLASSES.filter((c) => c !== 'manual_exclude' && CLASS_STYLES[c].group === g),
 )
 
 export function labelOf(cls: GapClass): string {

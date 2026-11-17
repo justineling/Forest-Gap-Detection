@@ -18,6 +18,7 @@ export type GapClass =
   | 'office' // 办公生活区
   | 'undeveloped' // 非种植区（未开发林）
   | 'manual_add' // 人工新增
+  | 'manual_exclude' // 人工排除（U4 新增：简化模式设为不可种）
 
 /** 三档业务口径（`summary.by_priority`） */
 export type PriorityGroup = 'definite_plant' | 'review' | 'not_needed' | 'unplantable'
@@ -36,6 +37,10 @@ export interface GapProps {
   node_distance_m?: number | null
   coverage_ratio?: number
   elongation?: number
+  /** U4：简化模式或复核标记已复核（独立于 edited，避免影响放样优先级） */
+  reviewed?: boolean
+  slot_score?: number | null
+  patch_score?: number | null
   /** 人工编辑留痕 */
   edited?: boolean
   edited_by?: string

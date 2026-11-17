@@ -62,6 +62,7 @@ pyflakes/ruff 不做流分析；要抓它得上 mypy/pyright。
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -100,11 +101,12 @@ def _which(cmd: str) -> str:
     return shutil.which(cmd) or cmd
 
 
-def run(cmd: list[str], cwd: Path, label: str, tail: int = 6) -> tuple[bool, float]:
+def run(cmd: list[str], cwd: Path, label: str, tail: int = 6,
+        env: dict | None = None) -> tuple[bool, float]:
     t0 = time.time()
     cmd = [_which(cmd[0]), *cmd[1:]]
     p = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+                       encoding="utf-8", errors="replace", env=env)
     dt = time.time() - t0
     ok = p.returncode == 0
     mark = "OK  " if ok else "FAIL"
@@ -178,9 +180,11 @@ def main() -> int:
     print("\n[5] Rust 单测")
     # ⚠️ 必须中和 CARGO_TARGET_DIR：本机可能指向外部目录，
     #    否则会与打包脚本争用同一份 target（踩过：两份 target + 锁文件警告）
-    env_cmd = ["env", "-u", "CARGO_TARGET_DIR", "cargo", "test",
-               "--message-format=short"]
-    ok, dt = run(env_cmd, ROOT / "desktop" / "src-tauri", "cargo test（Rust 单测）")
+    cargo_env = dict(os.environ)
+    cargo_env.pop("CARGO_TARGET_DIR", None)
+    cargo_cmd = ["cargo", "test", "--message-format=short"]
+    ok, dt = run(cargo_cmd, ROOT / "desktop" / "src-tauri", "cargo test（Rust 单测）",
+                 env=cargo_env)
     rec("cargo test", ok, dt)
 
     # ---- 6. 过期判定（纯逻辑，秒级）----

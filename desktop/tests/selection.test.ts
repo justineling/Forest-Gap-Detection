@@ -13,6 +13,7 @@ import {
   reviewCounts,
   isUnreviewed,
   findNextNearestUnreviewed,
+  applySimplifiedReview,
   distanceM,
 } from '../src/lib/selection'
 import type { GapClass, GapFeature, GapGeometry } from '../src/types'
@@ -243,6 +244,79 @@ console.log('\nH. U2: 就近下一块（findNextNearestUnreviewed 纯函数单�
   check(ordered[0].properties.gap_id === 'BASE', '就近排序当前选中块排首位')
   check(ordered[1].properties.gap_id === 'N2_UNREV', '第二位是距离最近的块')
   check(ordered[2].properties.gap_id === 'FAR_MAX', '最后是较远的块')
+}
+
+// ---------- 6. U4 简化复核规则测试（规则 1~4 与 isUnreviewed）----------
+console.log('\n6. U4 简化复核纯函数（applySimplifiedReview 规则 1~4 与 isUnreviewed）')
+{
+  // A. isUnreviewed 测试
+  const clean = feat('C1', 'open_patch', 111.2, 1.18)
+  const rev = feat('R1', 'open_patch', 111.2, 1.18, { reviewed: true })
+  const ed = feat('E1', 'open_patch', 111.2, 1.18, { edited: true })
+  const man = feat('M1', 'manual_add', 111.2, 1.18, { source: 'manual' })
+
+  check(isUnreviewed(clean) === true, '★ clean 要素 isUnreviewed = true')
+  check(isUnreviewed(rev) === false, '★ reviewed: true 要素 isUnreviewed = false')
+  check(isUnreviewed(ed) === false, '★ edited: true 要素 isUnreviewed = false')
+  check(isUnreviewed(man) === false, '★ source: manual 要素 isUnreviewed = false')
+
+  // B. 规则 1：当前类别已经在所选组里 -> 类别不动，只记 reviewed: true，edited 保持不变
+  const patch = feat('P1', 'open_patch', 111.2, 1.18)
+  const r1_plant = applySimplifiedReview(patch, 1)
+  check(r1_plant.nextClass === 'open_patch', '规则 1：open_patch 选可种 -> 类别保持 open_patch')
+  check(r1_plant.reviewed === true, '规则 1：记 reviewed: true')
+  check(r1_plant.edited === false, '规则 1：保持 edited: false（不改变放样优先级）')
+
+  const slot = feat('S1', 'vacant_slot', 111.2, 1.18)
+  const r1_slot = applySimplifiedReview(slot, 1)
+  check(r1_slot.nextClass === 'vacant_slot', '规则 1：vacant_slot 选可种 -> 类别保持 vacant_slot')
+  check(r1_slot.reviewed === true && r1_slot.edited === false, '规则 1：vacant_slot 只记 reviewed')
+
+  const alley = feat('A1', 'alley_gap', 111.2, 1.18)
+  const r1_alley = applySimplifiedReview(alley, 2)
+  check(r1_alley.nextClass === 'alley_gap', '规则 1：alley_gap 选不可种 -> 类别保持 alley_gap')
+  check(r1_alley.reviewed === true && r1_alley.edited === false, '规则 1：alley_gap 只记 reviewed')
+
+  const rd = feat('RD1', 'road', 111.2, 1.18)
+  const r1_rd = applySimplifiedReview(rd, 2)
+  check(r1_rd.nextClass === 'road', '规则 1：road 选不可种 -> 类别保持 road')
+  check(r1_rd.reviewed === true && r1_rd.edited === false, '规则 1：road 只记 reviewed')
+
+  // C. 规则 2：选"可种"但当前不在可种组
+  // C1. slot_score >= patch_score -> vacant_slot
+  const uncert_slot = feat('U_SLOT', 'uncertain', 111.2, 1.18, { slot_score: 0.85, patch_score: 0.40 })
+  const r2_slot = applySimplifiedReview(uncert_slot, 1)
+  check(r2_slot.nextClass === 'vacant_slot', '规则 2：slot_score >= patch_score -> vacant_slot')
+  check(r2_slot.edited === true && r2_slot.reviewed === true, '规则 2：改判设 edited: true, reviewed: true')
+
+  // C2. slot_score < patch_score -> open_patch
+  const uncert_patch = feat('U_PATCH', 'uncertain', 111.2, 1.18, { slot_score: 0.30, patch_score: 0.75 })
+  const r2_patch = applySimplifiedReview(uncert_patch, 1)
+  check(r2_patch.nextClass === 'open_patch', '规则 2：slot_score < patch_score -> open_patch')
+
+  // C3. 分数缺失 -> 默认 open_patch
+  const uncert_noscore = feat('U_NOSCORE', 'uncertain', 111.2, 1.18)
+  const r2_noscore = applySimplifiedReview(uncert_noscore, 1)
+  check(r2_noscore.nextClass === 'open_patch', '规则 2：分数缺失时默认 open_patch')
+
+  // D. 规则 3：选"不可种"但当前在可种组或待复核组 -> manual_exclude
+  const r3_from_patch = applySimplifiedReview(patch, 2)
+  check(r3_from_patch.nextClass === 'manual_exclude', '规则 3：open_patch 选不可种 -> manual_exclude')
+  check(r3_from_patch.edited === true && r3_from_patch.reviewed === true, '规则 3：设 edited: true, reviewed: true')
+
+  const r3_from_uncert = applySimplifiedReview(uncert_noscore, 2)
+  check(r3_from_uncert.nextClass === 'manual_exclude', '规则 3：uncertain 选不可种 -> manual_exclude')
+
+  // E. 规则 4：选"不确定"
+  // E1. 原本就是 uncertain -> 保持 uncertain，只记 reviewed，edited 不变
+  const r4_same = applySimplifiedReview(uncert_noscore, 3)
+  check(r4_same.nextClass === 'uncertain', '规则 4：原本为 uncertain 选不确定 -> 保持 uncertain')
+  check(r4_same.reviewed === true && r4_same.edited === false, '规则 4：原本为 uncertain 只记 reviewed')
+
+  // E2. 原本不是 uncertain -> 设为 uncertain, edited: true, reviewed: true
+  const r4_diff = applySimplifiedReview(patch, 3)
+  check(r4_diff.nextClass === 'uncertain', '规则 4：原本为 open_patch 选不确定 -> 改为 uncertain')
+  check(r4_diff.edited === true && r4_diff.reviewed === true, '规则 4：原为其他类设 edited: true, reviewed: true')
 }
 
 // ---------- 汇总 ----------

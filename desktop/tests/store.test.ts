@@ -525,6 +525,51 @@ console.log('\n撤销 / 重做标签 · 导出版本号')
   S2.getState().setGaps([], null)
 }
 
+// ---------- U4 简化复核动作与撤销测试（11.4 验收标准）----------
+console.log('\nU4 简化复核 · 自动跳转与撤销恢复')
+{
+  const S = useAppStore
+  const g1 = feat('GAP1', 'open_patch', 111.200, 1.180)
+  const g2 = feat('GAP2', 'uncertain', 111.201, 1.180)
+  S.getState().setGaps([g1, g2], null)
+
+  // 1. 选中 GAP1，执行动作 2（不可种）
+  S.getState().select('GAP1')
+  check(S.getState().selectedId === 'GAP1', '当前选中 GAP1')
+
+  S.getState().applySimplifiedReviewAction('GAP1', 2)
+  const afterAction = S.getState().gaps.find((f) => f.properties.gap_id === 'GAP1')
+  check(afterAction?.properties.class === 'manual_exclude', '★ GAP1 改判为 manual_exclude')
+  check(afterAction?.properties.reviewed === true, '★ GAP1 标记 reviewed: true')
+  check(afterAction?.properties.edited === true, '★ GAP1 标记 edited: true')
+
+  // 模拟自动跳转选中 GAP2
+  S.getState().select('GAP2')
+  S.getState().focusGap('GAP2')
+  check(S.getState().selectedId === 'GAP2', '模拟自动跳转后选中 GAP2')
+
+  // 2. 执行 undo()
+  S.getState().undo()
+
+  // 11.4 验收：Ctrl+Z 后类别、reviewed、选中三者都回到判定前
+  const afterUndo = S.getState().gaps.find((f) => f.properties.gap_id === 'GAP1')
+  check(afterUndo?.properties.class === 'open_patch', '★ 撤销后 GAP1 类别回到 open_patch')
+  check(afterUndo?.properties.reviewed !== true, '★ 撤销后 GAP1 reviewed 回到未复核')
+  check(afterUndo?.properties.edited !== true, '★ 撤销后 GAP1 edited 回到未修改')
+  check(S.getState().selectedId === 'GAP1', '★ 撤销后选中回到 GAP1')
+  check(S.getState().focus?.id === 'GAP1', '★ 撤销后地图 focus 回到 GAP1')
+
+  // 3. 测试规则 1：已有类别在组内，只记 reviewed，不记 edited
+  S.getState().select('GAP1')
+  S.getState().applySimplifiedReviewAction('GAP1', 1)
+  const afterRule1 = S.getState().gaps.find((f) => f.properties.gap_id === 'GAP1')
+  check(afterRule1?.properties.class === 'open_patch', '规则 1：类别保持 open_patch')
+  check(afterRule1?.properties.reviewed === true, '规则 1：reviewed 为 true')
+  check(afterRule1?.properties.edited !== true, '规则 1：edited 保持 false')
+
+  S.getState().setGaps([], null)
+}
+
 // ---------- 汇总 ----------
 console.log(`\n${failures === 0 ? '✅ 全部通过' : `❌ ${failures} 项失败`}`)
 process.exit(failures === 0 ? 0 : 1)

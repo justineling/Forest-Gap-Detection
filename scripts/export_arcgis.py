@@ -40,6 +40,7 @@ UTM49N = "EPSG:32649"   # 马来西亚砂拉越在 UTM 49N（中央经线 111°E
 CLASS_ORDER = [
     "vacant_slot", "alley_gap", "open_patch", "uncertain",
     "road", "water", "office", "undeveloped",
+    "manual_add", "manual_exclude",
 ]
 CLASS_LABEL_CN = {
     "vacant_slot": "株位空缺",
@@ -50,6 +51,8 @@ CLASS_LABEL_CN = {
     "water": "水体",
     "office": "办公生活区",
     "undeveloped": "非种植区",
+    "manual_add": "人工新增",
+    "manual_exclude": "人工排除",
 }
 
 # .prj 内容（ArcGIS 靠它识别坐标系，必须与几何真实 CRS 一致）
@@ -413,6 +416,7 @@ def write_kml(features, out: Path) -> tuple[int, int]:
         "vacant_slot": "ff0000ff", "alley_gap": "ff00a5ff",
         "open_patch": "ff00ffff", "uncertain": "ff808080",
         "road": "ff646464", "water": "ffff0000", "office": "ff00ffff",
+        "manual_add": "ff94b800", "manual_exclude": "ff726e63",
     }
     for cls, color in styles.items():
         lines += [

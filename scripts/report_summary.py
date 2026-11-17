@@ -302,9 +302,10 @@ def build_report_html(d: dict) -> str:
   <div><div class="n">{_n(audit.get("added"))}</div><div class="l">人工新增（补画漏检）</div></div>
   <div><div class="n">{_n(audit.get("edited"))}</div><div class="l">人工改判（含边界修正）</div></div>
   <div><div class="n">{_n(audit.get("deleted"))}</div><div class="l">人工剔除（误报）</div></div>
+  <div><div class="n">{_n(audit.get("manual_exclude_count", 0))}</div><div class="l">人工排除（{_n(audit.get("manual_exclude_sqm", 0.0), 1)} m²）</div></div>
 </div>
 <p class="sub" style="margin:2px 0 0">
-  以上为本交付包相对算法原始结果的净改动；改判与剔除的原始记录保存在交付包的
+  人工排除 {_n(audit.get("manual_exclude_count", 0))} 块 / {_n(audit.get("manual_exclude_sqm", 0.0), 1)} m²；以上为本交付包相对算法原始结果的净改动；改判与剔除的原始记录保存在交付包的
   <span class="mono">gaps-all-wgs84.geojson</span> 属性字段中（<span class="mono">edited</span> /
   <span class="mono">original_class</span> / <span class="mono">source</span>）。
 </p>
@@ -362,7 +363,7 @@ def _selftest() -> int:
         "estimate": {"by_grid": 3691, "by_area": 4637, "divergence_pct": 25.7,
                      "points_total": 3691, "points_grid": 3400, "points_slot": 291},
         "chm": {"core": 5.2, "veto": 1.2, "label": "成熟林", "is_default": True},
-        "audit": {"added": 12, "edited": 37, "deleted": 64},
+        "audit": {"added": 12, "edited": 37, "deleted": 64, "manual_exclude_count": 5, "manual_exclude_sqm": 320.5},
         "top": [
             {"gap_id": "r038912_c020480-G0001", "cls_label": "连片空地",
              "area_sqm": 5771.53, "plants": 86, "lon": 111.2039, "lat": 1.1838},
@@ -385,6 +386,7 @@ def _selftest() -> int:
         ("含三档口径", "确定需补种" in out and "待复核" in out and "不可种植" in out),
         ("含放样估算", "网格排坑法" in out and "3,691" in out),
         ("含人工留痕", "人工新增" in out and "人工剔除" in out),
+        ("含人工排除（U4）", "人工排除 5 块 / 320.5 m²" in out),
         ("含 Top 表", "r038912_c020480-G0001" in out),
         ("含放样点现场施工提醒（U0）", "附近可能有小树，现场确认" in out),
         ("含参数卡片", "8.35" in out and "7.23" in out and "0.67" in out),

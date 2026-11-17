@@ -3105,6 +3105,81 @@ kbd {
   padding: 6px 12px 8px;
   border-bottom: 1px solid var(--line);
 }
+
+/* 简化复核模式三个大按钮（U4） */
+.rv-simple-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+.btn-simple {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  cursor: pointer;
+  border-radius: 0;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+.btn-simple kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  width: 22px;
+  height: 22px;
+  border-radius: 2px;
+  background: #2b353a;
+  border: 1px solid var(--line);
+  color: #fff;
+}
+.btn-simple-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+.btn-simple-text b {
+  font-size: 12px;
+  font-weight: 600;
+}
+.btn-simple-text span {
+  font-size: 9.5px;
+  color: var(--dim);
+}
+.btn-simple:hover {
+  transform: translateY(-1px);
+}
+.btn-simple-plant:hover {
+  border-color: #00b894;
+  background: rgba(0, 184, 148, 0.12);
+}
+.btn-simple-plant b {
+  color: #00b894;
+}
+.btn-simple-exclude:hover {
+  border-color: #e17055;
+  background: rgba(225, 112, 85, 0.12);
+}
+.btn-simple-exclude b {
+  color: #e17055;
+}
+.btn-simple-uncertain:hover {
+  border-color: #f1c40f;
+  background: rgba(241, 196, 15, 0.12);
+}
+.btn-simple-uncertain b {
+  color: #f1c40f;
+}
 .rv-flash {
   font-size: 11.5px;
   color: var(--accent);

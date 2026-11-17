@@ -5,6 +5,7 @@ import {
   REVIEW_KIND_LABEL,
   filterReviewGaps,
   findNextNearestUnreviewed,
+  isUnreviewed,
   distanceM,
   reviewCounts,
   type ReviewKind,
@@ -77,6 +78,8 @@ export default function ReviewList({ mode }: Props) {
   const draftRestored = useAppStore((s) => s.draftRestored)
   const dismissDraftNotice = useAppStore((s) => s.dismissDraftNotice)
   const undo = useAppStore((s) => s.undo)
+  const reviewStyle = useAppStore((s) => s.reviewStyle)
+  const setReviewStyle = useAppStore((s) => s.setReviewStyle)
   const canUndoRestore = useAppStore(
     (s) => s.past.length > 0 && s.past[s.past.length - 1].label === RESTORE_LABEL,
   )
@@ -186,7 +189,7 @@ export default function ReviewList({ mode }: Props) {
   const reviewList = useMemo(() => {
     if (kind !== 'all') return list
     const done = (f: (typeof list)[number]): number =>
-      f.properties.edited || f.properties.source === 'manual' ? 1 : 0
+      f.properties.edited || f.properties.reviewed || f.properties.source === 'manual' ? 1 : 0
     // sort 是稳定排序：同一组内仍保持 filterReviewGaps 的面积降序
     return [...list].sort((a, b) => done(a) - done(b))
   }, [list, kind])
@@ -233,6 +236,48 @@ export default function ReviewList({ mode }: Props) {
       })
     },
     [gaps, ensureVisible, focusGap],
+  )
+
+  /**
+   * 简化模式动作（U4）：1 可种 / 2 不可种 / 3 不确定。
+   * 操作后自动跳到下一块未复核的，顺序跟随当前排序（按面积 / 就近，U2）。
+   */
+  const handleSimpleAction = useCallback(
+    (action: 1 | 2 | 3) => {
+      const st = useAppStore.getState()
+      const cur = st.selectedId
+      if (!cur) {
+        showFlash('先按 ↑ / ↓ 选一块，再按 1 / 2 / 3 复核')
+        return
+      }
+      st.applySimplifiedReviewAction(cur, action)
+      const actionName = action === 1 ? '可种' : action === 2 ? '不可种' : '不确定'
+      showFlash(`✓ 判定为「${actionName}」`)
+
+      // 改完自动走下一块未复核的，顺序跟随当前排序（按面积 / 就近，U2）
+      window.setTimeout(() => {
+        const freshSt = useAppStore.getState()
+        const freshList = filterReviewGaps(freshSt.gaps, { kind, minArea, order }, cur)
+        if (order === 'nearest') {
+          const next = findNextNearestUnreviewed(freshList, cur)
+          if (next) {
+            goTo(next.properties.gap_id)
+          } else {
+            showFlash('✓ 没有未复核的地块了')
+          }
+        } else {
+          const curIdx = freshList.findIndex((f) => f.properties.gap_id === cur)
+          const rest = curIdx >= 0 ? freshList.slice(curIdx + 1) : freshList
+          const next = rest.find(isUnreviewed) || freshList.find(isUnreviewed)
+          if (next && next.properties.gap_id !== cur) {
+            goTo(next.properties.gap_id)
+          } else {
+            showFlash('✓ 没有未复核的地块了')
+          }
+        }
+      }, 0)
+    },
+    [goTo, showFlash, kind, minArea, order],
   )
 
   /**
@@ -333,37 +378,44 @@ export default function ReviewList({ mode }: Props) {
         return
       }
 
-      // 数字键改判：顺序取自 CLASS_KEY_ORDER —— 与左面板的**渲染顺序**一致（1 = 株位空缺 …）。
-      // ⚠️ 不要用 ALL_CLASSES：那是声明顺序，3 和 5 会指错类别（见 classes.ts 的注释）。
-      const n = Number(e.key)
-      if (!Number.isInteger(n) || n < 1 || n > CLASS_KEY_ORDER.length) return
-      if (!cur) {
-        showFlash('先按 ↑ / ↓ 选一块，再按数字改类别')
-        return
+      // U4 简化模式：1=可种，2=不可种，3=不确定
+      if (reviewStyle === 'simple') {
+        if (e.key === '1' || e.key === '2' || e.key === '3') {
+          e.preventDefault()
+          handleSimpleAction(Number(e.key) as 1 | 2 | 3)
+          return
+        }
+      } else {
+        // 专业模式：数字键改判，顺序取自 CLASS_KEY_ORDER（1 = 株位空缺 …）。
+        // ⚠️ 不要用 ALL_CLASSES：那是声明顺序，3 和 5 会指错类别（见 classes.ts 的注释）。
+        const n = Number(e.key)
+        if (!Number.isInteger(n) || n < 1 || n > CLASS_KEY_ORDER.length) return
+        if (!cur) {
+          showFlash('先按 ↑ / ↓ 选一块，再按数字改类别')
+          return
+        }
+        e.preventDefault()
+        const cls = CLASS_KEY_ORDER[n - 1]
+        st.setGapClass(cur, cls)
+        showFlash(`改判为「${CLASS_STYLES[cls].label}」`)
+        // 改完自动走下一块：复核的节奏是"看一块、定一块、走下一块"。
+        // 用 setTimeout 0 是为了让这次 store 更新先落地，再取下一行（否则 idx 还是旧的）。
+        //
+        // ⚠️ 「全部」筛选下要**跳过已处理的行**（2026-10-25 审核发现）：
+        //    改判后当前行会因 `edited/reviewed` 沉到列表底部，此时 `rows[idx+1]` 可能已经是
+        //    一条"已处理"的行 —— 光标跳进已处理区，而用户其实还没做完上面对未处理的那批。
+        //    其他筛选（待复核 / 已改过 / 人工新增）本来就是单一子集，按线性推进即可。
+        window.setTimeout(() => {
+          const rest = rows.slice(idx + 1)
+          const nx = kind === 'all' ? rest.find((f) => isUnreviewed(f)) : rest[0]
+          if (nx && nx.properties.gap_id !== cur) goTo(nx.properties.gap_id)
+        }, 0)
       }
-      e.preventDefault()
-      const cls = CLASS_KEY_ORDER[n - 1]
-      st.setGapClass(cur, cls)
-      showFlash(`改判为「${CLASS_STYLES[cls].label}」`)
-      // 改完自动走下一块：复核的节奏是"看一块、定一块、走下一块"。
-      // 用 setTimeout 0 是为了让这次 store 更新先落地，再取下一行（否则 idx 还是旧的）。
-      //
-      // ⚠️ 「全部」筛选下要**跳过已处理的行**（2026-10-25 审核发现）：
-      //    改判后当前行会因 `edited` 沉到列表底部，此时 `rows[idx+1]` 可能已经是
-      //    一条"已处理"的行 —— 光标跳进已处理区，而用户其实还没做完上面对未处理的那批。
-      //    其他筛选（待复核 / 已改过 / 人工新增）本来就是单一子集，按线性推进即可。
-      window.setTimeout(() => {
-        const rest = rows.slice(idx + 1)
-        const isDone = (f: (typeof rows)[number]) =>
-          !!(f.properties.edited || f.properties.source === 'manual')
-        const nx = kind === 'all' ? rest.find((f) => !isDone(f)) : rest[0]
-        if (nx && nx.properties.gap_id !== cur) goTo(nx.properties.gap_id)
-      }, 0)
     }
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, goTo, showFlash, list, gaps, kind])
+  }, [mode, goTo, showFlash, list, gaps, kind, reviewStyle, handleSimpleAction])
 
   /**
    * 键盘流。
@@ -620,12 +672,84 @@ export default function ReviewList({ mode }: Props) {
           {/* 面积档 + 自定义值同一行：档位是"常见值"，地块差异大，必须允许任意值。
               单位 m² 用伪元素贴在输入框右侧，不再单独占一列 —— 300px 宽里
               "最小面积" 四个字 + 5 个档位 + 输入框 + 单位，单独占列就会挤成竖排。 */}
+          {/* 模式切换（U4 简化 / 专业） */}
+          <div className="rv-row-filter">
+            <span className="fld-label">模式</span>
+            <div className="seg" role="group" aria-label="复核模式切换">
+              <button
+                type="button"
+                className={reviewStyle === 'simple' ? 'seg-btn active' : 'seg-btn'}
+                onClick={() => setReviewStyle('simple')}
+                title="简化模式：3键快速复核（1可种 / 2不可种 / 3不确定），按完自动跳下一块"
+              >
+                简化
+              </button>
+              <button
+                type="button"
+                className={reviewStyle === 'pro' ? 'seg-btn active' : 'seg-btn'}
+                onClick={() => setReviewStyle('pro')}
+                title="专业模式：数字键 1–9 细分改判，保留全部具体类别"
+              >
+                专业
+              </button>
+            </div>
+          </div>
+
+          {/* 简化模式大动作按钮（U4） */}
+          {reviewStyle === 'simple' && (
+            <div className="rv-simple-actions" role="group" aria-label="简化复核快捷操作">
+              <button
+                type="button"
+                className="btn-simple btn-simple-plant"
+                onClick={() => handleSimpleAction(1)}
+                title="1: 可种（确需补种：连片空地 / 株位空缺）"
+              >
+                <kbd>1</kbd>
+                <div className="btn-simple-text">
+                  <b>可种</b>
+                  <span>确需补种</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="btn-simple btn-simple-exclude"
+                onClick={() => handleSimpleAction(2)}
+                title="2: 不可种（人工排除 / 林间空隙 / 道路水体等）"
+              >
+                <kbd>2</kbd>
+                <div className="btn-simple-text">
+                  <b>不可种</b>
+                  <span>人工排除</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="btn-simple btn-simple-uncertain"
+                onClick={() => handleSimpleAction(3)}
+                title="3: 不确定（存疑待复核）"
+              >
+                <kbd>3</kbd>
+                <div className="btn-simple-text">
+                  <b>不确定</b>
+                  <span>存疑待核</span>
+                </div>
+              </button>
+            </div>
+          )}
+
           {/* 键盘槽位（2026-10-25）：**常驻 20px**，平时显示快捷键，操作后显示结果。
               为什么常驻而不是"有 flash 才渲染"：后者会让列表在每次击键时上下跳 20px，
               而行正跟着键盘走 —— 跳一次眼睛就丢一次位置。
               为什么不浮层：浮层会盖住第一行，而键盘流恰恰是"按完就看下一行"。 */}
           <div className={flash ? 'rv-flash-bar is-on' : 'rv-flash-bar'} aria-live="polite">
-            {flash || (order === 'nearest' ? '↑↓ 切换 · N 就近下一块 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销' : '↑↓ 切换 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销')}
+            {flash ||
+              (reviewStyle === 'simple'
+                ? order === 'nearest'
+                  ? '1 可种 · 2 不可种 · 3 不确定 · N 就近 · Del 删除 · Ctrl+Z 撤销'
+                  : '1 可种 · 2 不可种 · 3 不确定 · ↑↓ 切换 · Del 删除 · Ctrl+Z 撤销'
+                : order === 'nearest'
+                  ? '↑↓ 切换 · N 就近下一块 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销'
+                  : '↑↓ 切换 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销')}
           </div>
 
           <div className="rv-row-filter">
@@ -711,7 +835,9 @@ export default function ReviewList({ mode }: Props) {
                   <button
                     className={
                       (picked.has(p.gap_id) ? 'rv-item active' : 'rv-item') +
-                      (rec ? ' done' : '')
+                      (mode === 'validation'
+                        ? (rec ? ' done' : '')
+                        : (!isUnreviewed(f) ? ' done' : ''))
                     }
                     onClick={() => {
                       ensureVisible(p.class)
@@ -736,18 +862,28 @@ export default function ReviewList({ mode }: Props) {
                     {/* 空态也渲染：grid 的列数必须恒定，否则最后两列的宽度会在
                         切换视图时跳动（用户看到的是"点一下面积数字就移位了"）。 */}
                     <span
-                      className={gtText ? 'rv-gt set' : 'rv-gt'}
+                      className={
+                        mode === 'validation'
+                          ? (gtText ? 'rv-gt set' : 'rv-gt')
+                          : (p.reviewed ? 'rv-gt set' : p.edited ? 'rv-gt' : 'rv-gt')
+                      }
                       title={
-                        gtText
-                          ? `已标：${gtText}`
-                          : sample
-                            ? '尚未标注，按 1 / 2 / 3 或 Space 打标'
-                            : undefined
+                        mode === 'validation'
+                          ? (gtText
+                              ? `已标：${gtText}`
+                              : sample
+                                ? '尚未标注，按 1 / 2 / 3 或 Space 打标'
+                                : undefined)
+                          : (p.reviewed
+                              ? '已复核确认'
+                              : p.edited
+                                ? '已人工修改'
+                                : undefined)
                       }
                     >
                       {mode === 'validation'
-                        ? gtText || '未标'
-                        : ''}
+                        ? (gtText || '未标')
+                        : (p.reviewed ? '已审' : p.edited ? '已改' : '')}
                     </span>
                     {/* 算法 id 形如 r038912_c020480-G0001，全显示会把类别名挤没。
                         只留尾段，完整 id 放进 title */}

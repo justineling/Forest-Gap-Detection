@@ -62,6 +62,7 @@ CLASS_GROUP = {
     "vacant_slot": "definite_plant",
     "manual_add": "definite_plant",
     "alley_gap": "not_needed",
+    "manual_exclude": "not_needed",
     "road": "unplantable",
     "water": "unplantable",
     "office": "unplantable",

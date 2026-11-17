@@ -1500,6 +1500,11 @@ def export_bundle(payload: dict, outdir: Path, base_obj: dict | None = None) -> 
             if (f.get("properties") or {}).get("edited") and
             (f.get("properties") or {}).get("source") != "manual"))
         deleted = int(audit.get("deleted") or 0)
+        mex_count = int(audit.get("manual_exclude_count") or sum(
+            1 for f in feats if (f.get("properties") or {}).get("class") == "manual_exclude"))
+        mex_area = float(audit.get("manual_exclude_sqm") or sum(
+            float((f.get("properties") or {}).get("area_sqm") or 0.0)
+            for f in feats if (f.get("properties") or {}).get("class") == "manual_exclude"))
 
         # 影像元信息：前端传来的优先；兜底从磁盘结果读（注意 params 里没有宽高，
         # 宽高只有 processing 段才有 —— 所以这里用 crs/source_image 兜住关键字段）
@@ -1550,7 +1555,13 @@ def export_bundle(payload: dict, outdir: Path, base_obj: dict | None = None) -> 
                 "label": _chm_label(chm_core, chm_veto),
                 "is_default": abs(chm_core - 5.2) < 0.05 and abs(chm_veto - 1.2) < 0.05,
             },
-            "audit": {"added": added, "edited": edited, "deleted": deleted},
+            "audit": {
+                "added": added,
+                "edited": edited,
+                "deleted": deleted,
+                "manual_exclude_count": mex_count,
+                "manual_exclude_sqm": mex_area,
+            },
             "top": top_rows,
         })
         report_path.write_text(report_html, encoding="utf-8")

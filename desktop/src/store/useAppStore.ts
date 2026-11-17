@@ -17,9 +17,32 @@ import { estimate, DEFAULT_GRID } from '../lib/estimate'
 import { centroid, polygonAreaM2 } from '../lib/geometry'
 import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeEdits'
 import { CHM_PRESETS, type ChmPreset } from '../lib/chm'
-import type { ReviewKind, ReviewOrder } from '../lib/selection'
+import {
+  applySimplifiedReview,
+  type ReviewKind,
+  type ReviewOrder,
+  type SimplifiedAction,
+} from '../lib/selection'
 import type { GtLabel, GtRecord, GtSample } from '../lib/validation'
 import { applyDraft, baselineSig, loadDraft, maxManualSeq, type DraftStats } from '../lib/reviewDraft'
+
+export type ReviewStyle = 'simple' | 'pro'
+const REVIEW_STYLE_KEY = 'fgd.reviewStyle'
+
+function loadReviewStyle(): ReviewStyle {
+  try {
+    const s = localStorage.getItem(REVIEW_STYLE_KEY)
+    return s === 'pro' ? 'pro' : 'simple'
+  } catch {
+    return 'simple'
+  }
+}
+
+function saveReviewStyle(s: ReviewStyle): void {
+  try {
+    localStorage.setItem(REVIEW_STYLE_KEY, s)
+  } catch {}
+}
 
 /** 草稿恢复在撤销栈里的那一步的名字（ReviewList 靠它判断"撤销恢复"按钮还有没有意义） */
 /**
@@ -383,6 +406,11 @@ export interface AppState {
   setPeepBase: (v: boolean) => void
   togglePeepBase: () => void
 
+  // —— 复核模式（U4 简化 / 专业）——
+  reviewStyle: ReviewStyle
+  setReviewStyle: (style: ReviewStyle) => void
+  applySimplifiedReviewAction: (id: string, action: SimplifiedAction) => void
+
   // —— 检测（P0 检测面板）——
   /** 用户可调的检测参数（持久化） */
   detectParams: DetectParams
@@ -630,6 +658,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setPeepBase: (v) => set({ peepBase: v }),
   togglePeepBase: () => set((s) => ({ peepBase: !s.peepBase })),
 
+  reviewStyle: loadReviewStyle(),
+  setReviewStyle: (style) => {
+    saveReviewStyle(style)
+    set({ reviewStyle: style })
+  },
+
   detectParams: loadDetectParams(),
   detect: { ...IDLE_DETECT },
   outputDir: loadOutputDir(),
@@ -809,10 +843,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
       if (!prev) return {}
       lastGeomEdit = null
       const cur = snap(s, prev.label)
+      const restoredFocusId = prev.selectedIds.length === 1 ? prev.selectedIds[0] : null
       return {
         gaps: prev.gaps,
         deletedFeatures: prev.deletedFeatures,
         ...sel(prev.selectedIds),
+        focus: restoredFocusId ? { id: restoredFocusId, nonce: (s.focus?.nonce ?? 0) + 1 } : s.focus,
         manualAdded: prev.manualAdded,
         manualDeleted: prev.manualDeleted,
         manualEdited: prev.manualEdited,
@@ -841,10 +877,12 @@ export const useAppStore = create<AppState>()((set, get) => ({
       if (!next) return {}
       lastGeomEdit = null
       const cur = snap(s, next.label)
+      const restoredFocusId = next.selectedIds.length === 1 ? next.selectedIds[0] : null
       return {
         gaps: next.gaps,
         deletedFeatures: next.deletedFeatures,
         ...sel(next.selectedIds),
+        focus: restoredFocusId ? { id: restoredFocusId, nonce: (s.focus?.nonce ?? 0) + 1 } : s.focus,
         manualAdded: next.manualAdded,
         manualDeleted: next.manualDeleted,
         manualEdited: next.manualEdited,
@@ -1015,12 +1053,48 @@ export const useAppStore = create<AppState>()((set, get) => ({
                   class_reason: '用户手工改判',
                   edited: true,
                   edited_by: 'user',
+                  reviewed: true,
                 },
               }
             : f,
         ),
         manualEdited: s.manualEdited + 1,
         logs: appendLog(s.logs, `改判 ${id} 类别为 ${CLASS_STYLES[cls].label}`),
+      })
+    }),
+
+  applySimplifiedReviewAction: (id, action) =>
+    set((s) => {
+      const cur = s.gaps.find((f) => f.properties.gap_id === id)
+      if (!cur) return {}
+      const res = applySimplifiedReview(cur, action)
+      const isClassChanged = res.nextClass !== cur.properties.class
+      const actionLabel = action === 1 ? '可种' : action === 2 ? '不可种' : '不确定'
+      const label = isClassChanged
+        ? `简化复核 ${id}：${actionLabel}（${CLASS_STYLES[res.nextClass].label}）`
+        : `简化复核确认 ${id}：${actionLabel}`
+      return commit(s, label, {
+        gaps: s.gaps.map((f) =>
+          f.properties.gap_id === id
+            ? {
+                ...f,
+                properties: {
+                  ...f.properties,
+                  original_class: isClassChanged
+                    ? f.properties.original_class ?? f.properties.class
+                    : f.properties.original_class,
+                  class: res.nextClass,
+                  class_label: CLASS_STYLES[res.nextClass].label,
+                  class_reason: res.classReason ?? f.properties.class_reason,
+                  edited: res.edited,
+                  edited_by: res.edited ? 'user' : f.properties.edited_by,
+                  reviewed: true,
+                },
+              }
+            : f,
+        ),
+        manualEdited: isClassChanged ? s.manualEdited + 1 : s.manualEdited,
+        logs: appendLog(s.logs, label),
       })
     }),
 
