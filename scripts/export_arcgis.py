@@ -369,6 +369,7 @@ def export_planting_points(src_obj: dict, outdir: Path,
     kml = ['<?xml version="1.0" encoding="UTF-8"?>',
            '<kml xmlns="http://www.opengis.net/kml/2.2"><Document>',
            '<name>Forest Gap Detection · 补种放样点位</name>',
+           '<description>现场确认提醒：附近可能有小树，现场确认。</description>',
            '<Folder><name>补种放样点位</name>',
            '<open>1</open>']
     for p in pts:

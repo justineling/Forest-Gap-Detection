@@ -4,33 +4,23 @@ import { CLASS_KEY_ORDER, CLASS_STYLES } from '../lib/classes'
 import {
   REVIEW_KIND_LABEL,
   filterReviewGaps,
+  findNextNearestUnreviewed,
+  distanceM,
   reviewCounts,
   type ReviewKind,
 } from '../lib/selection'
+import { centroid } from '../lib/geometry'
 import { shouldIgnoreHotkey } from '../lib/hotkeys'
 import {
   DEFAULT_SEED,
   GT_LABEL_META,
   buildValidationSample,
   canConfirm,
+  evaluate,
   nextUnlabeled,
   type GtLabel,
   type GtSample,
 } from '../lib/validation'
-
-/**
- * 抽样权重的显示。
- *
- * ⚠️ 不能 `Math.round`：权重是逆概率 `N_h / n_h`（例如某层 480 块抽 130 块 →
- *    3.69），四舍五入成 `w4` 之后，**照着屏幕核对分数就会差 8%**。
- *    整数才去掉小数（L1 必抽层权重恰好 1.0 → 显示 w1）。
- */
-function wNum(w: number): string {
-  return Number.isInteger(w) ? String(w) : w.toFixed(1)
-}
-function wLabel(s: { weight: number }): string {
-  return `w${wNum(s.weight)}`
-}
 
 const KINDS: ReviewKind[] = ['all', 'uncertain', 'edited', 'manual']
 const AREAS = [
@@ -76,8 +66,9 @@ export default function ReviewList({ mode }: Props) {
   const focusGap = useAppStore((s) => s.focusGap)
   const ensureVisible = useAppStore((s) => s.ensureVisible)
   const selectedIds = useAppStore((s) => s.selectedIds)
+  const selectedId = useAppStore((s) => s.selectedId)
   // 筛选条件放 store：切到「属性」标签时本组件会被卸载，组件内 state 会丢
-  const { kind, minArea, customArea } = useAppStore((s) => s.reviewFilter)
+  const { kind, minArea, customArea, order } = useAppStore((s) => s.reviewFilter)
   const setReviewFilter = useAppStore((s) => s.setReviewFilter)
   const validation = useAppStore((s) => s.validation)
   const initValidation = useAppStore((s) => s.initValidation)
@@ -136,14 +127,28 @@ export default function ReviewList({ mode }: Props) {
     if (samples.length === 0) return
     initValidation(scope, samples, DEFAULT_SEED)
     pushLog(
-      `已生成验证集：${samples.length} 块（三层分层 · seed ${DEFAULT_SEED}），` +
-        `用于算全园无偏准确率`,
+      `已生成抽检验证集：${samples.length} 块（seed ${DEFAULT_SEED}），` +
+        `用于评估全园准确率`,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, scope, gaps.length, validation.scope, validation.samples.length])
 
   const counts = reviewCounts(gaps)
-  const list = filterReviewGaps(gaps, { kind, minArea })
+  const list = filterReviewGaps(gaps, { kind, minArea, order }, selectedId)
+
+  /** 抽检已标注总数（U3） */
+  const valLabeledCount = useMemo(() => {
+    return Object.values(validation.records).filter((r) => r.gt != null || r.confirmed).length
+  }, [validation.records])
+
+  /** 标满 30 块之后才计算初步估计准确率（U3） */
+  const valEval = useMemo(() => {
+    if (valLabeledCount < 30) return null
+    return evaluate(validation.samples, validation.records)
+  }, [valLabeledCount, validation.samples, validation.records])
+
+  const valAccPercent = valEval ? Math.round(valEval.weightedAcc * 100) : 0
+  const valRemaining = Math.max(0, validation.samples.length - valLabeledCount)
 
   /**
    * 验证集模式下的可见列表。
@@ -307,6 +312,27 @@ export default function ReviewList({ mode }: Props) {
         return
       }
 
+      // 就近下一块（U2）：按 N 跳到离当前块最近的未复核块
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault()
+        const target = findNextNearestUnreviewed(list, cur)
+        if (target) {
+          goTo(target.properties.gap_id)
+          const curFeat = cur ? gaps.find((x) => x.properties.gap_id === cur) : null
+          if (curFeat) {
+            const dist = Math.round(
+              distanceM(centroid(curFeat.geometry), centroid(target.geometry)),
+            )
+            showFlash(`就近跳转至下一块（距上一块 ${dist} m）`)
+          } else {
+            showFlash(`从最大未复核块开始（${Math.round(target.properties.area_sqm ?? 0)} m²）`)
+          }
+        } else {
+          showFlash('✓ 没有未复核的地块了')
+        }
+        return
+      }
+
       // 数字键改判：顺序取自 CLASS_KEY_ORDER —— 与左面板的**渲染顺序**一致（1 = 株位空缺 …）。
       // ⚠️ 不要用 ALL_CLASSES：那是声明顺序，3 和 5 会指错类别（见 classes.ts 的注释）。
       const n = Number(e.key)
@@ -337,7 +363,7 @@ export default function ReviewList({ mode }: Props) {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, goTo, showFlash])
+  }, [mode, goTo, showFlash, list, gaps, kind])
 
   /**
    * 键盘流。
@@ -478,27 +504,57 @@ export default function ReviewList({ mode }: Props) {
 
       {mode === 'validation' ? (
         <>
+          {/* 抽检进度与当前估计准确率（U3） */}
+          <div className="rv-val-header">
+            <div className="rv-val-progress">
+              <span className="rv-val-title">抽检进度</span>
+              <b className="rv-val-ratio">
+                {valLabeledCount} / {validation.samples.length}
+              </b>
+            </div>
+            <div className="rv-val-acc">
+              {valLabeledCount >= 30 && valEval ? (
+                <span className="rv-val-acc-text">
+                  当前估计准确率 <b>{valAccPercent}%</b>
+                  {valRemaining > 0 && <span className="dim">（还差 {valRemaining} 块才稳定）</span>}
+                </span>
+              ) : (
+                <span className="dim rv-val-hint">标满 30 块后显示初步估计准确率</span>
+              )}
+            </div>
+          </div>
+
           <div className="rv-kbd">
             <div className="rv-kbd-row">
               <kbd>↑</kbd>
               <kbd>↓</kbd>
               <span className="dim">切换并定位</span>
               <kbd>Space</kbd>
-              <span className="dim">认同算法（「待复核」块除外）</span>
+              <span className="dim">认同算法判定</span>
             </div>
             <div className="rv-kbd-row">
-              {([1, 2, 3, 4] as GtLabel[]).map((g) => (
-                <span key={g} className="rv-kbd-pair">
-                  <kbd>{g}</kbd>
-                  <span className="dim">{GT_LABEL_META[g].short}</span>
-                </span>
-              ))}
+              <span className="rv-kbd-pair">
+                <kbd>1</kbd>
+                <span className="dim">确需补种的空地</span>
+              </span>
+              <span className="rv-kbd-pair">
+                <kbd>2</kbd>
+                <span className="dim">无需补种（林隙/幼树）</span>
+              </span>
+              <span className="rv-kbd-pair">
+                <kbd>3</kbd>
+                <span className="dim">不可种植（路/水/建筑）</span>
+              </span>
+              <span className="rv-kbd-pair">
+                <kbd>4</kbd>
+                <span className="dim">存疑</span>
+              </span>
             </div>
           </div>
 
           <div className="rv-actions">
             <button className="btn tiny" onClick={exportValidation}>
-              导出标注 JSON
+              导出标注结果
             </button>
             <button
               className="btn tiny"
@@ -569,7 +625,33 @@ export default function ReviewList({ mode }: Props) {
               而行正跟着键盘走 —— 跳一次眼睛就丢一次位置。
               为什么不浮层：浮层会盖住第一行，而键盘流恰恰是"按完就看下一行"。 */}
           <div className={flash ? 'rv-flash-bar is-on' : 'rv-flash-bar'} aria-live="polite">
-            {flash || '↑↓ 切换 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销'}
+            {flash || (order === 'nearest' ? '↑↓ 切换 · N 就近下一块 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销' : '↑↓ 切换 · 1–9 改判 · Del 删除 · Ctrl+Z 撤销')}
+          </div>
+
+          <div className="rv-row-filter">
+            {/* 排序方式切换（U2） */}
+            <span className="fld-label">排序</span>
+            <div className="seg" role="group" aria-label="复核清单排序方式">
+              <button
+                type="button"
+                className={order !== 'nearest' ? 'seg-btn active' : 'seg-btn'}
+                onClick={() => setReviewFilter({ order: 'area' })}
+                title="按面积降序：优先清查大斑块（二八定律）"
+              >
+                按面积
+              </button>
+              <button
+                type="button"
+                className={order === 'nearest' ? 'seg-btn active' : 'seg-btn'}
+                onClick={() => setReviewFilter({ order: 'nearest' })}
+                title="就近排序：减少地图来回飞，按 N 键直接跳至离当前最近的未复核地块"
+              >
+                就近
+              </button>
+            </div>
+            {order === 'nearest' && (
+              <span className="rv-order-hint dim">按 N 跳最近未复核</span>
+            )}
           </div>
 
           <div className="rv-row-filter">
@@ -655,20 +737,16 @@ export default function ReviewList({ mode }: Props) {
                         切换视图时跳动（用户看到的是"点一下面积数字就移位了"）。 */}
                     <span
                       className={gtText ? 'rv-gt set' : 'rv-gt'}
-                      /* 权重是评估口径的一部分，必须能解释清楚：
-                         "w3.7" 对没读过抽样方案的人等于噪声。 */
                       title={
-                        // 已标过的行显示的是真值（✓ 认同 / 补种…），此时再挂"抽样权重"
-                        // 就是悬停看到屏幕上没有的东西 —— 权重只在未标时才是那一列的主语。
                         gtText
                           ? `已标：${gtText}`
                           : sample
-                            ? `抽样权重 ${wLabel(sample)} —— 这一层共 ${sample.stratum_total} 块、抽了 ${sample.stratum_sampled} 块，算全园准确率时每块按 ${wNum(sample.weight)} 倍放大`
+                            ? '尚未标注，按 1 / 2 / 3 或 Space 打标'
                             : undefined
                       }
                     >
                       {mode === 'validation'
-                        ? gtText || (sample ? wLabel(sample) : '')
+                        ? gtText || '未标'
                         : ''}
                     </span>
                     {/* 算法 id 形如 r038912_c020480-G0001，全显示会把类别名挤没。

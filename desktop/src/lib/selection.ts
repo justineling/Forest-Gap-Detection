@@ -1,4 +1,5 @@
 import type { GapClass, GapFeature, Position } from '../types'
+import { centroid, metersPerDeg } from './geometry'
 
 /**
  * 框选与复核筛选的**纯几何逻辑**。
@@ -108,11 +109,16 @@ export function selectGapsInBox(
 // ============================================================================
 
 export type ReviewKind = 'all' | 'uncertain' | 'edited' | 'manual'
+export type ReviewOrder = 'area' | 'nearest'
 
 export interface ReviewFilter {
   kind: ReviewKind
   /** 最小面积（m²），0 = 不限制 */
   minArea: number
+  /** 自定义输入框的原始文本（空串 = 用上面的预设档位） */
+  customArea?: string
+  /** 排序模式：'area' 按面积降序（默认）| 'nearest' 就近 */
+  order?: ReviewOrder
 }
 
 export const REVIEW_KIND_LABEL: Record<ReviewKind, string> = {
@@ -120,6 +126,105 @@ export const REVIEW_KIND_LABEL: Record<ReviewKind, string> = {
   uncertain: '待复核',
   edited: '已改过',
   manual: '人工新增',
+}
+
+export const REVIEW_ORDER_LABEL: Record<ReviewOrder, string> = {
+  area: '按面积',
+  nearest: '就近',
+}
+
+/** 两个经纬度坐标之间的局部测地距离（m） */
+export function distanceM(p1: Position, p2: Position): number {
+  const midLat = (p1[1] + p2[1]) / 2
+  const { x: mx, y: my } = metersPerDeg(midLat)
+  const dx = (p1[0] - p2[0]) * mx
+  const dy = (p1[1] - p2[1]) * my
+  return Math.hypot(dx, dy)
+}
+
+/** 要素是否未复核：未改过类别或边界、且不是手工补画 */
+export function isUnreviewed(f: GapFeature): boolean {
+  return !f.properties.edited && f.properties.source !== 'manual'
+}
+
+/**
+ * 寻找下一个最近的未复核地块（U2）：
+ * - 如果没有当前选中块（或当前块不在候选集）：从面积最大的未复核块开始；
+ * - 如果有当前选中块：找离当前块质心最近的未复核块（排除当前块本身）；
+ * - 并列规则（距离相差 < 1e-4 m）：面积大的优先；若面积仍相同，按 gap_id 字典序保证确定性；
+ * - 如果没有未复核地块：返回 null。
+ */
+export function findNextNearestUnreviewed(
+  candidates: GapFeature[],
+  currentId?: string | null,
+): GapFeature | null {
+  const unreviewed = candidates.filter(isUnreviewed)
+  if (unreviewed.length === 0) return null
+
+  const cur = currentId ? candidates.find((f) => f.properties.gap_id === currentId) : null
+  const pool = cur
+    ? unreviewed.filter((f) => f.properties.gap_id !== cur.properties.gap_id)
+    : unreviewed
+
+  if (pool.length === 0) return null
+
+  if (!cur) {
+    // 没有选中块：从面积最大的未复核块开始
+    return [...pool].sort((a, b) => {
+      const da = (b.properties.area_sqm ?? 0) - (a.properties.area_sqm ?? 0)
+      if (Math.abs(da) > 1e-6) return da
+      return a.properties.gap_id.localeCompare(b.properties.gap_id)
+    })[0]
+  }
+
+  const c0 = centroid(cur.geometry)
+  let best: GapFeature | null = null
+  let bestDist = Infinity
+  let bestArea = -Infinity
+  let bestId = ''
+
+  for (const f of pool) {
+    const c = centroid(f.geometry)
+    const dist = distanceM(c0, c)
+    const area = f.properties.area_sqm ?? 0
+    const id = f.properties.gap_id
+
+    if (best === null) {
+      best = f
+      bestDist = dist
+      bestArea = area
+      bestId = id
+      continue
+    }
+
+    const dDiff = dist - bestDist
+    if (dDiff < -1e-4) {
+      // 距离更近
+      best = f
+      bestDist = dist
+      bestArea = area
+      bestId = id
+    } else if (Math.abs(dDiff) <= 1e-4) {
+      // 距离并列（< 0.1 mm）：取面积大的
+      const aDiff = area - bestArea
+      if (aDiff > 1e-6) {
+        best = f
+        bestDist = dist
+        bestArea = area
+        bestId = id
+      } else if (Math.abs(aDiff) <= 1e-6) {
+        // 面积仍并列：取 gap_id 字典序小的保证确定性
+        if (id.localeCompare(bestId) < 0) {
+          best = f
+          bestDist = dist
+          bestArea = area
+          bestId = id
+        }
+      }
+    }
+  }
+
+  return best
 }
 
 /**
@@ -132,6 +237,7 @@ export const REVIEW_KIND_LABEL: Record<ReviewKind, string> = {
 export function filterReviewGaps(
   features: GapFeature[],
   filter: ReviewFilter,
+  currentId?: string | null,
 ): GapFeature[] {
   const out = features.filter((f) => {
     const p = f.properties
@@ -141,6 +247,22 @@ export function filterReviewGaps(
     if (filter.kind === 'manual') return p.source === 'manual'
     return true
   })
+
+  if (filter.order === 'nearest' && currentId) {
+    const cur = features.find((f) => f.properties.gap_id === currentId)
+    if (cur) {
+      const c0 = centroid(cur.geometry)
+      return out.sort((a, b) => {
+        if (a.properties.gap_id === currentId) return -1
+        if (b.properties.gap_id === currentId) return 1
+        const da = distanceM(c0, centroid(a.geometry))
+        const db = distanceM(c0, centroid(b.geometry))
+        if (Math.abs(da - db) > 1e-4) return da - db
+        return (b.properties.area_sqm ?? 0) - (a.properties.area_sqm ?? 0)
+      })
+    }
+  }
+
   return out.sort((a, b) => (b.properties.area_sqm ?? 0) - (a.properties.area_sqm ?? 0))
 }
 

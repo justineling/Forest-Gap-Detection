@@ -33,6 +33,7 @@ drone data/
 .workbuddy-ai/tmp/
 .idea/
 .vscode/
+.claude/
 *.swp
 .DS_Store
 Thumbs.db

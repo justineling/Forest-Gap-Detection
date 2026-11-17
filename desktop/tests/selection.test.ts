@@ -11,6 +11,9 @@ import {
   selectGapsInBox,
   filterReviewGaps,
   reviewCounts,
+  isUnreviewed,
+  findNextNearestUnreviewed,
+  distanceM,
 } from '../src/lib/selection'
 import type { GapClass, GapFeature, GapGeometry } from '../src/types'
 
@@ -176,6 +179,70 @@ console.log('\nG. 复核清单（按面积降序 + 条件过滤）')
 
   const c = reviewCounts(list)
   check(c.all === 4 && c.uncertain === 2 && c.edited === 1 && c.manual === 1, '计数正确', JSON.stringify(c))
+}
+
+// ---------- H. U2: 就近下一块与未复核判定 ----------
+console.log('\nH. U2: 就近下一块（findNextNearestUnreviewed 纯函数单测）')
+{
+  check(Math.round(distanceM([111.2, 1.19], [111.201, 1.19])) > 100, 'distanceM 测地距离计算正常')
+
+  // 1. isUnreviewed 判据
+  const fNormal = feat('G1', 'uncertain', 111.2, 1.19, { area_sqm: 100 })
+  const fEdited = feat('G2', 'uncertain', 111.2, 1.19, { area_sqm: 100, edited: true })
+  const fManual = feat('G3', 'manual_add', 111.2, 1.19, { area_sqm: 100, source: 'manual' })
+  check(isUnreviewed(fNormal), '未编辑要素判定为未复核')
+  check(!isUnreviewed(fEdited), 'edited 判定为已复核')
+  check(!isUnreviewed(fManual), 'manual 判定为已复核')
+
+  // 构造地块：
+  // Base at (111.200, 1.190)
+  // Near1 at (111.201, 1.190) - dx ~110m, area 200, edited=true (已复核，应跳过)
+  // Near2 at (111.202, 1.190) - dx ~220m, area 300, unreviewed (最近未复核)
+  // Far1  at (111.205, 1.190) - dx ~550m, area 1000, unreviewed (最大)
+  const base = feat('BASE', 'uncertain', 111.200, 1.190, { area_sqm: 500 })
+  const near1_reviewed = feat('N1_DONE', 'uncertain', 111.201, 1.190, { area_sqm: 200, edited: true })
+  const near2_unreviewed = feat('N2_UNREV', 'uncertain', 111.202, 1.190, { area_sqm: 300 })
+  const far1_large = feat('FAR_MAX', 'uncertain', 111.205, 1.190, { area_sqm: 1000 })
+  const pool = [base, near1_reviewed, near2_unreviewed, far1_large]
+
+  // a. 无当前选中块：从面积最大的未复核块开始
+  const first = findNextNearestUnreviewed(pool, null)
+  check(first?.properties.gap_id === 'FAR_MAX', '★ 无选中块时从面积最大的未复核块开始', first?.properties.gap_id)
+
+  // b. 从 BASE 出发：跳过已复核的 N1_DONE，命中最近未复核的 N2_UNREV
+  const nxt = findNextNearestUnreviewed(pool, 'BASE')
+  check(nxt?.properties.gap_id === 'N2_UNREV', '★ 空间就近跳过已复核块，选择最近的未复核地块', nxt?.properties.gap_id)
+
+  // c. 确定性测试：多次重复调用结果完全一致
+  const call1 = findNextNearestUnreviewed(pool, 'BASE')?.properties.gap_id
+  const call2 = findNextNearestUnreviewed(pool, 'BASE')?.properties.gap_id
+  const call3 = findNextNearestUnreviewed(pool, 'BASE')?.properties.gap_id
+  check(call1 === call2 && call2 === call3, '★ 纯函数执行确定性（多次调用逐次一致）')
+
+  // d. 并列取大测试（距离相同，取面积大的）
+  // 两个地块距离 BASE 都是 0.003 度：一个面积 200，一个面积 800
+  const tieSmall = feat('TIE_S', 'uncertain', 111.200, 1.193, { area_sqm: 200 })
+  const tieLarge = feat('TIE_L', 'uncertain', 111.200, 1.187, { area_sqm: 800 })
+  const tiePool = [base, tieSmall, tieLarge]
+  const tieResult = findNextNearestUnreviewed(tiePool, 'BASE')
+  check(tieResult?.properties.gap_id === 'TIE_L', '★ 距离并列时优先取面积大的地块（TIE_L）', tieResult?.properties.gap_id)
+
+  // e. 距离与面积全并列测试：按 gap_id 字典序保证绝对确定性
+  const tieA = feat('TIE_A', 'uncertain', 111.200, 1.193, { area_sqm: 500 })
+  const tieB = feat('TIE_B', 'uncertain', 111.200, 1.187, { area_sqm: 500 })
+  const tiePoolAB = [base, tieB, tieA] // 故意乱序传入
+  const tieResultAB = findNextNearestUnreviewed(tiePoolAB, 'BASE')
+  check(tieResultAB?.properties.gap_id === 'TIE_A', '★ 距离与面积均并列时按 gap_id 字典序决胜保证确定性', tieResultAB?.properties.gap_id)
+
+  // f. 全部已复核时返回 null
+  const allReviewed = [near1_reviewed, feat('D2', 'uncertain', 111.2, 1.19, { edited: true })]
+  check(findNextNearestUnreviewed(allReviewed, null) === null, '全部已复核时返回 null')
+
+  // g. filterReviewGaps 就近排序
+  const ordered = filterReviewGaps([base, near2_unreviewed, far1_large], { kind: 'all', minArea: 0, order: 'nearest' }, 'BASE')
+  check(ordered[0].properties.gap_id === 'BASE', '就近排序当前选中块排首位')
+  check(ordered[1].properties.gap_id === 'N2_UNREV', '第二位是距离最近的块')
+  check(ordered[2].properties.gap_id === 'FAR_MAX', '最后是较远的块')
 }
 
 // ---------- 汇总 ----------

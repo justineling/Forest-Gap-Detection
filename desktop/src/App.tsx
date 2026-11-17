@@ -15,6 +15,7 @@ import PreflightDialog from './components/PreflightDialog'
 import DerivedDialog from './components/DerivedDialog'
 import ExportDialog from './components/ExportDialog'
 import { parseKmlOrGeoJsonRoi } from './lib/roiImport'
+import { isPeepKey, shouldIgnorePeepHotkey } from './lib/hotkeys'
 import { useAppStore } from './store/useAppStore'
 import WelcomeWizard from './components/WelcomeWizard'
 import {
@@ -1199,12 +1200,27 @@ export default function App() {
     openSettings('detect')
   }, [starting, detect.running, openSettings])
 
-  // 全局快捷键：Ctrl+Z 撤销 / Ctrl+Y(或 Ctrl+Shift+Z) 重做 / Delete 删除选中 / Esc 退出
+  // 全局快捷键：Ctrl+Z 撤销 / Ctrl+Y(或 Ctrl+Shift+Z) 重做 / Delete 删除选中 / Esc 退出 / 按住 H 看底图（U1）
   //
   // ⚠️ 必须先判断焦点是否在输入控件里 —— 否则用户在搜索框里按 Ctrl+Z
   //    会撤销多边形（数据没了），而输入框里的文字还留着，非常困惑。
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isPeepKey(e.key)) {
+        if (
+          shouldIgnorePeepHotkey({
+            target: e.target as HTMLElement | null,
+            hasDialog: !!document.querySelector('[role="dialog"]'),
+            hasModifier: e.ctrlKey || e.metaKey || e.altKey,
+          })
+        ) {
+          return
+        }
+        e.preventDefault()
+        useAppStore.getState().setPeepBase(true)
+        return
+      }
+
       const el = e.target as HTMLElement | null
       const typing =
         !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)
@@ -1236,8 +1252,25 @@ export default function App() {
         st.clearSelection()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (isPeepKey(e.key)) {
+        useAppStore.getState().setPeepBase(false)
+      }
+    }
+
+    const onBlur = () => {
+      useAppStore.getState().setPeepBase(false)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
   }, [])
 
   /**

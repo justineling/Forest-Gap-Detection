@@ -82,6 +82,8 @@ export default function TopToolbar({
   const future = useAppStore((s) => s.future)
   const undo = useAppStore((s) => s.undo)
   const redo = useAppStore((s) => s.redo)
+  const peepBase = useAppStore((s) => s.peepBase)
+  const togglePeepBase = useAppStore((s) => s.togglePeepBase)
 
   const reconnect = async () => {
     pushLog('正在探测影像服务…')
@@ -133,6 +135,16 @@ export default function TopToolbar({
           aria-label={healthy ? '影像已就绪' : tilesFailed ? '影像读不出来' : '影像未连接'}
         >
           <span className={healthy ? 'dot ok' : 'dot bad'} />
+        </button>
+
+        <button
+          type="button"
+          className={peepBase ? 'btn tiny active' : 'btn tiny'}
+          onClick={togglePeepBase}
+          title="临时隐藏所有矢量图层，看清底图正射影像（快捷键：按住 H 键，松开恢复）"
+          aria-pressed={peepBase}
+        >
+          看底图
         </button>
 
         {/* 悬停直接说出**这一下撤的是什么**（缺陷台账 P2-3：只看到「↶ 3」不敢按）。

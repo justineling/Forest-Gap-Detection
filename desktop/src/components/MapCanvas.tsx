@@ -39,6 +39,7 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
   const backendOnline = useAppStore((s) => s.backendOnline)
   const gaps = useAppStore((s) => s.gaps)
   const visibleClasses = useAppStore((s) => s.visibleClasses)
+  const peepBase = useAppStore((s) => s.peepBase)
   const selectedIds = useAppStore((s) => s.selectedIds)
   const focus = useAppStore((s) => s.focus)
   /**
@@ -373,6 +374,38 @@ export default function MapCanvas({ drawIntent, onDrawDone }: Props) {
       features: selectVisibleGaps({ gaps, visibleClasses }),
     } as never)
   }, [gaps, visibleClasses, mapReady])
+
+  // ---------- 3b. 透视底图（U1：按住 H 键临时隐藏所有矢量图层） ----------
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+    const VECTOR_LAYER_IDS = [
+      'gaps-fill',
+      'gaps-line',
+      'gaps-selected',
+      'roi-fill',
+      'roi-line',
+      'planting-points',
+    ]
+    const vis = peepBase ? 'none' : 'visible'
+    for (const id of VECTOR_LAYER_IDS) {
+      if (map.getLayer(id)) {
+        map.setLayoutProperty(id, 'visibility', vis)
+      }
+    }
+    try {
+      const style = map.getStyle()
+      if (style?.layers) {
+        for (const l of style.layers) {
+          if (l.id.startsWith('terra-draw-')) {
+            map.setLayoutProperty(l.id, 'visibility', vis)
+          }
+        }
+      }
+    } catch {
+      /* 忽略 */
+    }
+  }, [peepBase, mapReady])
 
   // ---------- 4. 选中高亮（支持多选） ----------
   useEffect(() => {

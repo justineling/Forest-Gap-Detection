@@ -8,7 +8,7 @@
  * 所以这一组测试**刻意只测 false 分支**（该让位的情形），
  * 因为 true 分支（该响应）出错只是"按了没反应"，容易发现。
  */
-import { isTypingTarget, shouldIgnoreHotkey, isHotkey, HOTKEYS } from '../src/lib/hotkeys'
+import { isTypingTarget, shouldIgnoreHotkey, isHotkey, HOTKEYS, isPeepKey, shouldIgnorePeepHotkey } from '../src/lib/hotkeys'
 
 let failures = 0
 function check(ok: boolean, label: string, detail = ''): void {
@@ -95,6 +95,50 @@ console.log('\nF. 单键集合')
   check(!isHotkey('a'), 'a 不属于')
   check(!isHotkey('Delete'), 'Delete 不属于（那是全局删除选中，语义不同）')
   check(HOTKEYS.size === 8, '集合大小 = 8', String(HOTKEYS.size))
+}
+
+// ---------- G. U1: 按住 H 看底图 ----------
+console.log('\nG. U1: 按住 H 看底图快捷键防误触与按键流')
+{
+  check(isPeepKey('h'), 'h 属于底图透视键')
+  check(isPeepKey('H'), 'H 属于底图透视键')
+  check(!isPeepKey(' '), '★ Space 不能作为看底图快捷键（验证集模式下已占用为认同算法）')
+  check(!isPeepKey('n'), 'n 不是底图透视键')
+
+  check(!shouldIgnorePeepHotkey({ target: null }), '空闲状态正常响应看底图')
+  check(shouldIgnorePeepHotkey({ target: { tagName: 'INPUT' } }), '★ 输入框里按 H 让位（不能误触隐藏图层）')
+  check(shouldIgnorePeepHotkey({ target: { tagName: 'TEXTAREA' } }), 'TEXTAREA 里按 H 让位')
+  check(shouldIgnorePeepHotkey({ target: { tagName: 'DIV', isContentEditable: true } }), 'contenteditable 里让位')
+  check(shouldIgnorePeepHotkey({ target: null, hasDialog: true }), '★ 弹窗打开时按 H 让位')
+  check(shouldIgnorePeepHotkey({ target: null, hasModifier: true }), '★ 带修饰键（Ctrl+H / Alt+H）让位给浏览器')
+
+  // 状态迁移测试：按下 / 松开 / 失焦
+  const state = { peepBase: false }
+  const onKeyDown = (k: string, ctx: Parameters<typeof shouldIgnorePeepHotkey>[0]) => {
+    if (isPeepKey(k) && !shouldIgnorePeepHotkey(ctx)) {
+      state.peepBase = true
+    }
+  }
+  const onKeyUp = (k: string) => {
+    if (isPeepKey(k)) state.peepBase = false
+  }
+  const onBlur = () => {
+    state.peepBase = false
+  }
+
+  // 1. 按下测试
+  onKeyDown('h', { target: null })
+  check(state.peepBase === true, '★ 按下 H 键 → 图层进入隐藏透视状态（peepBase = true）')
+
+  // 2. 松开测试
+  onKeyUp('h')
+  check(state.peepBase === false, '★ 松开 H 键 → 立即恢复图层显示（peepBase = false）')
+
+  // 3. 失焦测试
+  onKeyDown('H', { target: null })
+  check(state.peepBase === true, '再次按下 H 键进入透视状态')
+  onBlur()
+  check(state.peepBase === false, '★ 窗口失焦 (window.blur) → 自动恢复图层显示（防止松键丢失一直隐藏）')
 }
 
 // ---------- 汇总 ----------

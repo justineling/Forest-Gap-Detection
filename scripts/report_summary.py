@@ -322,10 +322,11 @@ def build_report_html(d: dict) -> str:
   ② 排坑法按 <span class="mono">{_n(grid.get("plant_pitch_m"), 2)} m × {_n(grid.get("row_pitch_m"), 2)} m</span>
   三角种植网格逐格判定，退让 <span class="mono">{_n(d.get("clearance_m"), 1)} m</span>；
   面积法按 66.67 m²/株折算（150 株/公顷）。两者差异大于 30% 时说明斑块形状破碎，应以排坑法为准。<br>
-  ③ CHM 高度阈值（救援 <span class="mono">{_n(chm_core, 1)} m</span> / 否决 <span class="mono">{_n(chm_veto, 1)} m</span>，
+  ③ 放样点现场施工提醒：附近可能有小树，现场确认。<br>
+  ④ CHM 高度阈值（救援 <span class="mono">{_n(chm_core, 1)} m</span> / 否决 <span class="mono">{_n(chm_veto, 1)} m</span>，
   {_e(chm_label)}档）决定「多高才算树」。大疆 DSM 平滑会让树高被低估约 40%，
   换到幼龄林时需在桌面端「⚙ 检测参数」里切档，否则会大面积误判。<br>
-  ④ 本报告为单文件 HTML，可直接 <span class="mono">Ctrl + P</span> 打印为 A4 PDF，无外部依赖。
+  ⑤ 本报告为单文件 HTML，可直接 <span class="mono">Ctrl + P</span> 打印为 A4 PDF，无外部依赖。
 </div>
 
 <p class="foot">Forest Gap Detection · 补种勘察一页报告 · 由桌面端自动生成</p>
@@ -385,6 +386,7 @@ def _selftest() -> int:
         ("含放样估算", "网格排坑法" in out and "3,691" in out),
         ("含人工留痕", "人工新增" in out and "人工剔除" in out),
         ("含 Top 表", "r038912_c020480-G0001" in out),
+        ("含放样点现场施工提醒（U0）", "附近可能有小树，现场确认" in out),
         ("含参数卡片", "8.35" in out and "7.23" in out and "0.67" in out),
         ("含 CHM 阈值卡片", "CHM 高度阈值" in out and "5.2 / 1.2 m" in out),
         # ⚠️ 不能搜 "非默认" —— CSS 注释里也有这三个字，会永远命中。

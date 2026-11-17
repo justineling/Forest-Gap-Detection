@@ -17,7 +17,7 @@ import { estimate, DEFAULT_GRID } from '../lib/estimate'
 import { centroid, polygonAreaM2 } from '../lib/geometry'
 import { mergeManualEdits, type MergeMode, type MergeStats } from '../lib/mergeEdits'
 import { CHM_PRESETS, type ChmPreset } from '../lib/chm'
-import type { ReviewKind } from '../lib/selection'
+import type { ReviewKind, ReviewOrder } from '../lib/selection'
 import type { GtLabel, GtRecord, GtSample } from '../lib/validation'
 import { applyDraft, baselineSig, loadDraft, maxManualSeq, type DraftStats } from '../lib/reviewDraft'
 
@@ -225,9 +225,11 @@ export interface ReviewFilter {
   minArea: number
   /** 自定义输入框的原始文本（空串 = 用上面的预设档位） */
   customArea: string
+  /** 排序方式：'area' 按面积降序（默认）| 'nearest' 就近 */
+  order: ReviewOrder
 }
 
-const REVIEW_FILTER_INIT: ReviewFilter = { kind: 'all', minArea: 0, customArea: '' }
+const REVIEW_FILTER_INIT: ReviewFilter = { kind: 'all', minArea: 0, customArea: '', order: 'area' }
 
 export interface WorkflowFlags {
   /** 载入过结果（即使随后被用户删光） */
@@ -375,6 +377,11 @@ export interface AppState {
   // —— 地图聚焦（P1 复核清单）——
   /** nonce 递增：同一块连续点两次也要能再飞一次 */
   focus: { id: string; nonce: number } | null
+
+  // —— 临时隐藏矢量图层透视底图（U1）——
+  peepBase: boolean
+  setPeepBase: (v: boolean) => void
+  togglePeepBase: () => void
 
   // —— 检测（P0 检测面板）——
   /** 用户可调的检测参数（持久化） */
@@ -619,6 +626,9 @@ export const useAppStore = create<AppState>()((set, get) => ({
   past: [],
   future: [],
   focus: null,
+  peepBase: false,
+  setPeepBase: (v) => set({ peepBase: v }),
+  togglePeepBase: () => set((s) => ({ peepBase: !s.peepBase })),
 
   detectParams: loadDetectParams(),
   detect: { ...IDLE_DETECT },

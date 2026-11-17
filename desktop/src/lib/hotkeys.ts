@@ -49,6 +49,30 @@ export function shouldIgnoreHotkey(ctx: HotkeyContext): boolean {
   return false
 }
 
+/**
+ * 透视底图（U1：按住 H 键）的防误触判断。
+ *
+ * 为什么单拆：
+ * 1. 它不需要忽略 repeat（长按时系统会连发 keydown，这正是"按住"的正常表现）；
+ * 2. 依然必须严格避开输入框、修饰键与弹窗。
+ */
+export interface PeepHotkeyContext {
+  target: { tagName?: string; isContentEditable?: boolean } | null
+  hasDialog?: boolean
+  hasModifier?: boolean
+}
+
+export function shouldIgnorePeepHotkey(ctx: PeepHotkeyContext): boolean {
+  if (ctx.hasModifier) return true
+  if (ctx.hasDialog) return true
+  if (isTypingTarget(ctx.target)) return true
+  return false
+}
+
+export function isPeepKey(key: string): boolean {
+  return key === 'h' || key === 'H'
+}
+
 /** 这个键属于单键快捷键集合吗（用于决定要不要 preventDefault） */
 export const HOTKEYS = new Set(['1', '2', '3', '4', ' ', 'Enter', 'ArrowUp', 'ArrowDown'])
 
