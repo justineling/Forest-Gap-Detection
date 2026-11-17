@@ -1,0 +1,1359 @@
+{
+  "version": 1,
+  "scope": "wgr17-final-gaps.geojson",
+  "seed": 42,
+  "generated_at": "2026-11-17T14:56:58.555Z",
+  "samples": [
+    {
+      "gap_id": "r014336_c008192-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 44154.86,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r038912_c020480-S0001P1",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 32355.58,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r020480_c030720-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 17105.64,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r016384_c020480-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 15790.04,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r004096_c024576-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 7922.86,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r034816_c040960-S0001F4",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "undeveloped",
+      "area_sqm": 6381.12,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r034816_c032768-S0001P2",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 4759.54,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r038912_c020480-S0001F5",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "undeveloped",
+      "area_sqm": 4660.63,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r008192_c016384-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 4112.94,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r024576_c036864-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 3996.87,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r036864_c012288-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 3735.21,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r008192_c018432-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 3535.07,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r018432_c034816-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 3377.11,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r010240_c014336-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 3277.47,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r014336_c000000-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 3156.57,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r032768_c010240-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 2868.84,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r020480_c012288-S0003",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "road",
+      "area_sqm": 2727.35,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r040960_c014336-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 2507.56,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r014336_c000000-S0002",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "road",
+      "area_sqm": 2428.46,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r032768_c010240-S0002",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 2426.88,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r022528_c004096-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 2200.96,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r026624_c006144-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 2029.36,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r038912_c020480-S0001P6",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1967.03,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r034816_c040960-S0001P1",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1897.97,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r030720_c038912-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1870.08,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r028672_c012288-S0002",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1806.34,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r026624_c022528-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1735.53,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r036864_c012288-S0002",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1603.81,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r020480_c018432-S0004",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1451.29,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r038912_c020480-S0001P3",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1356.82,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r022528_c004096-S0002",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1278.55,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r018432_c020480-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1240.37,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r008192_c008192-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1214.67,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r038912_c020480-S0001P2",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1153.59,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r026624_c034816-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1137.51,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r028672_c018432-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1132.87,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r016384_c030720-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1112.01,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r018432_c008192-S0002",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 1051.32,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r010240_c016384-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 970.82,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r026624_c030720-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 922.05,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r034816_c030720-S0001",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 910.05,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r010240_c022528-G0008",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 901.92,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r028672_c040960-S0003",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 898.92,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r020480_c016384-S0002",
+      "stratum": "L1_top_area",
+      "weight": 1,
+      "algo_class": "open_patch",
+      "area_sqm": 881.7,
+      "stratum_total": 40,
+      "stratum_sampled": 40
+    },
+    {
+      "gap_id": "r032768_c038912-S0001",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 594.47,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r014336_c032768-S0002",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 580.04,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r038912_c024576-U0001",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "road",
+      "area_sqm": 307.94,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r032768_c028672-G0011",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 269.21,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r030720_c030720-S0002",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 249.59,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r020480_c024576-G0011",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 241.71,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r034816_c026624-S0004",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 219.58,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r016384_c024576-S0001",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 183.15,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r014336_c016384-G0006",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "open_patch",
+      "area_sqm": 168.91,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r012288_c022528-G0004",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 154.57,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c014336-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 152.82,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r030720_c026624-G0005",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 152.01,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r026624_c036864-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 147.73,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r026624_c038912-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 142.2,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r024576_c016384-S0004",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "road",
+      "area_sqm": 134.96,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r022528_c020480-S0004",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 130.11,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r020480_c024576-G0010",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 126.96,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r012288_c022528-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 125.83,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r022528_c032768-G0006",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 121.76,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c010240-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 121.7,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c008192-U0007",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "road",
+      "area_sqm": 120.77,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r020480_c018432-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 119.55,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c022528-S0001",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 112.64,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r008192_c022528-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 112.44,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c014336-G0013",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 112.09,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r024576_c026624-G0006",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 111.9,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r010240_c028672-G0012",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 111.24,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r018432_c022528-G0003",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 107.62,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r030720_c012288-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 106.06,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r010240_c018432-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 105.56,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r018432_c018432-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 103.28,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r026624_c012288-G0005",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 100.26,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r030720_c020480-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 99.4,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r038912_c018432-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 98.32,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r024576_c018432-G0008",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 95.84,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r014336_c020480-G0006",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 95.66,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r012288_c014336-G0005",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 95.44,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c010240-G0008",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 94.54,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r032768_c012288-S0004",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 90.18,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r018432_c028672-G0009",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 87.97,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r022528_c032768-S0001",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 87.95,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r022528_c016384-G0006",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 87.55,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r020480_c036864-G0008",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 85.31,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r014336_c020480-G0009",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 83.75,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r030720_c022528-G0005",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 79.11,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r012288_c006144-G0004",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 78.26,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r016384_c020480-S0003",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 78.06,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r014336_c028672-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 77.29,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r006144_c028672-G0007",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 76.74,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r018432_c022528-G0002",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 73.41,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r018432_c006144-G0007",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 73.06,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r024576_c020480-G0014",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 72.08,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r022528_c034816-S0005",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 71.75,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r032768_c040960-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 71.29,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r006144_c020480-G0005",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 70.88,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r032768_c012288-G0005",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 63.99,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r024576_c014336-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 60.78,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r006144_c026624-G0011",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 58.6,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r024576_c016384-G0014",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 58.5,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r020480_c008192-G0005",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 58.13,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r032768_c032768-G0008",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 58.08,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r014336_c022528-G0021",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 57.77,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r018432_c014336-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 57.23,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r024576_c028672-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 56.43,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r018432_c022528-G0001",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 55.12,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r028672_c036864-S0005",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 54.91,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c014336-G0012",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 52.67,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r022528_c020480-S0002",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 52.55,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r024576_c024576-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 51.7,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c034816-G0011",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 49.74,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r016384_c034816-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 49.1,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r014336_c018432-S0001",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 48.17,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r038912_c020480-S0001P4",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 45.65,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r032768_c028672-G0008",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 45.49,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r024576_c022528-S0002",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 45.2,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r022528_c012288-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 44.75,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r034816_c034816-S0003",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 44.59,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r036864_c012288-S0003",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 44.56,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r012288_c014336-G0010",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 44.11,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r028672_c020480-G0005",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 43.87,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r022528_c036864-G0006",
+      "stratum": "L3_plantable",
+      "weight": 22.24,
+      "algo_class": "vacant_slot",
+      "area_sqm": 43.81,
+      "stratum_total": 556,
+      "stratum_sampled": 25
+    },
+    {
+      "gap_id": "r026624_c022528-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 43.51,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r034816_c024576-G0006",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 41.82,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r006144_c018432-G0006",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 41.44,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c036864-U0002",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "office",
+      "area_sqm": 40.57,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r028672_c014336-S0002",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 38.67,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r026624_c036864-S0003",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 38.39,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r034816_c012288-G0019",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 38.14,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r018432_c004096-S0003",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 36.56,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c014336-G0011",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 35.74,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r024576_c026624-S0001",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 35.16,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r032768_c014336-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 34.82,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r016384_c032768-G0010",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 34.51,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r038912_c018432-U0002",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "road",
+      "area_sqm": 34.42,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r006144_c022528-G0004",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 33.89,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r002048_c020480-G0006",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 33.56,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r030720_c024576-G0008",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 33.55,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r028672_c024576-G0014",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 33.24,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r034816_c028672-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 32.83,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r004096_c018432-G0005",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 32.52,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    },
+    {
+      "gap_id": "r024576_c020480-G0003",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 32.03,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r004096_c028672-S0001",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 31.74,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r022528_c006144-S0001",
+      "stratum": "L3_unplantable",
+      "weight": 21.2,
+      "algo_class": "road",
+      "area_sqm": 31.66,
+      "stratum_total": 212,
+      "stratum_sampled": 10
+    },
+    {
+      "gap_id": "r026624_c026624-G0005",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 31.36,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r036864_c014336-G0007",
+      "stratum": "L2_uncertain",
+      "weight": 5.433333333333334,
+      "algo_class": "uncertain",
+      "area_sqm": 31.18,
+      "stratum_total": 326,
+      "stratum_sampled": 60
+    },
+    {
+      "gap_id": "r032768_c020480-G0005",
+      "stratum": "L3_alley",
+      "weight": 8.266666666666667,
+      "algo_class": "alley_gap",
+      "area_sqm": 30.99,
+      "stratum_total": 124,
+      "stratum_sampled": 15
+    }
+  ],
+  "records": {}
+}
